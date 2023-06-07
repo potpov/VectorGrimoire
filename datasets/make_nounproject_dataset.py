@@ -4,6 +4,8 @@ from tqdm import tqdm
 import requests
 from requests_oauthlib import OAuth1
 import os
+from io import BytesIO
+from PIL import Image
 import pandas as pd
 
 def do_icon_search_query(query: str, limit: int, limit_to_public_domain: int = 0, thumbnail_size: int = 200, blacklist: int = 0, include_svg: int = 0, prev_page: str = "", next_page: str = ""):
@@ -76,6 +78,29 @@ if(__name__ == "__main__"):
 
     df = pd.DataFrame(all_icons)
     
-    saving_path = "nounproject/v999.csv"
-    print(f"Saving to {saving_path}")
-    df.to_csv(saving_path, index=False, quoting=1)
+    png_saving_path = "/scratch1/nounproject/v1"
+    # saving_path = "nounproject/v1.csv"
+    print(f"Saving metadata.csv to {png_saving_path}")
+    df.to_csv(os.path.join(png_saving_path, "metadata.csv"), index=False, quoting=1)
+
+    os.makedirs(png_saving_path, exist_ok=True)
+    print("Begin fetching thumbnails...")
+    for query in df.original_query.unique():
+        print(f"Fetching images for {query}")
+        saving_path = os.path.join(png_saving_path, query)
+        os.makedirs(saving_path, exist_ok=True)
+
+        for idx, link in tqdm(enumerate(df[df["original_query"] == query]["thumbnail_link"].unique())):
+            image_saving_path = os.path.join(saving_path, f"{idx}.png")
+            if(os.path.exists(image_saving_path)):
+                continue
+            else:
+                response = requests.get(link)
+
+                if(response.status_code == 200):
+                    image = Image.open(BytesIO(response.content))
+                    image.save(image_saving_path)
+                else:
+                    raise ValueError(f"Status code for query: {query}, idx: {idx}, link: {link} was {response.status_code}")
+
+                time.sleep(random.random()*1)
