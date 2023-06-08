@@ -8,6 +8,12 @@ from io import BytesIO
 from PIL import Image
 import pandas as pd
 
+API_KEY = os.getenv("NOUN_PROJECT_API_KEY")
+API_SECRET = os.getenv("NOUN_PROJECT_API_SECRET")
+AUTH = OAuth1(API_KEY, API_SECRET)
+QUERIES = ["hummingbird", "jellyfish", "snail", "dog", "bee", "airplane", "basketball", "beer bottle", "wall clock", "fire", "hourglass", "mailbox"]
+PNG_SAVING_PATH = "/scratch1/nounproject/v1"
+
 def do_icon_search_query(query: str, limit: int, limit_to_public_domain: int = 0, thumbnail_size: int = 200, blacklist: int = 0, include_svg: int = 0, prev_page: str = "", next_page: str = ""):
     endpoint = "https://api.thenounproject.com/v2/icon"
     query_params = {
@@ -59,35 +65,28 @@ def crawl_icons_for_keyword(query: str, **kwargs):
         else:
             break
         
-        time.sleep(random.random() * 2)
+        time.sleep(random.random() * 1)
 
     return all_icons
 
 if(__name__ == "__main__"):
-    API_KEY = os.getenv("NOUN_PROJECT_API_KEY")
-    API_SECRET = os.getenv("NOUN_PROJECT_API_SECRET")
-    AUTH = OAuth1(API_KEY, API_SECRET)
-
-    queries = ["hummingbird", "jellyfish", "snail", "dog", "bee", "airplane", "basketball", "beer bottle", "wall clock", "fire", "hourglass", "mailbox"]
-    print(f"Worst case API usage estimate: {len(queries) * 10}")
+    print(f"Worst case API usage estimate: {len(QUERIES) * 10}")
 
     all_icons = []
-    for query in queries:
+    for query in QUERIES:
         icons = crawl_icons_for_keyword(query)
         all_icons.extend(icons)
 
     df = pd.DataFrame(all_icons)
-    
-    png_saving_path = "/scratch1/nounproject/v1"
-    # saving_path = "nounproject/v1.csv"
-    print(f"Saving metadata.csv to {png_saving_path}")
-    df.to_csv(os.path.join(png_saving_path, "metadata.csv"), index=False, quoting=1)
 
-    os.makedirs(png_saving_path, exist_ok=True)
+    print(f"Saving metadata.csv to {PNG_SAVING_PATH}")
+    df.to_csv(os.path.join(PNG_SAVING_PATH, "metadata.csv"), index=False, quoting=1)
+
+    os.makedirs(PNG_SAVING_PATH, exist_ok=True)
     print("Begin fetching thumbnails...")
     for query in df.original_query.unique():
         print(f"Fetching images for {query}")
-        saving_path = os.path.join(png_saving_path, query)
+        saving_path = os.path.join(PNG_SAVING_PATH, query)
         os.makedirs(saving_path, exist_ok=True)
 
         for idx, link in tqdm(enumerate(df[df["original_query"] == query]["thumbnail_link"].unique())):
