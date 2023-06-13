@@ -1,5 +1,6 @@
 import time
 import random
+from typing import List
 from tqdm import tqdm
 import requests
 from requests_oauthlib import OAuth1
@@ -32,7 +33,7 @@ def do_icon_search_query(query: str, limit: int, limit_to_public_domain: int = 0
     else:
         raise requests.exceptions.HTTPError(f"Encountered {response.status_code} error when searching for {query_params}")
     
-def get_icons_from_search_response(response: dict, original_query: str) -> list[dict]:
+def get_icons_from_search_response(response: dict, original_query: str) -> List[dict]:
     icons = response["icons"]
     processed_icons = []
 
