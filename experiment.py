@@ -9,6 +9,7 @@ from torchvision import transforms
 import torchvision.utils as vutils
 from torchvision.datasets import CelebA
 from torch.utils.data import DataLoader
+from utils import log_images
 
 
 class VAEXperiment(pl.LightningModule):
@@ -68,19 +69,22 @@ class VAEXperiment(pl.LightningModule):
 
 #         test_input, test_label = batch
         recons = self.model.generate(test_input, labels = test_label)
+        log_images(recons[:5], test_input[:5], log_key="validation")
+
         vutils.save_image(recons.data,
-                          os.path.join(self.logger.log_dir , 
+                          os.path.join(self.logger.save_dir , 
                                        "Reconstructions", 
                                        f"recons_{self.logger.name}_Epoch_{self.current_epoch}.png"),
                           normalize=True,
                           nrow=12)
 
         try:
-            samples = self.model.sample(144,
+            samples = self.model.sample(20,
                                         self.curr_device,
                                         labels = test_label)
+            log_images(samples[:5], samples[5:10], log_key="samples")
             vutils.save_image(samples.cpu().data,
-                              os.path.join(self.logger.log_dir , 
+                              os.path.join(self.logger.save_dir , 
                                            "Samples",      
                                            f"{self.logger.name}_Epoch_{self.current_epoch}.png"),
                               normalize=True,

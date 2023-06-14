@@ -36,7 +36,9 @@ with open(args.filename, 'r') as file:
         print(exc)
 
 if(args.wandb):
-    wandb_logger = WandbLogger(name=config['model_params']['name'], save_dir=config['logging_params']['save_dir'])
+    wandb_logger = WandbLogger(name=config['model_params']['name'], 
+                               save_dir=config['logging_params']['save_dir'],
+                               project = config["logging_params"]["project"])
     wandb_logger.experiment.config.update(config)
 else:
     wandb_logger = TensorBoardLogger(save_dir=config['logging_params']['save_dir'],
@@ -58,15 +60,15 @@ runner = Trainer(logger=wandb_logger,
                  callbacks=[
                      LearningRateMonitor(),
                      ModelCheckpoint(save_top_k=2, 
-                                     dirpath =os.path.join(wandb_logger.log_dir , "checkpoints"), 
+                                     dirpath =os.path.join(config['logging_params']['save_dir'] , "checkpoints"), 
                                      monitor= "val_loss",
                                      save_last= True),
                  ],
                  **config['trainer_params'])
 
 
-Path(f"{wandb_logger.log_dir}/Samples").mkdir(exist_ok=True, parents=True)
-Path(f"{wandb_logger.log_dir}/Reconstructions").mkdir(exist_ok=True, parents=True)
+Path(f"{wandb_logger.save_dir}/Samples").mkdir(exist_ok=True, parents=True)
+Path(f"{wandb_logger.save_dir}/Reconstructions").mkdir(exist_ok=True, parents=True)
 
 
 print(f"======= Training {config['model_params']['name']} =======")
