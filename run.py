@@ -10,8 +10,14 @@ from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import WandbLogger, TensorBoardLogger
 from pytorch_lightning import seed_everything
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
-from dataset import VAEDataset
+from dataset import MNISTDataset, MNISTppDataset, NounProjectDataset
 import wandb
+
+DATASETMAP = {
+    "mnist" : MNISTDataset,
+    "mnistpp" : MNISTppDataset,
+    "nounproject" : NounProjectDataset
+}
 
 
 parser = argparse.ArgumentParser(description='Generic runner for VAE models')
@@ -53,7 +59,7 @@ model = vae_models[config['model_params']['name']](**config['model_params'])
 experiment = VAEXperiment(model,
                           config['exp_params'])
 
-data = VAEDataset(**config["data_params"], pin_memory=config['trainer_params']['devices'] > 0)
+data = DATASETMAP[config["data_params"]["dataset"]](**config["data_params"], pin_memory=config['trainer_params']['devices'] > 0)
 
 data.setup()
 runner = Trainer(logger=wandb_logger,
