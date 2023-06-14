@@ -69,17 +69,17 @@ class VAEXperiment(pl.LightningModule):
 
 #         test_input, test_label = batch
         recons = self.model.generate(test_input, labels = test_label)
-        log_images(recons[:5], test_input[:5], log_key="validation")
+        log_images(recons[:5], test_input[:5], log_key="val_recons")
 
-        vutils.save_image(recons.data,
+        vutils.save_image(recons.data[:10],
                           os.path.join(self.logger.save_dir , 
                                        "Reconstructions", 
                                        f"recons_{self.logger.name}_Epoch_{self.current_epoch}.png"),
                           normalize=True,
-                          nrow=12)
+                          nrow=5)
 
         try:
-            samples = self.model.sample(20,
+            samples = self.model.sample(10,
                                         self.curr_device,
                                         labels = test_label)
             log_images(samples[:5], samples[5:10], log_key="samples")
@@ -88,7 +88,7 @@ class VAEXperiment(pl.LightningModule):
                                            "Samples",      
                                            f"{self.logger.name}_Epoch_{self.current_epoch}.png"),
                               normalize=True,
-                              nrow=12)
+                              nrow=5)
         except Warning:
             pass
 
