@@ -107,6 +107,43 @@ class MNISTpp(Dataset):
 
     def __len__(self):
         return len(self.image_paths)
+    
+class Emoji(Dataset):
+    """
+    Emoji dataset from a root directory. There are no labels available.
+
+    emoji
+    |
+    |--------------|
+    training    testing
+    """
+
+    def __init__(self, root, train=True, transform=None):
+        super(Emoji, self)
+        self.root = root
+        self.train = train
+        self.transform = transform
+
+        self.image_folder = root
+
+        self.image_paths = glob.glob(self.image_folder+"/*.png")
+        train_end_idx = int(len(self.image_paths) * 0.75)
+        if(self.train):
+            self.image_paths = sorted(self.image_paths)[:train_end_idx]
+        else:
+            self.image_paths = sorted(self.image_paths)[train_end_idx:]
+
+    def __getitem__(self, index):
+        image_path = self.image_paths[index]
+
+        image = Image.open(image_path)
+        if self.transform is not None:
+            image = self.transform(image)
+
+        return image, 0
+
+    def __len__(self):
+        return len(self.image_paths)
 
 
 class NounProject(Dataset):
@@ -325,6 +362,99 @@ class MNISTppDataset(LightningDataModule):
         )
 
         self.val_dataset = MNISTpp(
+            self.data_dir,
+            train=False,
+            transform=val_transforms,
+        )
+
+    #       ===============================================================
+
+    def train_dataloader(self) -> DataLoader:
+        return DataLoader(
+            self.train_dataset,
+            batch_size=self.train_batch_size,
+            num_workers=self.num_workers,
+            shuffle=True,
+            pin_memory=self.pin_memory,
+        )
+
+    def val_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
+        return DataLoader(
+            self.val_dataset,
+            batch_size=self.val_batch_size,
+            num_workers=self.num_workers,
+            shuffle=False,
+            pin_memory=self.pin_memory,
+        )
+
+    def test_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
+        return DataLoader(
+            self.val_dataset,
+            batch_size=144,
+            num_workers=self.num_workers,
+            shuffle=True,
+            pin_memory=self.pin_memory,
+        )
+
+class EmojiDataset(LightningDataModule):
+    """
+    PyTorch Lightning data module
+
+    Args:
+        data_dir: root directory of your dataset.
+        train_batch_size: the batch size to use during training.
+        val_batch_size: the batch size to use during validation.
+        patch_size: the size of the crop to take from the original images.
+        num_workers: the number of parallel workers to create to load data
+            items (see PyTorch's Dataloader documentation for more details).
+        pin_memory: whether prepared items should be loaded into pinned memory
+            or not. This can improve performance on GPUs.
+    """
+
+    def __init__(
+        self,
+        data_path: str,
+        train_batch_size: int = 8,
+        val_batch_size: int = 8,
+        patch_size: Union[int, Sequence[int]] = (256, 256),
+        num_workers: int = 0,
+        pin_memory: bool = False,
+        **kwargs,
+    ):
+        super().__init__()
+
+        self.data_dir = data_path
+        self.train_batch_size = train_batch_size
+        self.val_batch_size = val_batch_size
+        self.patch_size = patch_size
+        self.num_workers = num_workers
+        self.pin_memory = pin_memory
+
+    def setup(self, stage: Optional[str] = None) -> None:
+        train_transforms = transforms.Compose(
+            [
+                transforms.Resize(self.patch_size, antialias=True),
+                transforms.RandomHorizontalFlip(),
+                transforms.Grayscale(num_output_channels=3),
+                transforms.ToTensor(),
+            ]
+        )
+
+        val_transforms = transforms.Compose(
+            [
+                transforms.Resize(self.patch_size, antialias=True),
+                transforms.Grayscale(num_output_channels=3),
+                transforms.ToTensor(),
+            ]
+        )
+
+        self.train_dataset = Emoji(
+            self.data_dir,
+            train=True,
+            transform=train_transforms,
+        )
+
+        self.val_dataset = Emoji(
             self.data_dir,
             train=False,
             transform=val_transforms,

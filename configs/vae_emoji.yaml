@@ -4,10 +4,10 @@ model_params:
   latent_dim: 128
 
 data_params:
-  dataset: "nounproject"
-  data_path: "/scratch1/nounproject/v1"
-  train_batch_size: 128
-  val_batch_size:  128
+  dataset: "emoji"
+  data_path: "/scratch1/emoji_png/full"
+  train_batch_size: 64
+  val_batch_size:  64
   patch_size: 64
   num_workers: 4
 
@@ -25,5 +25,5 @@ trainer_params:
 logging_params:
   project: "thesis"
   save_dir: "/scratch2/moritz_logs/"
-  name: "VanillaVAE_NounProjectV1"
+  name: "VanillaVAE_Emoji"
   

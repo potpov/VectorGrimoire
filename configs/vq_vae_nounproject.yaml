@@ -1,29 +1,32 @@
 model_params:
-  name: 'VanillaVAE'
+  name: 'VQVAE'
   in_channels: 3
-  latent_dim: 128
+  embedding_dim: 64
+  num_embeddings: 512
+  img_size: 64
+  beta: 0.25
 
 data_params:
   dataset: "nounproject"
   data_path: "/scratch1/nounproject/v1"
-  train_batch_size: 128
-  val_batch_size:  128
+  train_batch_size: 64
+  val_batch_size:  64
   patch_size: 64
   num_workers: 4
+
 
 exp_params:
   LR: 0.005
   weight_decay: 0.0
-  scheduler_gamma: 0.95
+  scheduler_gamma: 0.0
   kld_weight: 0.00025
   manual_seed: 1265
 
 trainer_params:
-  devices: 1
-  max_epochs: 200
+  gpus: 1
+  max_epochs: 25
 
 logging_params:
   project: "thesis"
   save_dir: "/scratch2/moritz_logs/"
-  name: "VanillaVAE_NounProjectV1"
-  
+  name: 'VQVAE_NounProjectV1'

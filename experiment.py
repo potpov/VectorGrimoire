@@ -97,7 +97,7 @@ class VAEXperiment(pl.LightningModule):
         optims = []
         scheds = []
 
-        optimizer = optim.Adam(self.model.parameters(),
+        optimizer = optim.AdamW(self.model.parameters(),
                                lr=self.params['LR'],
                                weight_decay=self.params['weight_decay'])
         optims.append(optimizer)
