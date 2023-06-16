@@ -3,6 +3,7 @@ from torch import Tensor
 from models import BaseVAE
 from torch import nn
 from torch.nn import functional as F
+from typing import List, Union
 
 class VectorQuantizer(nn.Module):
     """

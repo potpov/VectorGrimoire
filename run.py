@@ -43,13 +43,14 @@ with open(args.filename, 'r') as file:
         print(exc)
 
 if(args.wandb):
-    wandb_logger = WandbLogger(name=config['model_params']['name'], 
+    wandb_logger = WandbLogger(name=config['logging_params']['name'], 
                                save_dir=config['logging_params']['save_dir'],
-                               project = config["logging_params"]["project"])
+                               project = config["logging_params"]["project"],
+                               log_model=True)
     wandb_logger.experiment.config.update(config)
 else:
     wandb_logger = TensorBoardLogger(save_dir=config['logging_params']['save_dir'],
-                               name=config['model_params']['name'],)
+                               name=config['logging_params']['name'],)
 
 
 

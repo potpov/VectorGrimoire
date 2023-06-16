@@ -10,6 +10,7 @@ import torchvision.utils as vutils
 from torchvision.datasets import CelebA
 from torch.utils.data import DataLoader
 from utils import log_images
+from torchmetrics.image.fid import FrechetInceptionDistance
 
 
 class VAEXperiment(pl.LightningModule):
@@ -23,6 +24,15 @@ class VAEXperiment(pl.LightningModule):
         self.params = params
         self.curr_device = None
         self.hold_graph = False
+        
+        if("log_fid" in self.params.keys()):
+            self.log_fid = True if self.params["log_fid"] else False
+            if(self.log_fid):
+                self.fid = FrechetInceptionDistance(feature=768, reset_real_features=False, normalize=True)
+        else:
+            self.log_fid = False
+            print("Not logging FID score. To enable, add 'log_fid: True' to the 'exp_params' of the config .yaml file")
+        
         try:
             self.hold_graph = self.params['retain_first_backpass']
         except:
@@ -41,7 +51,7 @@ class VAEXperiment(pl.LightningModule):
                                               optimizer_idx=optimizer_idx,
                                               batch_idx = batch_idx)
 
-        self.log_dict({key: val.item() for key, val in train_loss.items()}, sync_dist=True)
+        self.log_dict({key: val.item() for key, val in train_loss.items()}, sync_dist=True, prog_bar=True)
 
         return train_loss['loss']
 
@@ -55,7 +65,7 @@ class VAEXperiment(pl.LightningModule):
                                             optimizer_idx = optimizer_idx,
                                             batch_idx = batch_idx)
 
-        self.log_dict({f"val_{key}": val.item() for key, val in val_loss.items()}, sync_dist=True)
+        self.log_dict({f"val_{key}": val.item() for key, val in val_loss.items()}, sync_dist=True, prog_bar=True)
 
         
     def on_validation_end(self) -> None:
@@ -79,7 +89,7 @@ class VAEXperiment(pl.LightningModule):
                           nrow=5)
 
         try:
-            samples = self.model.sample(10,
+            samples = self.model.sample(100,
                                         self.curr_device,
                                         labels = test_label)
             log_images(samples[:5], samples[5:10], log_key="samples")
@@ -89,6 +99,21 @@ class VAEXperiment(pl.LightningModule):
                                            f"{self.logger.name}_Epoch_{self.current_epoch}.png"),
                               normalize=True,
                               nrow=5)
+            # Log FID score
+            if(self.log_fid):
+                self.fid.update(test_input, real = True)
+
+                # log reconstruction fid
+                self.fid.update(recons, real = False)
+                fid_recon_score = self.fid.compute()
+
+                # log sample fid
+                self.fid.update(samples, real = False)
+                fid_sample_score = self.fid.compute()
+
+                self.logger.log_metrics({"val_recons_FID" : fid_recon_score, "val_sample_FID" : fid_sample_score})#, sync_dist=True ,prog_bar=True)
+
+                
         except Warning:
             pass
 

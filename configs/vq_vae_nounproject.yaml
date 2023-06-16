@@ -1,16 +1,16 @@
 model_params:
   name: 'VQVAE'
   in_channels: 3
-  embedding_dim: 64
-  num_embeddings: 512
+  embedding_dim: 32
+  num_embeddings: 256
   img_size: 64
   beta: 0.25
 
 data_params:
   dataset: "nounproject"
-  data_path: "/scratch1/nounproject/v1"
-  train_batch_size: 64
-  val_batch_size:  64
+  data_path: "/scratch1/nounproject/v2"
+  train_batch_size: 32
+  val_batch_size:  32
   patch_size: 64
   num_workers: 4
 
@@ -18,15 +18,15 @@ data_params:
 exp_params:
   LR: 0.005
   weight_decay: 0.0
-  scheduler_gamma: 0.0
-  kld_weight: 0.00025
+  scheduler_gamma: 0.95
+  kld_weight: 0.00025 #0.00025
   manual_seed: 1265
 
 trainer_params:
-  gpus: 1
-  max_epochs: 25
+  devices: 1
+  max_epochs: 500
 
 logging_params:
-  project: "thesis"
-  save_dir: "/scratch2/moritz_logs/"
-  name: 'VQVAE_NounProjectV1'
+  project: "test"
+  save_dir: "/scratch2/moritz_logs/VQVAE_NounProject_hourglass"
+  name: 'VQVAE_NounProject_hourglass'

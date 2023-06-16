@@ -5,25 +5,26 @@ model_params:
 
 data_params:
   dataset: "nounproject"
-  data_path: "/scratch1/nounproject/v1"
-  train_batch_size: 128
-  val_batch_size:  128
+  data_path: "/scratch1/nounproject/v2"
+  train_batch_size: 64
+  val_batch_size:  64
   patch_size: 64
   num_workers: 4
 
 exp_params:
+  log_fid: True
   LR: 0.005
   weight_decay: 0.0
-  scheduler_gamma: 0.95
-  kld_weight: 0.00025
+  scheduler_gamma: 0.99 # 0.95
+  kld_weight: 0.00025 #0.00025
   manual_seed: 1265
 
 trainer_params:
   devices: 1
-  max_epochs: 200
+  max_epochs: 300
 
 logging_params:
-  project: "thesis"
-  save_dir: "/scratch2/moritz_logs/"
-  name: "VanillaVAE_NounProjectV1"
+  project: "test"
+  save_dir: "/scratch2/moritz_logs/VanillaVAE_NounProject_hourglass"
+  name: "VanillaVAE_NounProject_hourglass"
   
