@@ -169,8 +169,12 @@ class NounProject(Dataset):
 
         self.image_paths = []
         self.labels = []
+        self._int_to_label = {}
 
         for i, label in enumerate(os.listdir(self.image_folder)):
+            # important for CLIP sim later to have the real string label
+            self._int_to_label[i] = label
+            
             image_paths = sorted(
                 glob.glob(os.path.join(self.image_folder, label) + "/*.png")
             )

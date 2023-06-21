@@ -13,10 +13,12 @@ data_params:
 
 exp_params:
   log_fid: True
+  clip_sim_model: "openai/clip-vit-base-patch16"
+  clip_prompt_suffix: ". minimal flat 2d vector icon. black and white. on a white background. trending on artstation" # for VectorFusion, replace "black and white" with "linear color"
   LR: 0.005
   weight_decay: 0.0
-  scheduler_gamma: 0.99 # 0.95
-  kld_weight: 0.00025 #0.00025
+  scheduler_gamma: 0.99 # originally 0.95
+  kld_weight: 0.00025 # originally 0.00025
   manual_seed: 1265
 
 trainer_params:
