@@ -25,9 +25,6 @@ class VAEXperiment(pl.LightningModule):
         self.params = params
         self.curr_device = None
         self.hold_graph = False
-
-        # try:
-
         
         if("log_fid" in self.params.keys()):
             self.log_fid = True if self.params["log_fid"] else False
@@ -131,6 +128,8 @@ class VAEXperiment(pl.LightningModule):
                 self.fid.update(samples, real = False)
                 fid_sample_score = self.fid.compute()
 
+                self.fid.reset()
+
                 self.logger.log_metrics({"val_recons_FID" : fid_recon_score, "val_sample_FID" : fid_sample_score})#, sync_dist=True ,prog_bar=True)
 
             if(self.log_clip_sim):
@@ -141,8 +140,12 @@ class VAEXperiment(pl.LightningModule):
                     
                     self.clip_sim.update(recons, [_label_translate_dict[label]+self.clip_prompt_suffix for label in test_label.cpu().numpy()])
                     clip_sim_recon_score = self.clip_sim.compute()
+                    self.clip_sim.reset()
+
                     self.clip_sim.update(samples, [_label_translate_dict[label]+self.clip_prompt_suffix for label in test_label.cpu().numpy()[:num_of_samples]])
                     clip_sim_sample_score = self.clip_sim.compute()
+                    self.clip_sim.reset()
+
                 self.logger.log_metrics({"val_recons_CLIP_sim" : clip_sim_recon_score, "val_sample_CLIP_sim" : clip_sim_sample_score})#, sync_dist=True ,prog_bar=True)
                 
         except Warning:
