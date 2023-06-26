@@ -1,0 +1,32 @@
+model_params:
+  name: 'VanillaVAE'
+  in_channels: 3
+  latent_dim: 128
+
+data_params:
+  dataset: "nounproject"
+  data_path: "/scratch1/nounproject/v2"
+  train_batch_size: 64
+  val_batch_size:  64
+  patch_size: 64
+  num_workers: 4
+
+exp_params:
+  log_fid: True
+  clip_sim_model: "openai/clip-vit-large-patch14"
+  clip_prompt_suffix: ". minimal flat 2d vector icon. black and white. on a white background. trending on artstation" # for VectorFusion, replace "black and white" with "linear color"
+  LR: 0.005
+  weight_decay: 0.0
+  scheduler_gamma: 0.995 # originally 0.95
+  kld_weight: 0.001 # originally 0.00025
+  manual_seed: 1265
+
+trainer_params:
+  devices: 1
+  max_epochs: 450
+
+logging_params:
+  project: "test"
+  save_dir: "/scratch2/moritz_logs/VanillaVAE_NounProject_hourglass"
+  name: "VanillaVAE_NounProject_hourglass"
+  
