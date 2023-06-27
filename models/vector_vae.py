@@ -475,7 +475,9 @@ class VectorVAE(BaseVAE):
             loss =  aux_loss
             kld_loss = 0#self.beta*kld_weight * kld_loss
             logs = {'Reconstruction_Loss': recon_loss.mean(), 'KLD': -kld_loss, 'aux_loss': aux_loss}
-            return {'loss': loss, 'progress_bar': logs }
+
+            logs["loss"] = loss
+            return logs
         recon_loss = recon_loss.mean()
         if self.beta>0:
             kld_loss = torch.mean(-0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1), dim = 0)
@@ -485,7 +487,9 @@ class VectorVAE(BaseVAE):
         logs = {'Reconstruction_Loss': recon_loss, 'KLD': -kld_loss, 'aux_loss': aux_loss, 'other losses': other_losses*self.other_losses_weight}
         if(self.wandb_logging):
             wandb.log(logs)
-        return {'loss': loss, 'progress_bar': logs }
+
+        logs["loss"] = loss
+        return logs
 
     def sample(self,
                num_samples:int,

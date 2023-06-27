@@ -74,9 +74,8 @@ class VAEXperiment(pl.LightningModule):
                                               M_N = self.params['kld_weight'], #al_img.shape[0]/ self.num_train_imgs,
                                               optimizer_idx=optimizer_idx,
                                               batch_idx = batch_idx)
-        if("progress_bar" in train_loss.keys()):
-            del train_loss["progress_bar"]
-        self.log_dict({key: val.item() for key, val in train_loss.items()}, sync_dist=True, prog_bar=True)
+
+        self.log_dict(train_loss, sync_dist=True, prog_bar=True)
 
         # Custom processing for Im2Vec
         if(isinstance(self.model, VectorVAEnLayers)):
@@ -104,9 +103,8 @@ class VAEXperiment(pl.LightningModule):
                                             M_N = 1.0, #real_img.shape[0]/ self.num_val_imgs,
                                             optimizer_idx = optimizer_idx,
                                             batch_idx = batch_idx)
-        if("progress_bar" in val_loss.keys()):
-            del val_loss["progress_bar"]
-        self.log_dict({f"val_{key}": val.item() for key, val in val_loss.items()}, sync_dist=True, prog_bar=True)
+
+        self.log_dict({f"val_{key}": val for key, val in val_loss.items()}, sync_dist=True, prog_bar=True)
 
         
     def on_validation_end(self) -> None:
