@@ -67,7 +67,7 @@ data.setup()
 runner = Trainer(logger=wandb_logger,
                  callbacks=[
                      LearningRateMonitor(),
-                     ModelCheckpoint(save_top_k=2, 
+                     ModelCheckpoint(save_top_k=1, 
                                      dirpath =os.path.join(config['logging_params']['save_dir'] , "checkpoints"), 
                                      monitor= "val_loss",
                                      save_last= True),

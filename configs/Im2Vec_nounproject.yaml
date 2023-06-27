@@ -1,0 +1,51 @@
+model_params:
+  name: "Im2Vec"
+  in_channels: 3
+  latent_dim: 128
+  loss_fn: 'MSE'
+  paths: 20 # how many bezier paths describe the unit circle, self.curves
+  beta: 0.1 # 0.1
+  radius: 3 # was 3 originally
+  scale_factor: 1
+  learn_sampling: False # was False originally
+  only_auxillary_training: False
+  memory_leak_training: False
+  other_losses_weight: 0
+  composite_fn: 'soft'
+  b_w: True
+  T: 10
+  optimize_colors: False
+  encoder_string: "im2vec_encoder" # must be one of ["im2vec_encoder", 'RN50', 'RN101', 'RN50x4', 'RN50x16', 'RN50x64', 'ViT-B/32', 'ViT-B/16', 'ViT-L/14', 'ViT-L/14@336px']
+  freeze_encoder: False
+
+data_params:
+  dataset: "nounproject"
+  data_path: "/scratch1/nounproject/v2"
+  train_batch_size: 64
+  val_batch_size:  64
+  patch_size: 128 # HAS TO BE 224 FOR CLIP RES50 TO WORK, otherwise take 128
+  num_workers: 4
+
+exp_params:
+  log_fid: True
+  clip_sim_model: "openai/clip-vit-large-patch14"
+  clip_prompt_suffix: ". minimal flat 2d vector icon. black and white. on a white background. trending on artstation" # for VectorFusion, replace "black and white" with "linear color"
+  LR: 0.0005 # was 0.0005 originally
+  weight_decay: 0.0
+  scheduler_gamma: 0.95
+  kld_weight: 0.1
+  resample_circle_segments: True # was True originally
+  b_w: True
+  train_log_interval: 200 # ~ 8000 / batch_size / 4
+  manual_seed: 1265
+
+trainer_params:
+  devices: 1
+  max_epochs: 500
+
+logging_params:
+  project: "test"
+  save_dir: "/scratch2/moritz_logs/Im2Vec_NounProject_hourglass"
+  other_interpolations: True
+  name: "Im2Vec_hourglass_t10_b0.1"
+  version: 0
