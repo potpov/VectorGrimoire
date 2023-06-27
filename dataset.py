@@ -533,7 +533,7 @@ class NounProjectDataset(LightningDataModule):
             [
                 transforms.Resize(self.patch_size, antialias=True),
                 transforms.RandomHorizontalFlip(),
-                transforms.RandomRotation(10.0, fill=256),
+                transforms.RandomRotation(5.0, fill=256),
                 transforms.Grayscale(num_output_channels=3),
                 transforms.ToTensor(),
             ]

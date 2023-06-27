@@ -2,7 +2,23 @@ from torchvision import transforms
 from PIL import Image
 import wandb
 import numpy as np
+import torch
 
+def fig2data(fig):
+    """
+    @brief Convert a Matplotlib figure to a 4D numpy array with RGBA channels and return it
+    @param fig a matplotlib figure
+    @return a numpy 3D array of RGBA values
+    """
+    # draw the renderer
+    fig.canvas.draw()
+    X = np.array(fig.canvas.renderer.buffer_rgba())
+    return X[:,:,:3]
+
+def make_tensor(x, grad=False):
+    x = torch.tensor(x, dtype=torch.float32)
+    x.requires_grad = grad
+    return x
 
 def log_images(recons, real_imgs, log_key="validation", captions=None):
     if captions is not None:

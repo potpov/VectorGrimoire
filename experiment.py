@@ -1,15 +1,17 @@
+import gc
 import os
 import math
+import random
 import torch
 from torch import Tensor
 from torch import optim
-from models import BaseVAE
+from thesis.models import BaseVAE, VectorVAEnLayers
 import pytorch_lightning as pl
 from torchvision import transforms
 import torchvision.utils as vutils
 from torchvision.datasets import CelebA
 from torch.utils.data import DataLoader
-from utils import log_images
+from thesis.utils import log_images
 from torchmetrics.image.fid import FrechetInceptionDistance
 from torchmetrics.multimodal import CLIPScore
 
@@ -25,6 +27,7 @@ class VAEXperiment(pl.LightningModule):
         self.params = params
         self.curr_device = None
         self.hold_graph = False
+        self.beta_scale = 2.0 # introduced with Im2Vec
         
         if("log_fid" in self.params.keys()):
             self.log_fid = True if self.params["log_fid"] else False
@@ -62,14 +65,35 @@ class VAEXperiment(pl.LightningModule):
         self.curr_device = real_img.device
 
         results = self.forward(real_img, labels = labels)
+
+        # regularely log training reconstructions
+        if(batch_idx % self.params["train_log_interval"] == 0):
+            log_images(results[0], real_img, log_key="training")
+
         train_loss = self.model.loss_function(*results,
                                               M_N = self.params['kld_weight'], #al_img.shape[0]/ self.num_train_imgs,
                                               optimizer_idx=optimizer_idx,
                                               batch_idx = batch_idx)
-
+        if("progress_bar" in train_loss.keys()):
+            del train_loss["progress_bar"]
         self.log_dict({key: val.item() for key, val in train_loss.items()}, sync_dist=True, prog_bar=True)
 
+        # Custom processing for Im2Vec
+        if(isinstance(self.model, VectorVAEnLayers)):
+            path = random.randint(7, 25)
+            if self.params['resample_circle_segments']:
+                self.model.redo_features(path)
+
         return train_loss['loss']
+    
+    def on_train_epoch_end(self):
+        if(isinstance(self.model, VectorVAEnLayers)):
+            if self.current_epoch % 25 ==0:
+                new_beta = self.model.beta * self.beta_scale
+                self.model.beta = min(new_beta, 4)
+        gc.collect()
+        torch.cuda.empty_cache()
+        return {}
 
     def validation_step(self, batch, batch_idx, optimizer_idx = 0):
         real_img, labels = batch
@@ -80,7 +104,8 @@ class VAEXperiment(pl.LightningModule):
                                             M_N = 1.0, #real_img.shape[0]/ self.num_val_imgs,
                                             optimizer_idx = optimizer_idx,
                                             batch_idx = batch_idx)
-
+        if("progress_bar" in val_loss.keys()):
+            del val_loss["progress_bar"]
         self.log_dict({f"val_{key}": val.item() for key, val in val_loss.items()}, sync_dist=True, prog_bar=True)
 
         
@@ -95,6 +120,11 @@ class VAEXperiment(pl.LightningModule):
 
 #         test_input, test_label = batch
         recons = self.model.generate(test_input, labels = test_label)
+        
+        # make sure there are no small negative numbers for rendering
+        dummy = torch.nn.ReLU()
+        recons = dummy(recons)
+        
         log_images(recons[:5], test_input[:5], log_key="val_recons")
 
         vutils.save_image(recons.data[:10],
@@ -109,6 +139,7 @@ class VAEXperiment(pl.LightningModule):
             samples = self.model.sample(num_of_samples,
                                         self.curr_device,
                                         labels = test_label)
+            samples = dummy(samples[:,:3,:,:]) # drop the alpha channel for metric calculation
             log_images(samples[:5], samples[5:10], log_key="samples")
             vutils.save_image(samples.cpu().data,
                               os.path.join(self.logger.save_dir , 
