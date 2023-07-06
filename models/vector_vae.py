@@ -30,7 +30,6 @@ class VectorVAE(BaseVAE):
 
     def __init__(self,
                  latent_dim: int,
-                 hidden_dims: List = None,
                  loss_fn: str = 'MSE',
                  paths: int = 4,
                  wandb_logging = None,
@@ -48,7 +47,7 @@ class VectorVAE(BaseVAE):
             self.reparametrize_ = kwargs['reparametrize']
 
         self.curves = paths
-        self.in_channels = in_channels
+        # self.in_channels = in_channels
         self.scale_factor = kwargs['scale_factor']
         self.learn_sampling = kwargs['learn_sampling']
         self.only_auxillary_training = kwargs['only_auxillary_training']

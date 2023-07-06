@@ -1,7 +1,8 @@
 model_params:
-  name: "VAEctorgen"
+  name: "VAEctorGen"
   in_channels: 3
-  dim_z: 128
+  imsize: 64 # must mat
+  dim_z: 256 # must be equal to dim_model or mapping layer required
   loss_fn: 'MSE'
   paths: 20 # how many bezier paths describe the unit circle, self.curves
   beta: 0.1 # 0.1
@@ -13,7 +14,7 @@ model_params:
   other_losses_weight: 0
   composite_fn: 'soft'
   b_w: True
-  T: 8
+  T: 1
   optimize_colors: False
   encoder_string: "im2vec_encoder" # must be one of ["im2vec_encoder", 'RN50', 'RN101', 'RN50x4', 'RN50x16', 'RN50x64', 'ViT-B/32', 'ViT-B/16', 'ViT-L/14', 'ViT-L/14@336px']
   freeze_encoder: False
@@ -28,11 +29,11 @@ model_params:
 
 
 data_params:
-  dataset: "MNIST"
+  dataset: "mnist"
   data_path: "/home/mfeuerpfeil/master/thesis/datasets/mnist_png"
   train_batch_size: 32
   val_batch_size:  32
-  patch_size: 128 # HAS TO BE 224 FOR CLIP RES50 TO WORK, otherwise take 128
+  patch_size: 64 # HAS TO BE 224 FOR CLIP RES50 TO WORK, otherwise take 128
   num_workers: 4
 
 exp_params:
@@ -50,7 +51,7 @@ exp_params:
 
 trainer_params:
   devices: 1
-  max_epochs: 300
+  max_epochs: 150
 
 logging_params:
   project: "test"

@@ -56,16 +56,28 @@ class ConstEmbedding(nn.Module):
     def __init__(self, seq_len, d_model):
         super().__init__()
 
-        self.seq_len = seq_len
+        self.seq_len = seq_len # = T
 
         self.d_model = d_model
 
         self.PE = PositionalEncodingLUT(d_model, max_len=seq_len)
 
     def forward(self, z):
-        N = z.size(1)
-        src = self.PE(z.new_zeros(self.seq_len, N, self.d_model))
+        # N = z.size(1)
+        bs = z.size(0)
+        # src = self.PE(z.new_zeros(self.seq_len, N, self.d_model))
+        src = self.PE(z.new_zeros(self.seq_len, bs, self.d_model))
         return src
+    
+class PrefixEmbedding(nn.Module):
+    def __init__(self, seq_len, d_model):
+        self.embedding = nn.Embedding(seq_len, d_model)
+        nn.init.kaiming_normal_(self.embedding.weight, mode="fan_in")
+
+    def forward(self, z:Tensor):
+        bs = z.shape[0]
+
+
     
 
 class LatentTransformer(nn.Module):
@@ -86,7 +98,7 @@ class LatentTransformer(nn.Module):
         self.fcn = nn.Linear(dim_model, dim_z)
     
     def forward(self, z, label = None):
-        N = z.size(2)
+        # N = z.size(2)
         l = self.label_embedding(label).unsqueeze(0) if self.label_condition else None
 
         src = self.embedding(z)
@@ -113,11 +125,8 @@ class CNNVectorDecoder(VectorVAE):
                  b_w = True,
                  wandb_logging = None,
                  **kwargs) -> None:
-        super(CNNVectorDecoder, self).__init__(in_channels,
-                                               latent_dim,
-                                               hidden_dims,
+        super(CNNVectorDecoder, self).__init__(latent_dim,
                                                loss_fn,
-                                               imsize,
                                                paths,
                                                wandb_logging,
                                                **kwargs)
@@ -294,14 +303,14 @@ class CNNVectorDecoder(VectorVAE):
             return output, loss
         return output
 
-    def generate(self, x: Tensor, **kwargs) -> Tensor:
+    def generate(self, z: Tensor, **kwargs) -> Tensor:
         """
         Given an input image x, returns the reconstructed image
         :param x: (Tensor) [B x C x H x W]
         :return: (Tensor) [B x C x H x W]
         """
-        mu, log_var = self.encode(x)
-        z = self.reparameterize(mu, log_var)
+        # mu, log_var = self.encode(x)
+        # z = self.reparameterize(mu, log_var)
         output = self.decode_and_composite(z, **kwargs) # might want to use verbose keyword here
         return output  # [:, :3]
 
@@ -480,12 +489,13 @@ class VAEctorGen(BaseVAE):
         self._init_embeddings()
 
         # Build Decoder
+        self.mapping = nn.Linear(dim_z, kwargs["dim_model"])
 
         ## Transformer for latent code
-        self.transformer = LatentTransformer(n_embedds=T, **kwargs)
+        self.transformer = LatentTransformer(n_embedds=T, dim_z=dim_z, **kwargs)
 
         ## CNN deformation network
-        self.decoder = CNNVectorDecoder(**kwargs)
+        self.decoder = CNNVectorDecoder(in_channels=in_channels, latent_dim=dim_z, T=T, **kwargs)
         
 
     def _init_embeddings(self):
@@ -508,29 +518,68 @@ class VAEctorGen(BaseVAE):
         eps = torch.randn_like(std)
         return eps * std + mu
         
+    def encode(self, imgs:Tensor):
+        # encode image through encoder
+        encoded_images = self.encoder(imgs)
+        encoded_images = encoded_images.view(encoded_images.size(0), -1) # result [Batch, Features]
+        return encoded_images
+
     def forward(
         self,
         img: Tensor,
-        label:Tensor,
+        label:Tensor = None,
         **kwargs
     ):
-        # encode image through encoder
-        encoded_images = self.encoder.forward(img)
-
+        encoded_images = self.encode(img)
         # get mean and var
-        mu = self.fc_mu.forward(encoded_images)
+        mu = self.fc_mu(encoded_images)
         var = self.fc_var.forward(encoded_images)
 
         # reparameterization trick
         z = self.reparameterize(mu, var)
 
+        #mapped_z = self.mapping(z)
+        mapped_z = z
+
         # apply transformer
-        transformed_z = self.transformer.forward(z, label=label)
+        transformed_z = self.transformer.forward(mapped_z, label=label)
+
+        transformed_z = transformed_z.squeeze(0)
 
         # decode latent codes
         output, transformed_z, control_loss = self.decoder.forward(transformed_z, **kwargs)
         
-        return output, control_loss
+        return output, img, mu, var, control_loss # required for loss function
+
+    def generate(self, test_input, labels, **kwargs):
+        results = self.forward(test_input, labels, **kwargs)
+        # encoded_input = self.encode(test_input)
+        # mu = self.fc_mu(encoded_input)
+        # var = self.fc_var.forward(encoded_input) # TODO check if this is var or log_var
+
+        # z = self.reparameterize(mu, var)
+
+        # return self.decoder.generate(z, labels=labels)
+        return results[0]
+    
+    def sample(self, num_samples: int, current_device:int, label = None, **kwargs) -> Tensor:
+        """
+        Samples from the latent space and return the corresponding
+        image space map.
+        :param num_samples: (Int) Number of samples
+        :return: (Tensor)
+        """
+        z = torch.randn(num_samples,
+                        self.dim_z).to(current_device)
+        
+        # apply transformer
+        transformed_z = self.transformer.forward(z, label=label)
+
+        transformed_z = transformed_z.squeeze(0)
+
+        # decode latent codes
+        output, _, _ = self.decoder.forward(transformed_z, **kwargs)
+        return output
 
     def loss_function(self,
                       recons:Tensor,
