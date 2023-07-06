@@ -10,7 +10,7 @@ from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import WandbLogger, TensorBoardLogger
 from pytorch_lightning import seed_everything
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
-from dataset import MNISTDataset, MNISTppDataset, NounProjectDataset, EmojiDataset
+from thesis.dataset import MNISTDataset, MNISTppDataset, NounProjectDataset, EmojiDataset
 import wandb
 
 DATASETMAP = {

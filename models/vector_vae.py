@@ -29,11 +29,9 @@ class VectorVAE(BaseVAE):
 
 
     def __init__(self,
-                 in_channels: int,
                  latent_dim: int,
                  hidden_dims: List = None,
                  loss_fn: str = 'MSE',
-                 imsize: int = 128,
                  paths: int = 4,
                  wandb_logging = None,
                  **kwargs) -> None:
@@ -41,7 +39,6 @@ class VectorVAE(BaseVAE):
 
         self.wandb_logging = wandb_logging
         self.latent_dim = latent_dim
-        self.imsize = imsize
         self.beta = kwargs['beta']
         self.other_losses_weight = 0
         self.reparametrize_ = False
@@ -65,24 +62,6 @@ class VectorVAE(BaseVAE):
             self.loss_fn = F.binary_cross_entropy_with_logits
         else:
             self.loss_fn = F.mse_loss
-        modules = []
-        if hidden_dims is None:
-            hidden_dims = [32, 64, 128, 256, 512]
-
-        # Build Encoder
-        for h_dim in hidden_dims:
-            modules.append(
-                nn.Sequential(
-                    nn.Conv2d(in_channels, out_channels=h_dim,
-                              kernel_size= 3, stride= 2, padding  = 1),
-                    # nn.BatchNorm2d(h_dim),
-                    nn.ReLU())
-            )
-            in_channels = h_dim
-        outsize = int(imsize/(2**5))
-        self.fc_mu = nn.Linear(hidden_dims[-1]*outsize*outsize, latent_dim)
-        self.fc_var = nn.Linear(hidden_dims[-1]*outsize*outsize, latent_dim)
-        self.encoder = nn.Sequential(*modules)
 
         self.circle_rad = kwargs['radius']
         self.number_of_points = self.curves * 3
@@ -177,23 +156,6 @@ class VectorVAE(BaseVAE):
             pos.append(x)
             pos.append(y)
         return torch.stack(pos, dim=-1)
-
-    def encode(self, input: Tensor) -> List[Tensor]:
-        """
-        Encodes the input by passing through the encoder network
-        and returns the latent codes.
-        :param input: (Tensor) Input tensor to encoder [N x C x H x W]
-        :return: (Tensor) List of latent codes
-        """
-        result = self.encoder(input)
-        result = torch.flatten(result, start_dim=1)
-
-        # Split the result into mu and var components
-        # of the latent Gaussian distribution
-        mu = self.fc_mu(result)
-        log_var = self.fc_var(result)
-
-        return [mu, log_var]
 
     def raster(self, all_points, color=[0,0,0, 1], verbose=False, white_background=True, **kwargs):
         assert len(color) == 4
@@ -354,15 +316,13 @@ class VectorVAE(BaseVAE):
         else:
             return mu
 
-    def forward(self, input: Tensor, **kwargs) -> List[Tensor]:
-        mu, log_var = self.encode(input)
-        z = self.reparameterize(mu, log_var)
+    def forward(self, z: Tensor, **kwargs) -> List[Tensor]:
         all_points = self.decode(z)
         if not self.only_auxillary_training or self.save_lossvspath:
             output = self.raster(all_points, white_background=True)
         else:
             output = torch.zeros([1,3,64,64])
-        return  [output, input, mu, log_var]
+        return  [output, z, -1.0, -1.0]
 
     def bilinear_downsample(self, tensor, size):
         return torch.nn.functional.interpolate(tensor, size, mode='bilinear')
@@ -418,7 +378,11 @@ class VectorVAE(BaseVAE):
         return recon_loss
 
     def loss_function(self,
-                      *args,
+                      recons:Tensor,
+                      input:Tensor,
+                      mu,
+                      log_var,
+                      other_losses:int = 0,
                       **kwargs) -> dict:
         """
         Computes the VAE loss function.
@@ -427,13 +391,6 @@ class VectorVAE(BaseVAE):
         :param kwargs:
         :return:
         """
-        recons = args[0][:, :3, :, :]
-        input = args[1]
-        mu = args[2]
-        log_var = args[3]
-        other_losses = 0
-        if len(args)==5:
-            other_losses = args[4]
         aux_loss = 0
         kld_loss = 0
         kld_weight = kwargs['M_N'] # Account for the minibatch samples from the dataset

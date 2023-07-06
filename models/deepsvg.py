@@ -75,6 +75,21 @@ class LabelEmbedding(nn.Module):
         src = self.label_embedding(label)
         return src
     
+class ConstEmbedding(nn.Module):
+    def __init__(self, cfg: _DefaultConfig, seq_len):
+        super().__init__()
+
+        self.cfg = cfg
+
+        self.seq_len = seq_len
+
+        self.PE = PositionalEncodingLUT(cfg.d_model, max_len=seq_len)
+
+    def forward(self, z):
+        N = z.size(1)
+        src = self.PE(z.new_zeros(self.seq_len, N, self.cfg.d_model))
+        return src
+    
 class Decoder(nn.Module):
     def __init__(self, cfg: _DefaultConfig):
         super(Decoder, self).__init__()
