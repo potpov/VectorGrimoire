@@ -188,10 +188,12 @@ class VectorVAEnLayers(VectorVAE):
             total_length = 0
             for curve_idx in range(0, self.curves*3, 3):
                 try:
+                    # TODO might calculate the distance to the control point also
                     total_length += self.manhattan_dist(all_points[batch_idx][curve_idx*3:curve_idx*3+3])
                 except:
                     pass
             logging_dict[f"shapeidx_{current_shape_idx}_batchidx_{batch_idx}"] = total_length
+            break
 
         wandb.log(logging_dict)
 
