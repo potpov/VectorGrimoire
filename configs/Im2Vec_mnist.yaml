@@ -1,8 +1,7 @@
 model_params:
-  name: "VAEctorGen"
+  name: "Im2Vec"
   in_channels: 3
-  imsize: 64 # must match patch_size in data_params
-  dim_z: 256 # must be equal to dim_model or mapping layer required
+  latent_dim: 128
   loss_fn: 'MSE'
   paths: 20 # how many bezier paths describe the unit circle, self.curves
   beta: 0.1 # 0.1
@@ -18,27 +17,18 @@ model_params:
   optimize_colors: False
   encoder_string: "im2vec_encoder" # must be one of ["im2vec_encoder", 'RN50', 'RN101', 'RN50x4', 'RN50x16', 'RN50x64', 'ViT-B/32', 'ViT-B/16', 'ViT-L/14', 'ViT-L/14@336px']
   freeze_encoder: False
-  dim_model: 256
-  n_heads: 8
-  n_layers_decode: 4
-  dim_FF: 512
-  dropout: 0.1
-  n_labels: 100
-  dim_label: 64
-  label_condition: False
-
 
 data_params:
   dataset: "mnist"
   data_path: "/home/mfeuerpfeil/master/thesis/datasets/mnist_png"
   train_batch_size: 32
   val_batch_size:  32
-  patch_size: 64 # HAS TO BE 224 FOR CLIP RES50 TO WORK, otherwise take 128
+  patch_size: 128 # HAS TO BE 224 FOR CLIP RES50 TO WORK, otherwise take 128
   num_workers: 4
 
 exp_params:
   log_fid: False # True
-  # clip_sim_model: "openai/clip-vit-large-patch14"
+  #clip_sim_model: "openai/clip-vit-large-patch14"
   #clip_prompt_suffix: ". minimal flat 2d vector icon. black and white. on a white background. trending on artstation" # for VectorFusion, replace "black and white" with "linear color"
   LR: 0.0005 # was 0.0005 originally
   weight_decay: 0.0
@@ -46,16 +36,16 @@ exp_params:
   kld_weight: 0.1
   resample_circle_segments: False # was True originally
   b_w: True
-  train_log_interval: 200 # ~ 8000 / batch_size / 4
+  train_log_interval: 400 # ~ 8000 / batch_size / 4
   manual_seed: 1265
 
 trainer_params:
   devices: 1
-  max_epochs: 250
+  max_epochs: 300
 
 logging_params:
-  project: "test"
-  save_dir: "/scratch2/moritz_logs/VAEctorgen_mnist"
+  project: "thesis"
+  save_dir: "/scratch2/moritz_logs/Im2Vec_MNIST"
   other_interpolations: True
-  name: "VAEctorgen_mnist"
+  name: "Im2Vec_mnist"
   version: 0
