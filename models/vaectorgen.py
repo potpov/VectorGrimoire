@@ -5,7 +5,7 @@ from torch.nn import functional as F
 from thesis.models import BaseVAE
 from thesis.models.layers.improved_transformer import TransformerDecoderLayerGlobalImproved
 from thesis.models.layers.transformer import TransformerDecoder
-from thesis.models.vector_vae import VectorVAE
+from thesis.models.vector_decoder import VectorDecoder
 import wandb
 import pydiffvg
 import numpy as np
@@ -106,19 +106,10 @@ class LatentTransformer(nn.Module):
 
         return out
 
-class PointDeformationNetwork(nn.Module):
-    def __init__(self):
-        pass
-    def forward(self):
-        pass
-    pass
-
-class CNNVectorDecoder(VectorVAE):
+class CNNVectorDecoder(VectorDecoder):
 
     def __init__(self,
-                 in_channels: int,
                  latent_dim: int,
-                 hidden_dims: list = None,
                  loss_fn: str = 'MSE',
                  imsize: int = 128,
                  paths: int = 4,
@@ -260,7 +251,7 @@ class CNNVectorDecoder(VectorVAE):
                 except:
                     pass
             logging_dict[f"shapeidx_{current_shape_idx}_batchidx_{batch_idx}"] = total_length
-
+            break
         wandb.log(logging_dict)
 
     def decode_and_composite(self, transformed_z: Tensor, return_overlap_loss=False, **kwargs):
@@ -489,7 +480,7 @@ class VAEctorGen(BaseVAE):
         self._init_embeddings()
 
         # Build Decoder
-        self.mapping = nn.Linear(dim_z, kwargs["dim_model"])
+        # self.mapping = nn.Linear(dim_z, kwargs["dim_model"])
 
         ## Transformer for latent code
         self.transformer = LatentTransformer(n_embedds=T, dim_z=dim_z, **kwargs)
