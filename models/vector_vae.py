@@ -485,6 +485,8 @@ class VectorVAE(BaseVAE):
         loss =  recon_loss + kld_loss + other_losses*self.other_losses_weight
         logs = {'Reconstruction_Loss': recon_loss, 'KLD': -kld_loss, 'aux_loss': aux_loss, 'other losses': other_losses*self.other_losses_weight}
         logs["loss"] = loss
+        logs["self.beta"] = self.beta
+        logs["final_kld_weight"] = self.beta*kld_weight
         if(self.wandb_logging):
             wandb.log(logs)
         return logs

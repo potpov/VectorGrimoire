@@ -543,15 +543,15 @@ class VAEctorGen(BaseVAE):
         return output, img, mu, var, control_loss # required for loss function
 
     def generate(self, test_input, labels, **kwargs):
-        results = self.forward(test_input, labels, **kwargs)
-        # encoded_input = self.encode(test_input)
-        # mu = self.fc_mu(encoded_input)
-        # var = self.fc_var.forward(encoded_input) # TODO check if this is var or log_var
+        # results = self.forward(test_input, labels, **kwargs)
+        encoded_input = self.encode(test_input)
+        mu = self.fc_mu(encoded_input)
+        var = self.fc_var.forward(encoded_input) # TODO check if this is var or log_var
 
-        # z = self.reparameterize(mu, var)
+        z = self.reparameterize(mu, var)
 
-        # return self.decoder.generate(z, labels=labels)
-        return results[0]
+        return self.decoder.generate(z, labels=labels, **kwargs)
+        # return results[0]
     
     def sample(self, num_samples: int, current_device:int, label = None, **kwargs) -> Tensor:
         """
