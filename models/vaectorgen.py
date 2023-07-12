@@ -1,45 +1,127 @@
-import random
-
 import torch
-from torch import Tensor
 from torch import nn
+from torch import Tensor
 from torch.nn import functional as F
-from typing import List
+from thesis.models import BaseVAE
+from thesis.models.layers.improved_transformer import TransformerDecoderLayerGlobalImproved
+from thesis.models.layers.transformer import TransformerDecoder
+from thesis.models.vector_decoder import VectorDecoder
 import wandb
-
-from .vector_vae import VectorVAE
-from thesis.utils import make_tensor
 import pydiffvg
-import math
 import numpy as np
-import logging
-import os
+from typing import List
 
-BASE_PATH = "/home/mfeuerpfeil/master/clip2vec"
+def make_tensor(x, grad=False):
+    x = torch.tensor(x, dtype=torch.float32)
+    x.requires_grad = grad
+    return x
+
+class LabelEmbedding(nn.Module):
+    def __init__(self, n_labels, dim_label):
+        super().__init__()
+
+        self.label_embedding = nn.Embedding(n_labels, dim_label)
+
+        self._init_embeddings()
+
+    def _init_embeddings(self):
+        nn.init.kaiming_normal_(self.label_embedding.weight, mode="fan_in")
+
+    def forward(self, label):
+        src = self.label_embedding(label)
+        return src
+
+class PositionalEncodingLUT(nn.Module):
+
+    def __init__(self, d_model, dropout=0.1, max_len=250):
+        super(PositionalEncodingLUT, self).__init__()
+        self.dropout = nn.Dropout(p=dropout)
+
+        position = torch.arange(0, max_len, dtype=torch.long).unsqueeze(1)
+        self.register_buffer('position', position)
+
+        self.pos_embed = nn.Embedding(max_len, d_model)
+
+        self._init_embeddings()
+
+    def _init_embeddings(self):
+        nn.init.kaiming_normal_(self.pos_embed.weight, mode="fan_in")
+
+    def forward(self, x):
+        pos = self.position[:x.size(0)]
+        x = x + self.pos_embed(pos)
+        return self.dropout(x)
+    
+class ConstEmbedding(nn.Module):
+    def __init__(self, seq_len, d_model):
+        super().__init__()
+
+        self.seq_len = seq_len # = T
+
+        self.d_model = d_model
+
+        self.PE = PositionalEncodingLUT(d_model, max_len=seq_len)
+
+    def forward(self, z):
+        # N = z.size(1)
+        bs = z.size(0)
+        # src = self.PE(z.new_zeros(self.seq_len, N, self.d_model))
+        src = self.PE(z.new_zeros(self.seq_len, bs, self.d_model))
+        return src
+    
+class PrefixEmbedding(nn.Module):
+    def __init__(self, seq_len, d_model):
+        self.embedding = nn.Embedding(seq_len, d_model)
+        nn.init.kaiming_normal_(self.embedding.weight, mode="fan_in")
+
+    def forward(self, z:Tensor):
+        bs = z.shape[0]
 
 
+    
 
-class VectorVAEnLayers(VectorVAE):
+class LatentTransformer(nn.Module):
+    def __init__(self, n_embedds = 15, dim_model = 256, n_heads = 8, n_layers_decode = 4, dim_FF = 512, dropout = 0.1, dim_z = 256, n_labels = 100, dim_label = 64, label_condition = False, **kwargs):
+        super().__init__()
+
+        self.label_condition = label_condition
+        dim_label = dim_label if self.label_condition else None
+        if(self.label_condition):
+            self.label_embedding = LabelEmbedding(n_labels, dim_label)
+
+        self.embedding = ConstEmbedding(n_embedds, dim_model)
+
+        decoder_layer = TransformerDecoderLayerGlobalImproved(dim_model, dim_z, n_heads, dim_FF, dropout)
+        decoder_norm = nn.LayerNorm(dim_model)
+        self.decoder = TransformerDecoder(decoder_layer, n_layers_decode, decoder_norm)
+
+        self.fcn = nn.Linear(dim_model, dim_z)
+    
+    def forward(self, z, label = None):
+        # N = z.size(2)
+        l = self.label_embedding(label).unsqueeze(0) if self.label_condition else None
+
+        src = self.embedding(z)
+        out = self.decoder(src, z, tgt_mask=None, tgt_key_padding_mask=None, memory2=l)
+
+        return out
+
+class CNNVectorDecoder(VectorDecoder):
 
     def __init__(self,
-                 in_channels: int,
                  latent_dim: int,
-                 hidden_dims: list = None,
                  loss_fn: str = 'MSE',
                  imsize: int = 128,
                  paths: int = 4,
                  b_w = True,
                  wandb_logging = None,
                  **kwargs) -> None:
-        super(VectorVAEnLayers, self).__init__(in_channels,
-                                               latent_dim,
-                                               hidden_dims,
+        super(CNNVectorDecoder, self).__init__(latent_dim,
                                                loss_fn,
-                                               imsize,
                                                paths,
                                                wandb_logging,
                                                **kwargs)
-
+        self.imsize = imsize
         def get_computational_unit(in_channels, out_channels, unit):
             if unit == 'conv':
                 return nn.Conv1d(in_channels, out_channels, kernel_size=3, padding=1, padding_mode='circular', stride=1,
@@ -47,24 +129,6 @@ class VectorVAEnLayers(VectorVAE):
             else:
                 return nn.Linear(in_channels, out_channels)
 
-        def get_random_color():
-            r = np.random.randint(0,255)
-            g = np.random.randint(0,255)
-            b = np.random.randint(0,255)
-
-            # don't want white-ish
-            if(r+g+b > 600):
-                r = 0
-
-            return [nn.Parameter(torch.Tensor([r/255]), requires_grad=True), nn.Parameter(torch.Tensor([g/255]), requires_grad=True), nn.Parameter(torch.Tensor([b/255]), requires_grad=True), nn.Parameter(torch.Tensor([1.]), requires_grad=True)]
-        # self.colors = [[0, 0, 0, 1], [255/255, 0/255, 0/255, 1],]
-        # self.colors = [[0, 0, 0, 1], [255/255, 0/255, 255/255, 1], [0/255, 255/255, 255/255, 1],]
-        # self.colors = [[0, 0, 0, 1], [255/255, 165/255, 0/255, 1], [0/255, 0/255, 255/255, 1],]
-
-        # self.colors = [[252 / 255, 194 / 255, 27 / 255, 1], [255 / 255, 0 / 255, 0 / 255, 1],
-        #                [0 / 255, 255 / 255, 0 / 255, 1], [0 / 255, 0 / 255, 255 / 255, 1], ]
-
-        # T = number of circles to predict
         T = kwargs['T']
         print(f"using {T} paths")
         if(b_w):
@@ -76,9 +140,6 @@ class VectorVAEnLayers(VectorVAE):
             # self.colors = torch.nn.Parameter([get_random_color() for _ in range(T)], requires_grad=kwargs["optimize_colors"])
             self.colors = torch.nn.Parameter(torch.Tensor([0.5,0.5,0.5,1.]).unsqueeze(0).repeat(T,1), requires_grad=kwargs["optimize_colors"])
 
-        
-        
-        self.rnn = nn.LSTM(latent_dim, latent_dim, 2, bidirectional=True)
         self.composite_fn = self.hard_composite
         if kwargs['composite_fn'] == 'soft':
             print('Using Differential Compositing')
@@ -109,11 +170,9 @@ class VectorVAEnLayers(VectorVAE):
         # Logging stuff
         self.wandb_logging = wandb_logging # None if not logging
 
-    def forward(self, input: Tensor, **kwargs) -> List[Tensor]:
-        mu, log_var = self.encode(input)
-        z = self.reparameterize(mu, log_var)
-        output, control_loss = self.decode_and_composite(z, verbose=False, return_overlap_loss=True, **kwargs)
-        return [output, input, mu, log_var, control_loss]
+    def forward(self, transformed_z: Tensor, **kwargs) -> List[Tensor]:
+        output, control_loss = self.decode_and_composite(transformed_z, verbose=False, return_overlap_loss=True, **kwargs)
+        return [output, transformed_z, control_loss]
 
     def hard_composite(self, **kwargs):
         layers = kwargs['layers']
@@ -188,29 +247,27 @@ class VectorVAEnLayers(VectorVAE):
             total_length = 0
             for curve_idx in range(0, self.curves*3, 3):
                 try:
-                    # TODO might calculate the distance to the control point also
                     total_length += self.manhattan_dist(all_points[batch_idx][curve_idx*3:curve_idx*3+3])
                 except:
                     pass
             logging_dict[f"shapeidx_{current_shape_idx}_batchidx_{batch_idx}"] = total_length
             break
-
         wandb.log(logging_dict)
 
-    def decode_and_composite(self, z: Tensor, return_overlap_loss=False, **kwargs):
-        bs = z.shape[0]
+    def decode_and_composite(self, transformed_z: Tensor, return_overlap_loss=False, **kwargs):
+        # bs = z.shape[0]
         layers = []
         n = len(self.colors)
         loss = 0
-        z_rnn_input = z[None, :, :].repeat(n, 1, 1)  # [len, batch size, emb dim], copies the latent code for each shape of the composition
-        outputs, hidden = self.rnn(z_rnn_input)
-        outputs = outputs.permute(1, 0, 2)  # [batch size, len, emb dim]
-        outputs = outputs[:, :, :self.latent_dim] + outputs[:, :, self.latent_dim:] # aggregate outputs of both RNNs
+        # z_rnn_input = z[None, :, :].repeat(n, 1, 1)  # [len, batch size, emb dim], copies the latent code for each shape of the composition
+        # outputs, hidden = self.rnn(z_rnn_input)
+        # outputs = outputs.permute(1, 0, 2)  # [batch size, len, emb dim]
+        # outputs = outputs[:, :, :self.latent_dim] + outputs[:, :, self.latent_dim:] # aggregate outputs of both RNNs
         z_layers = []
         for i in range(n):
-            shape_output = self.divide_shape(outputs[:, i, :]) # [bs, latent_size]
-            shape_latent = self.final_shape_latent(shape_output) # [bs, latent_size]
-            all_points = self.decode(shape_latent)#, point_predictor=self.point_predictor[i])
+            # shape_output = self.divide_shape(transformed_z[:, i, :]) # [bs, latent_size]
+            # shape_latent = self.final_shape_latent(transformed_z) # [bs, latent_size]
+            all_points = self.decode(transformed_z)#, point_predictor=self.point_predictor[i])
             if("log_path_length" in kwargs.keys() and self.wandb_logging):
                 if(kwargs["log_path_length"]):
                     self.log_path_lengths(all_points*self.imsize, current_shape_idx=i)
@@ -222,7 +279,7 @@ class VectorVAEnLayers(VectorVAE):
             else:
                 layer = self.raster(all_points, self.colors[i], white_background=False)
 
-            z_pred = self.z_order(shape_output)
+            z_pred = self.z_order(transformed_z)
             layers.append(layer)
             z_layers.append(torch.exp(z_pred[:, :, None, None]))
             if return_overlap_loss:
@@ -237,14 +294,14 @@ class VectorVAEnLayers(VectorVAE):
             return output, loss
         return output
 
-    def generate(self, x: Tensor, **kwargs) -> Tensor:
+    def generate(self, z: Tensor, **kwargs) -> Tensor:
         """
         Given an input image x, returns the reconstructed image
         :param x: (Tensor) [B x C x H x W]
         :return: (Tensor) [B x C x H x W]
         """
-        mu, log_var = self.encode(x)
-        z = self.reparameterize(mu, log_var)
+        # mu, log_var = self.encode(x)
+        # z = self.reparameterize(mu, log_var)
         output = self.decode_and_composite(z, **kwargs) # might want to use verbose keyword here
         return output  # [:, :3]
 
@@ -288,42 +345,7 @@ class VectorVAEnLayers(VectorVAE):
             all_interpolations.append(output)
         return all_interpolations
 
-    def naive_vector_interpolate(self, x: Tensor, **kwargs) -> Tensor:
-        """
-        Given an input image x, returns the reconstructed image
-        :param x: (Tensor) [B x C x H x W]
-        :return: (Tensor) [B x C x H x W]
-        """
-        mu, log_var = self.encode(x)
-        all_interpolations = []
-        bs = mu.shape[0]
-        n = len(self.colors)
-        for j in range(bs):
-            layers = []
-            z_rnn_input = mu[None, :, :].repeat(n, 1, 1)  # [len, batch size, emb dim]
-            outputs, hidden = self.rnn(z_rnn_input)
-            outputs = outputs.permute(1, 0, 2)  # [batch size, len, emb dim]
-            outputs = outputs[:, :, :self.latent_dim] + outputs[:, :, self.latent_dim:]
-            for i in range(n):
-                shape_latent = self.divide_shape(outputs[:, i, :])
-                all_points = self.decode(shape_latent)
-                all_points_interpolate = self.interpolate_vectors(all_points[2], all_points[j], 10)
-                layer = self.raster(all_points_interpolate, self.colors[i], verbose=kwargs['verbose'])
-                layers.append(layer)
-            # output = (layers[0][:, :3] * layers[0][:, 3:4, :, :] * (1 - layers[1][:, 3:4, :, :]) * (
-            #             1 - layers[2][:, 3:4, :, :])) + \
-            #          (layers[1][:, :3] * layers[1][:, 3:4, :, :] * (1 - layers[2][:, 3:4, :, :])) + \
-            #          (layers[2][:, :3] * layers[2][:, 3:4, :, :]) + \
-            #          ((1 - layers[0][:, 3:4, :, :]) * (1 - layers[1][:, 3:4, :, :]) * (1 - layers[2][:, 3:4, :, :]))
-            # output = (layers[0][:, :3] * layers[0][:, 3:4, :, :] * (1 - layers[1][:, 3:4, :, :]) * (
-            #             1 - layers[2][:, 3:4, :, :])) + \
-            #          (layers[1][:, :3] * layers[1][:, 3:4, :, :]) + \
-            #          (layers[2][:, :3] * layers[2][:, 3:4, :, :]) + \
-            #          ((1 - layers[0][:, 3:4, :, :]) * (1 - layers[1][:, 3:4, :, :]) * (1 - layers[2][:, 3:4, :, :]))
-
-            output = self.composite_fn(layers = layers)
-            all_interpolations.append(output)
-        return all_interpolations
+   
 
     def visualize_sampling(self, x: Tensor, **kwargs) -> Tensor:
         """
@@ -418,3 +440,144 @@ class VectorVAEnLayers(VectorVAE):
                 shape_groups.append(path_group)
         pydiffvg.save_svg(f"{save_dir}{name}/{name}.svg",
                           self.imsize, self.imsize, shapes, shape_groups)
+
+class VAEctorGen(BaseVAE):
+    def __init__(
+        self,
+        in_channels: int,
+        dim_z: int,
+        T:int,
+        hidden_dims: list = None,
+        **kwargs
+    ) -> None:
+        
+        super(VAEctorGen, self).__init__()
+
+        self.dim_z = dim_z
+
+        # CNN encoder, calculate with 128 img size
+        modules = []
+        if hidden_dims is None:
+            hidden_dims = [32, 64, 128, 256, 512]
+
+        # Build Encoder
+        for h_dim in hidden_dims:
+            modules.append(
+                nn.Sequential(
+                    nn.Conv2d(in_channels, out_channels=h_dim,
+                              kernel_size= 3, stride= 2, padding  = 1),
+                    nn.BatchNorm2d(h_dim),
+                    nn.LeakyReLU())
+            )
+            in_channels = h_dim
+
+        self.encoder = nn.Sequential(*modules)
+
+        # Mean and variance of distribution
+        self.fc_mu = nn.Linear(hidden_dims[-1]*4, self.dim_z)
+        self.fc_var = nn.Linear(hidden_dims[-1]*4, self.dim_z)
+
+        self._init_embeddings()
+
+        # Build Decoder
+        # self.mapping = nn.Linear(dim_z, kwargs["dim_model"])
+
+        ## Transformer for latent code
+        self.transformer = LatentTransformer(n_embedds=T, dim_z=dim_z, **kwargs)
+
+        ## CNN deformation network
+        self.decoder = CNNVectorDecoder(in_channels=in_channels, latent_dim=dim_z, T=T, **kwargs)
+        
+
+    def _init_embeddings(self):
+        nn.init.normal_(self.fc_mu.weight, std=0.001)
+        nn.init.constant_(self.fc_mu.bias, 0)
+        nn.init.normal_(self.fc_var.weight, std=0.001)
+        nn.init.constant_(self.fc_var.bias, 0)
+
+
+    def reparameterize(self, mu: Tensor, logvar: Tensor) -> Tensor:
+        """
+        Reparameterization trick to sample from N(mu, var) from
+        N(0,1).
+        :param mu: (Tensor) Mean of the latent Gaussian [B x D]
+        :param logvar: (Tensor) Standard deviation of the latent Gaussian [B x D]
+        :return: (Tensor) [B x D]
+        """
+
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return eps * std + mu
+        
+    def encode(self, imgs:Tensor):
+        # encode image through encoder
+        encoded_images = self.encoder(imgs)
+        encoded_images = encoded_images.view(encoded_images.size(0), -1) # result [Batch, Features]
+        return encoded_images
+
+    def forward(
+        self,
+        img: Tensor,
+        label:Tensor = None,
+        **kwargs
+    ):
+        encoded_images = self.encode(img)
+        # get mean and var
+        mu = self.fc_mu(encoded_images)
+        var = self.fc_var.forward(encoded_images)
+
+        # reparameterization trick
+        z = self.reparameterize(mu, var)
+
+        #mapped_z = self.mapping(z)
+        mapped_z = z
+
+        # apply transformer
+        transformed_z = self.transformer.forward(mapped_z, label=label)
+
+        transformed_z = transformed_z.squeeze(0)
+
+        # decode latent codes
+        output, transformed_z, control_loss = self.decoder.forward(transformed_z, **kwargs)
+        
+        return output, img, mu, var, control_loss # required for loss function
+
+    def generate(self, test_input, labels, **kwargs):
+        # results = self.forward(test_input, labels, **kwargs)
+        encoded_input = self.encode(test_input)
+        mu = self.fc_mu(encoded_input)
+        var = self.fc_var.forward(encoded_input) # TODO check if this is var or log_var
+
+        z = self.reparameterize(mu, var)
+
+        return self.decoder.generate(z, labels=labels, **kwargs)
+        # return results[0]
+    
+    def sample(self, num_samples: int, current_device:int, label = None, **kwargs) -> Tensor:
+        """
+        Samples from the latent space and return the corresponding
+        image space map.
+        :param num_samples: (Int) Number of samples
+        :return: (Tensor)
+        """
+        z = torch.randn(num_samples,
+                        self.dim_z).to(current_device)
+        
+        # apply transformer
+        transformed_z = self.transformer.forward(z, label=label)
+
+        transformed_z = transformed_z.squeeze(0)
+
+        # decode latent codes
+        output, _, _ = self.decoder.forward(transformed_z, **kwargs)
+        return output
+
+    def loss_function(self,
+                      recons:Tensor,
+                      input:Tensor,
+                      mu,
+                      log_var,
+                      other_losses:int = 0,
+                      **kwargs) -> dict:
+
+        return self.decoder.loss_function(recons, input, mu, log_var, other_losses, **kwargs)

@@ -64,16 +64,22 @@ class VAEXperiment(pl.LightningModule):
         real_img, labels = batch
         self.curr_device = real_img.device
 
-        results = self.forward(real_img, labels = labels)
 
         # regularely log training reconstructions
         if(batch_idx % self.params["train_log_interval"] == 0):
+            results = self.forward(real_img, labels = labels, log_path_length=True)
             log_images(results[0], real_img, log_key="training")
-
-        train_loss = self.model.loss_function(*results,
-                                              M_N = self.params['kld_weight'], #al_img.shape[0]/ self.num_train_imgs,
-                                              optimizer_idx=optimizer_idx,
-                                              batch_idx = batch_idx)
+            train_loss = self.model.loss_function(*results,
+                                            M_N = self.params['kld_weight'],
+                                            optimizer_idx=optimizer_idx,
+                                            batch_idx = batch_idx,
+                                            log_loss_images = True)
+        else:
+            results = self.forward(real_img, labels = labels)
+            train_loss = self.model.loss_function(*results,
+                                                M_N = self.params['kld_weight'], #al_img.shape[0]/ self.num_train_imgs,
+                                                optimizer_idx=optimizer_idx,
+                                                batch_idx = batch_idx)
 
         self.log_dict(train_loss, sync_dist=True, prog_bar=True)
 
@@ -116,8 +122,8 @@ class VAEXperiment(pl.LightningModule):
         test_input = test_input.to(self.curr_device)
         test_label = test_label.to(self.curr_device)
 
-#         test_input, test_label = batch
-        recons = self.model.generate(test_input, labels = test_label)
+        # test_input, test_label = batch
+        recons = self.model.generate(test_input, labels = test_label, verbose=True)
         
         # make sure there are no small negative numbers for rendering
         dummy = torch.nn.ReLU()

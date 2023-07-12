@@ -103,7 +103,9 @@ class MNISTpp(Dataset):
         if self.transform is not None:
             image = self.transform(image)
 
-        return image
+        label = 0
+
+        return image, label
 
     def __len__(self):
         return len(self.image_paths)
@@ -529,6 +531,7 @@ class NounProjectDataset(LightningDataModule):
         self.pin_memory = pin_memory
 
     def setup(self, stage: Optional[str] = None) -> None:
+        # TODO think about scaling [0.8, 1.2] and translating [-2.5, 2.5] from DeepSVG
         train_transforms = transforms.Compose(
             [
                 transforms.Resize(self.patch_size, antialias=True),

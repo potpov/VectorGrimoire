@@ -10,7 +10,7 @@ from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import WandbLogger, TensorBoardLogger
 from pytorch_lightning import seed_everything
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
-from dataset import MNISTDataset, MNISTppDataset, NounProjectDataset, EmojiDataset
+from thesis.dataset import MNISTDataset, MNISTppDataset, NounProjectDataset, EmojiDataset
 import wandb
 
 DATASETMAP = {
@@ -57,7 +57,12 @@ else:
 # For reproducibility
 seed_everything(config['exp_params']['manual_seed'], True)
 
-model = vae_models[config['model_params']['name']](**config['model_params'])
+if(args.wandb):
+    model = vae_models[config['model_params']['name']](**config['model_params'], wandb_logging=True)
+    wandb.watch(model, log='all')
+else:
+    model = vae_models[config['model_params']['name']](**config['model_params'])
+
 experiment = VAEXperiment(model,
                           config['exp_params'])
 
