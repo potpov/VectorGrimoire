@@ -8,6 +8,7 @@ test.png
 *.ipynb
 wandb/*
 *.ckpt
+!inference.ipynb
 
 
 # Byte-compiled / optimized / DLL files
