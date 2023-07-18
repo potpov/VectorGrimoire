@@ -265,9 +265,14 @@ class CNNVectorDecoder(VectorDecoder):
         # outputs = outputs[:, :, :self.latent_dim] + outputs[:, :, self.latent_dim:] # aggregate outputs of both RNNs
         z_layers = []
         for i in range(n):
+            # this handles T=1
+            if(transformed_z.dim() > 2):
+                current_z = transformed_z[:,i,:]
+            else:
+                current_z = transformed_z
             # shape_output = self.divide_shape(transformed_z[:, i, :]) # [bs, latent_size]
             # shape_latent = self.final_shape_latent(transformed_z) # [bs, latent_size]
-            all_points = self.decode(transformed_z)#, point_predictor=self.point_predictor[i])
+            all_points = self.decode(current_z)#, point_predictor=self.point_predictor[i])
             if("log_path_length" in kwargs.keys() and self.wandb_logging):
                 if(kwargs["log_path_length"]):
                     self.log_path_lengths(all_points*self.imsize, current_shape_idx=i)
@@ -279,7 +284,7 @@ class CNNVectorDecoder(VectorDecoder):
             else:
                 layer = self.raster(all_points, self.colors[i], white_background=False)
 
-            z_pred = self.z_order(transformed_z)
+            z_pred = self.z_order(current_z)
             layers.append(layer)
             z_layers.append(torch.exp(z_pred[:, :, None, None]))
             if return_overlap_loss:
@@ -537,6 +542,9 @@ class VAEctorGen(BaseVAE):
 
         transformed_z = transformed_z.squeeze(0)
 
+        # adapt to batch first - [B x T x LatentDim]
+        transformed_z = transformed_z.permute(1,0,2)
+
         # decode latent codes
         output, transformed_z, control_loss = self.decoder.forward(transformed_z, **kwargs)
         
@@ -550,7 +558,14 @@ class VAEctorGen(BaseVAE):
 
         z = self.reparameterize(mu, var)
 
-        return self.decoder.generate(z, labels=labels, **kwargs)
+        transformed_z = self.transformer.forward(z, label=labels)
+
+        transformed_z = transformed_z.squeeze(0)
+
+        # adapt to batch first - [B x T x LatentDim]
+        transformed_z = transformed_z.permute(1,0,2)
+
+        return self.decoder.generate(transformed_z, labels=labels, **kwargs)
         # return results[0]
     
     def sample(self, num_samples: int, current_device:int, label = None, **kwargs) -> Tensor:

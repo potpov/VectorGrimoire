@@ -180,6 +180,18 @@ class VectorDecoder(BaseVAE):
             shape_groups = []
             points = all_points[k].contiguous()#[self.sort_idx[k]] # .cpu()
 
+            # had this issue a few times with the LR finder
+            if(torch.isnan(points).any()):
+                print(f"[WARNING] Found NaN values in points")
+                points = torch.rand(points.shape).to(points.device)* 0.01
+
+            # check if points are all collapsed, would throw DiffVG error..
+            if(torch.all(points == 0.0)):
+                print(f"[WARNING] Found all points to be at 0.0")
+                noise_vec = torch.rand(points.shape).to(points.device)* 0.01
+                points = points + noise_vec
+
+
             if verbose: # I think this creates this color gradient for easier visual tracing in the rastered image
                 np.random.seed(0)
                 colors = np.random.rand(self.curves, 4)

@@ -14,7 +14,7 @@ model_params:
   other_losses_weight: 0
   composite_fn: 'soft'
   b_w: True
-  T: 1
+  T: 2
   optimize_colors: False
   encoder_string: "im2vec_encoder" # must be one of ["im2vec_encoder", 'RN50', 'RN101', 'RN50x4', 'RN50x16', 'RN50x64', 'ViT-B/32', 'ViT-B/16', 'ViT-L/14', 'ViT-L/14@336px']
   freeze_encoder: False
@@ -51,11 +51,11 @@ exp_params:
 
 trainer_params:
   devices: 1
-  max_epochs: 250
+  max_epochs: 100
 
 logging_params:
   project: "test"
-  save_dir: "/scratch2/moritz_logs/VAEctorgen_mnist"
+  save_dir: "/scratch2/moritz_logs/VAEctorgen_mnistpp"
   other_interpolations: True
-  name: "VAEctorgen_mnist"
+  name: "VAEctorgen_mnistpp"
   version: 0

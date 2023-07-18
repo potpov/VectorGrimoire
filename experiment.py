@@ -28,6 +28,7 @@ class VAEXperiment(pl.LightningModule):
         self.curr_device = None
         self.hold_graph = False
         self.beta_scale = 2.0 # introduced with Im2Vec
+        self.lr = params["LR"]
         
         if("log_fid" in self.params.keys()):
             self.log_fid = True if self.params["log_fid"] else False
@@ -131,12 +132,13 @@ class VAEXperiment(pl.LightningModule):
         
         log_images(recons[:5], test_input[:5], log_key="val_recons")
 
-        vutils.save_image(recons.data[:10],
-                          os.path.join(self.logger.save_dir , 
-                                       "Reconstructions", 
-                                       f"recons_{self.logger.name}_Epoch_{self.current_epoch}.png"),
-                          normalize=True,
-                          nrow=5)
+        if(self.logger.save_dir is not None):
+            vutils.save_image(recons.data[:10],
+                            os.path.join(self.logger.save_dir , 
+                                        "Reconstructions", 
+                                        f"recons_{self.logger.name}_Epoch_{self.current_epoch}.png"),
+                            normalize=True,
+                            nrow=5)
 
         try:
             num_of_samples = 100
@@ -145,12 +147,13 @@ class VAEXperiment(pl.LightningModule):
                                         labels = test_label)
             samples = dummy(samples[:,:3,:,:]) # drop the alpha channel for metric calculation
             log_images(samples[:5], samples[5:10], log_key="samples")
-            vutils.save_image(samples.cpu().data,
-                              os.path.join(self.logger.save_dir , 
-                                           "Samples",      
-                                           f"{self.logger.name}_Epoch_{self.current_epoch}.png"),
-                              normalize=True,
-                              nrow=5)
+            if(self.logger.save_dir is not None):
+                vutils.save_image(samples.cpu().data,
+                                os.path.join(self.logger.save_dir , 
+                                            "Samples",      
+                                            f"{self.logger.name}_Epoch_{self.current_epoch}.png"),
+                                normalize=True,
+                                nrow=5)
             # Log FID score
             if(self.log_fid):
                 self.fid.update(test_input, real = True)
@@ -192,7 +195,7 @@ class VAEXperiment(pl.LightningModule):
         scheds = []
 
         optimizer = optim.AdamW(self.model.parameters(),
-                               lr=self.params['LR'],
+                               lr=self.lr,
                                weight_decay=self.params['weight_decay'])
         optims.append(optimizer)
         # Check if more than 1 optimizer is required (Used for adversarial training)

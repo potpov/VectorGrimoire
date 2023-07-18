@@ -9,7 +9,7 @@ import torch.backends.cudnn as cudnn
 from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import WandbLogger, TensorBoardLogger
 from pytorch_lightning import seed_everything
-from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
+from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, LearningRateFinder, EarlyStopping
 from thesis.dataset import MNISTDataset, MNISTppDataset, NounProjectDataset, EmojiDataset
 import wandb
 
@@ -71,7 +71,9 @@ data = DATASETMAP[config["data_params"]["dataset"]](**config["data_params"], pin
 data.setup()
 runner = Trainer(logger=wandb_logger,
                  callbacks=[
-                     LearningRateMonitor(),
+                     LearningRateMonitor(logging_interval="epoch", log_momentum=True),
+                     LearningRateFinder(early_stop_threshold=None),
+                     EarlyStopping("val_loss", 0.002, 4),
                      ModelCheckpoint(save_top_k=1, 
                                      dirpath =os.path.join(config['logging_params']['save_dir'] , "checkpoints"), 
                                      monitor= "val_loss",
