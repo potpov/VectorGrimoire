@@ -7,7 +7,7 @@ datasets/*.ipynb
 test.png
 *.ipynb
 wandb/*
-
+*.ckpt
 
 
 # Byte-compiled / optimized / DLL files

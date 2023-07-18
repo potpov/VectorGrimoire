@@ -13,7 +13,7 @@ model_params:
   other_losses_weight: 0
   composite_fn: 'soft'
   b_w: True
-  T: 2
+  T: 10
   optimize_colors: False
   encoder_string: "im2vec_encoder" # must be one of ["im2vec_encoder", 'RN50', 'RN101', 'RN50x4', 'RN50x16', 'RN50x64', 'ViT-B/32', 'ViT-B/16', 'ViT-L/14', 'ViT-L/14@336px']
   freeze_encoder: False
@@ -31,7 +31,7 @@ exp_params:
   #clip_sim_model: "openai/clip-vit-large-patch14"
   #clip_prompt_suffix: ". minimal flat 2d vector icon. black and white. on a white background. trending on artstation" # for VectorFusion, replace "black and white" with "linear color"
   LR: 0.0005 # was 0.0005 originally
-  weight_decay: 0.0
+  weight_decay: 0.01
   scheduler_gamma: 0.99
   kld_weight: 0.1
   resample_circle_segments: False # was True originally
@@ -44,8 +44,8 @@ trainer_params:
   max_epochs: 300
 
 logging_params:
-  project: "thesis"
-  save_dir: "/scratch2/moritz_logs/Im2Vec_MNISTpp"
+  project: "test"
+  save_dir: "/scratch2/moritz_logs/Im2Vec_MNISTpp_T10"
   other_interpolations: True
-  name: "Im2Vec_mnistpp"
+  name: "Im2Vec MNIST++ T10"
   version: 0
