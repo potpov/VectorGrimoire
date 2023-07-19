@@ -14,6 +14,7 @@ from torch.utils.data import DataLoader
 from thesis.utils import log_images
 from torchmetrics.image.fid import FrechetInceptionDistance
 from torchmetrics.multimodal import CLIPScore
+import wandb
 
 
 class VAEXperiment(pl.LightningModule):
@@ -102,6 +103,7 @@ class VAEXperiment(pl.LightningModule):
         return {}
 
     def validation_step(self, batch, batch_idx, optimizer_idx = 0):
+        print("Entering validation step.")
         real_img, labels = batch
         self.curr_device = real_img.device
 
@@ -115,9 +117,11 @@ class VAEXperiment(pl.LightningModule):
 
         
     def on_validation_end(self) -> None:
+        print("Entering on_validation_end.")
         self.sample_images()
         
     def sample_images(self):
+        print("Sampling images for wandb.")
         # Get sample reconstruction image            
         test_input, test_label = next(iter(self.trainer.datamodule.test_dataloader()))
         test_input = test_input.to(self.curr_device)
@@ -141,7 +145,10 @@ class VAEXperiment(pl.LightningModule):
                             nrow=5)
 
         try:
-            num_of_samples = 100
+            if(self.log_clip_sim or self.log_fid):
+                num_of_samples = 100
+            else:
+                num_of_samples = 15
             samples = self.model.sample(num_of_samples,
                                         self.curr_device,
                                         labels = test_label)
@@ -186,7 +193,8 @@ class VAEXperiment(pl.LightningModule):
 
                 self.logger.log_metrics({"val_recons_CLIP_sim" : clip_sim_recon_score, "val_sample_CLIP_sim" : clip_sim_sample_score})#, sync_dist=True ,prog_bar=True)
                 
-        except Warning:
+        except Exception as e:
+            print(f"[ERROR] at sampling")
             pass
 
     def configure_optimizers(self):
@@ -194,9 +202,13 @@ class VAEXperiment(pl.LightningModule):
         optims = []
         scheds = []
 
-        optimizer = optim.AdamW(self.model.parameters(),
-                               lr=self.lr,
-                               weight_decay=self.params['weight_decay'])
+        if(self.params["weight_decay"] is not None):
+            optimizer = optim.AdamW(self.model.parameters(),
+                                lr=self.lr,
+                                weight_decay=self.params['weight_decay'])
+        else:
+            optimizer = optim.Adam(self.model.parameters(),
+                                lr=self.lr)
         optims.append(optimizer)
         # Check if more than 1 optimizer is required (Used for adversarial training)
         try:
@@ -223,4 +235,5 @@ class VAEXperiment(pl.LightningModule):
                     pass
                 return optims, scheds
         except:
-            return optims
+            pass
+        return optims

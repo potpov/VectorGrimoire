@@ -98,6 +98,9 @@ class LatentTransformer(nn.Module):
         self.fcn = nn.Linear(dim_model, dim_z)
     
     def forward(self, z, label = None):
+        """
+        requires z to be of shape: []
+        """
         # N = z.size(2)
         l = self.label_embedding(label).unsqueeze(0) if self.label_condition else None
 
@@ -130,6 +133,7 @@ class CNNVectorDecoder(VectorDecoder):
                 return nn.Linear(in_channels, out_channels)
 
         T = kwargs['T']
+        self.T = T
         print(f"using {T} paths")
         if(b_w):
             if(kwargs["optimize_colors"]):
@@ -257,14 +261,13 @@ class CNNVectorDecoder(VectorDecoder):
     def decode_and_composite(self, transformed_z: Tensor, return_overlap_loss=False, **kwargs):
         # bs = z.shape[0]
         layers = []
-        n = len(self.colors)
         loss = 0
         # z_rnn_input = z[None, :, :].repeat(n, 1, 1)  # [len, batch size, emb dim], copies the latent code for each shape of the composition
         # outputs, hidden = self.rnn(z_rnn_input)
         # outputs = outputs.permute(1, 0, 2)  # [batch size, len, emb dim]
         # outputs = outputs[:, :, :self.latent_dim] + outputs[:, :, self.latent_dim:] # aggregate outputs of both RNNs
         z_layers = []
-        for i in range(n):
+        for i in range(self.T):
             # this handles T=1
             if(transformed_z.dim() > 2):
                 current_z = transformed_z[:,i,:]
@@ -280,7 +283,11 @@ class CNNVectorDecoder(VectorDecoder):
             # print(torch.isfinite(all_points).all())
             # import pdb; pdb.set_trace()
             if("verbose" in kwargs):
-                layer = self.raster(all_points, self.colors[i], verbose=kwargs['verbose'], white_background=False)
+                if(kwargs["verbose"]):
+                    gradient_end_colors = [np.array((0., 0., 1., 1)), np.array((0., 1., 0., 1)), np.array((1., 0., 0., 1))]
+                    layer = self.raster(all_points, gradient_end_colors[i], verbose=True, white_background=False)
+                else:
+                    layer = self.raster(all_points, self.colors[i], verbose=False, white_background=False)
             else:
                 layer = self.raster(all_points, self.colors[i], white_background=False)
 
@@ -301,8 +308,8 @@ class CNNVectorDecoder(VectorDecoder):
 
     def generate(self, z: Tensor, **kwargs) -> Tensor:
         """
-        Given an input image x, returns the reconstructed image
-        :param x: (Tensor) [B x C x H x W]
+        Given an input latent z, generates the reconstructed image
+        :param z: (Tensor) [B x T x DIM]
         :return: (Tensor) [B x C x H x W]
         """
         # mu, log_var = self.encode(x)
@@ -582,6 +589,9 @@ class VAEctorGen(BaseVAE):
         transformed_z = self.transformer.forward(z, label=label)
 
         transformed_z = transformed_z.squeeze(0)
+
+        # adapt to batch first - [B x T x LatentDim]
+        transformed_z = transformed_z.permute(1,0,2)
 
         # decode latent codes
         output, _, _ = self.decoder.forward(transformed_z, **kwargs)
