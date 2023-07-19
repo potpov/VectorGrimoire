@@ -89,17 +89,33 @@ class VectorDecoder(BaseVAE):
         else:
             self.decode_transform = lambda x: x
         num_one_hot = base_control_features.shape[1]
-        fused_latent_dim = latent_dim + num_one_hot+ (sample_rate*2)
+        fused_latent_dim = latent_dim + num_one_hot + (sample_rate*2)
         self.decoder_input = get_computational_unit(fused_latent_dim, fused_latent_dim*2, unit)
 
-        self.point_predictor = nn.ModuleList([
-            get_computational_unit(fused_latent_dim*2, fused_latent_dim*2, unit),
-            get_computational_unit(fused_latent_dim*2, fused_latent_dim*2, unit),
-            get_computational_unit(fused_latent_dim*2, fused_latent_dim*2, unit),
-            get_computational_unit(fused_latent_dim*2, fused_latent_dim*2, unit),
-            get_computational_unit(fused_latent_dim*2, 2, unit),
-            # nn.Sigmoid()  # bound spatial extent
-        ])
+        # self.point_predictor = nn.ModuleList([
+        #     get_computational_unit(fused_latent_dim*2, fused_latent_dim*2, unit),
+        #     get_computational_unit(fused_latent_dim*2, fused_latent_dim*2, unit),
+        #     get_computational_unit(fused_latent_dim*2, fused_latent_dim*2, unit),
+        #     get_computational_unit(fused_latent_dim*2, fused_latent_dim*2, unit),
+        #     get_computational_unit(fused_latent_dim*2, 2, unit),
+        #     # nn.Sigmoid()  # bound spatial extent
+        # ])
+        self.point_predictor = nn.Sequential(
+            nn.Conv1d(fused_latent_dim, fused_latent_dim, kernel_size=3, padding=1, padding_mode='circular', stride=1, dilation=1),
+            nn.BatchNorm1d(fused_latent_dim),
+            nn.LeakyReLU(),
+            nn.Conv1d(fused_latent_dim, fused_latent_dim, kernel_size=3, padding=1, padding_mode='circular', stride=1, dilation=1),
+            nn.BatchNorm1d(fused_latent_dim),
+            nn.LeakyReLU(),
+            nn.Conv1d(fused_latent_dim, fused_latent_dim, kernel_size=3, padding=1, padding_mode='circular', stride=1, dilation=1),
+            nn.BatchNorm1d(fused_latent_dim),
+            nn.LeakyReLU(),
+            nn.Conv1d(fused_latent_dim, fused_latent_dim, kernel_size=3, padding=1, padding_mode='circular', stride=1, dilation=1),
+            nn.BatchNorm1d(fused_latent_dim),
+            nn.LeakyReLU(),
+            nn.Conv1d(fused_latent_dim, 2, kernel_size=3, padding=1, padding_mode='circular', stride=1, dilation=1),
+            nn.Sigmoid()  # bound spatial extent for image coordinates
+        ) # TODO add better initialization
         if self.learn_sampling:
             self.sample_deformation = nn.Sequential(
                 get_computational_unit(latent_dim + 2+ (sample_rate*2), latent_dim*2, unit),
@@ -152,8 +168,8 @@ class VectorDecoder(BaseVAE):
     def sample_circle(self, r, angles, sample_rate=10):
         pos = []
         for i in range(1, sample_rate+1):
-            x = (torch.cos(angles*(sample_rate/i)) * r)# + r
-            y = (torch.sin(angles*(sample_rate/i)) * r)# + r
+            x = (torch.cos(angles*(sample_rate/i)) * r) + r
+            y = (torch.sin(angles*(sample_rate/i)) * r) + r
             pos.append(x)
             pos.append(y)
         return torch.stack(pos, dim=-1)
@@ -164,15 +180,16 @@ class VectorDecoder(BaseVAE):
         render_size = self.imsize
         bs = all_points.shape[0]
         if verbose:
-            render_size = render_size*2
+            render_size = 1024
         outputs = []
         all_points = all_points*render_size # brings point coordinates from [0,1] back to image scale
 
         num_ctrl_pts = torch.zeros(self.curves, dtype=torch.int32).to(all_points.device) + 2
-        if(isinstance(color, list)):
-            color = make_tensor(color, grad=True).to(all_points.device)
-        else:
-            color.to(all_points.device)
+        # if(isinstance(color, list)):
+        if(not isinstance(color, Tensor)):
+            color = make_tensor(color, grad=False).to(all_points.device)
+        # else:
+        #     color.to(all_points.device)
         for k in range(bs):
             # Get point parameters from network
             render = pydiffvg.RenderFunction.apply
@@ -194,15 +211,14 @@ class VectorDecoder(BaseVAE):
 
             if verbose: # I think this creates this color gradient for easier visual tracing in the rastered image
                 np.random.seed(0)
-                colors = np.random.rand(self.curves, 4)
                 high = np.array((0.565, 0.392, 0.173, 1))
-                low = np.array((0.094, 0.310, 0.635, 1))
+                low = np.array((0.094, 0.310, 0.635, 1)) # TODO change this so it takes different colors for each path
                 diff = (high-low)/(self.curves)
-                colors[:, 3] = 1
-                for i in range(self.curves):
-                    scale = diff*i
+
+                for i in range(self.curves): 
+                    scale = diff*i # the i creates the gradient -> different color for each segment
                     color = low + scale
-                    color[3] = 1
+                    color[3] = 0.7
                     color = torch.tensor(color)
                     num_ctrl_pts = torch.zeros(1, dtype=torch.int32) + 2
                     if i*3 + 4 > self.curves * 3:
@@ -211,7 +227,7 @@ class VectorDecoder(BaseVAE):
                         curve_points = points[i*3:i*3 + 4]
                     path = pydiffvg.Path(
                         num_control_points=num_ctrl_pts, points=curve_points,
-                        is_closed=False, stroke_width=torch.tensor(4))
+                        is_closed=False, stroke_width=torch.tensor(2))
                     path_group = pydiffvg.ShapeGroup(
                         shape_ids=torch.tensor([i]),
                         fill_color=None,
@@ -223,16 +239,17 @@ class VectorDecoder(BaseVAE):
                     color = low + scale
                     color[3] = 1
                     color = torch.tensor(color)
+                    indicator_scale = 4
                     if i%3==0:
-                        # color = torch.tensor(colors[i//3]) #green
-                        shape = pydiffvg.Rect(p_min = points[i]-8,
-                                             p_max = points[i]+8)
+                        color = torch.tensor([1.,0.,1.,1.]) #fuchsia
+                        shape = pydiffvg.Rect(p_min = points[i]-indicator_scale,
+                                             p_max = points[i]+indicator_scale)
                         group = pydiffvg.ShapeGroup(shape_ids=torch.tensor([self.curves+i]),
                                                            fill_color=color)
                 
                     else:
-                        # color = torch.tensor(colors[i//3]) #purple
-                        shape = pydiffvg.Circle(radius=torch.tensor(8.0),
+                        color = torch.tensor([0.,0.5,0.,1.]) #green
+                        shape = pydiffvg.Circle(radius=torch.tensor(indicator_scale),
                                                  center=points[i])
                         group = pydiffvg.ShapeGroup(shape_ids=torch.tensor([self.curves+i]),
                                                            fill_color=color)
@@ -303,15 +320,18 @@ class VectorDecoder(BaseVAE):
             y = (torch.sin(new_angles) * self.circle_rad)# + r
             z = torch.cat([z_base, x, y], dim=-1)
         else:
-            id = self.id[None, :, :].repeat(bs, 1, 1)
+            id = self.id[None, :, :].repeat(bs, 1, 1) # [ BS, curves * 3, 2], e.g. [32, 60, 2]
             z = torch.cat([z_base, id], dim=-1) # [bs, self.curves * 3, latent_dim + 2 (c) + 2 (p)]
 
-        all_points = self.decoder_input(self.decode_transform(z))
-        for compute_block in point_predictor:
-            all_points = F.relu(all_points)
-            # all_points = torch.cat([z_base_transform, all_points], dim=1)
-            all_points = compute_block(all_points)
-        all_points = self.decode_transform(F.sigmoid(all_points/self.scale_factor))
+        # all_points = self.decoder_input(self.decode_transform(z)) TODO this was original
+        all_points = self.decode_transform(z)
+        # for compute_block in point_predictor:
+        #     all_points = F.relu(all_points)
+        #     # all_points = torch.cat([z_base_transform, all_points], dim=1)
+        #     all_points = compute_block(all_points)
+        # all_points = self.decode_transform(F.sigmoid(all_points/self.scale_factor))
+        all_points = self.point_predictor(all_points)
+        all_points = all_points.permute(0, 2, 1)
         return all_points
 
     def reparameterize(self, mu: Tensor, logvar: Tensor) -> Tensor:
@@ -398,7 +418,7 @@ class VectorDecoder(BaseVAE):
                       other_losses:int = 0,
                       **kwargs) -> dict:
         """
-        Computes the VAE loss function.
+        Computes the VAE loss function. Reconstruction loss has upper bound of 20.83.
         KL(N(\mu, \sigma), N(0, 1)) = \log \frac{1}{\sigma} + \frac{\sigma^2 + \mu^2}{2} - \frac{1}{2}
         :param args:
         :param kwargs:
