@@ -13,6 +13,8 @@ from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, Le
 from thesis.dataset import MNISTDataset, MNISTppDataset, NounProjectDataset, EmojiDataset
 import wandb
 
+torch.set_float32_matmul_precision('high')
+
 DATASETMAP = {
     "mnist" : MNISTDataset,
     "mnistpp" : MNISTppDataset,
@@ -72,13 +74,14 @@ data.setup()
 runner = Trainer(logger=wandb_logger,
                  callbacks=[
                      LearningRateMonitor(logging_interval="epoch", log_momentum=True),
-                     LearningRateFinder(early_stop_threshold=None),
-                     EarlyStopping("val_loss", 0.002, 4),
+                    #  LearningRateFinder(early_stop_threshold=None, num_training_steps=200),
+                    #  EarlyStopping("val_loss", 0.002, 3),
                      ModelCheckpoint(save_top_k=1, 
                                      dirpath =os.path.join(config['logging_params']['save_dir'] , "checkpoints"), 
                                      monitor= "val_loss",
                                      save_last= True),
                  ],
+                 overfit_batches=1,
                  **config['trainer_params'])
 
 
