@@ -4,10 +4,10 @@ model_params:
   imsize: 64 # must match patch_size in data_params
   dim_z: 256 # must be equal to dim_model or mapping layer required
   loss_fn: 'MSE'
-  paths: 20 # how many bezier paths describe the unit circle, self.curves
-  beta: 0.1 # 0.1
-  radius: 3 # was 3 originally
-  scale_factor: 1
+  paths: 10 # 20 originally, how many bezier paths describe the unit circle, self.curves
+  beta: 0.0 # 0.1
+  radius: 100 # was 3 originally
+  scale_factor: 0.1 # was 1 originally, is the divisor of the final point_predictor output before sigmoid
   learn_sampling: False # was False originally
   only_auxillary_training: False
   memory_leak_training: False
@@ -31,27 +31,27 @@ model_params:
 data_params:
   dataset: "mnistpp"
   data_path: "/home/mfeuerpfeil/master/thesis/datasets/MNISTpp"
-  train_batch_size: 32
-  val_batch_size:  32
-  patch_size: 64 # HAS TO BE 224 FOR CLIP RES50 TO WORK, otherwise take 128
-  num_workers: 4
+  train_batch_size: 2
+  val_batch_size:  2
+  patch_size: 64 # HAS TO BE 224 FOR CLIP RES50 TO WORK, otherwise take w/e
+  num_workers: 2
 
 exp_params:
   log_fid: False # True
   # clip_sim_model: "openai/clip-vit-large-patch14"
   #clip_prompt_suffix: ". minimal flat 2d vector icon. black and white. on a white background. trending on artstation" # for VectorFusion, replace "black and white" with "linear color"
-  LR: 0.0005 # was 0.0005 originally
-  weight_decay: 0.0
-  scheduler_gamma: 0.95
-  kld_weight: 0.1
+  LR: 0.0001 # was 0.0005 originally
+  weight_decay: null # null to use regular Adam, float to use AdamW
+  scheduler_gamma: null # null to disable
+  kld_weight: 0.0
   resample_circle_segments: False # was True originally
   b_w: True
-  train_log_interval: 200 # ~ 8000 / batch_size / 4
+  train_log_interval: 75 # ~ 8000 / batch_size / 4
   manual_seed: 1265
 
 trainer_params:
   devices: 1
-  max_epochs: 100
+  max_epochs: 200
 
 logging_params:
   project: "test"
