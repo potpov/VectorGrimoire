@@ -118,7 +118,8 @@ class VAEXperiment(pl.LightningModule):
         
     def on_validation_end(self) -> None:
         print("Entering on_validation_end.")
-        self.sample_images()
+        with torch.no_grad():
+            self.sample_images()
         
     def sample_images(self):
         print("Sampling images for wandb.")
@@ -178,18 +179,18 @@ class VAEXperiment(pl.LightningModule):
                 self.logger.log_metrics({"val_recons_FID" : fid_recon_score, "val_sample_FID" : fid_sample_score})#, sync_dist=True ,prog_bar=True)
 
             if(self.log_clip_sim):
-                with torch.no_grad():
-                    _label_translate_dict = self.trainer.datamodule.val_dataset._int_to_label
-                    # was used to test VRAM usage
-                    # _max_clip_calculations = 100
-                    
-                    self.clip_sim.update(recons, [_label_translate_dict[label]+self.clip_prompt_suffix for label in test_label.cpu().numpy()])
-                    clip_sim_recon_score = self.clip_sim.compute()
-                    self.clip_sim.reset()
+                
+                _label_translate_dict = self.trainer.datamodule.val_dataset._int_to_label
+                # was used to test VRAM usage
+                # _max_clip_calculations = 100
+                
+                self.clip_sim.update(recons, [_label_translate_dict[label]+self.clip_prompt_suffix for label in test_label.cpu().numpy()])
+                clip_sim_recon_score = self.clip_sim.compute()
+                self.clip_sim.reset()
 
-                    self.clip_sim.update(samples, [_label_translate_dict[label]+self.clip_prompt_suffix for label in test_label.cpu().numpy()[:num_of_samples]])
-                    clip_sim_sample_score = self.clip_sim.compute()
-                    self.clip_sim.reset()
+                self.clip_sim.update(samples, [_label_translate_dict[label]+self.clip_prompt_suffix for label in test_label.cpu().numpy()[:num_of_samples]])
+                clip_sim_sample_score = self.clip_sim.compute()
+                self.clip_sim.reset()
 
                 self.logger.log_metrics({"val_recons_CLIP_sim" : clip_sim_recon_score, "val_sample_CLIP_sim" : clip_sim_sample_score})#, sync_dist=True ,prog_bar=True)
                 
