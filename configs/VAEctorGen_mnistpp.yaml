@@ -26,15 +26,16 @@ model_params:
   n_labels: 100
   dim_label: 64
   label_condition: False
+  pyramid_loss_mode: "default" # currently supports {null, "default"}
 
 
 data_params:
   dataset: "mnistpp"
   data_path: "/home/mfeuerpfeil/master/thesis/datasets/MNISTpp"
-  train_batch_size: 2
-  val_batch_size:  2
+  train_batch_size: 128
+  val_batch_size:  128
   patch_size: 64 # HAS TO BE 224 FOR CLIP RES50 TO WORK, otherwise take w/e
-  num_workers: 2
+  num_workers: 4
 
 exp_params:
   log_fid: False # True

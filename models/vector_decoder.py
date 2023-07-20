@@ -47,6 +47,10 @@ class VectorDecoder(BaseVAE):
             self.other_losses_weight = kwargs['other_losses_weight']
         if 'reparametrize' in kwargs.keys():
             self.reparametrize_ = kwargs['reparametrize']
+        if 'pyramid_loss_mode' in kwargs.keys():
+            self.pyramid_loss_mode = kwargs['pyramid_loss_mode']
+        else:
+            self.pyramid_loss_mode = "default"
 
         self.curves = paths
         # self.in_channels = in_channels
@@ -176,6 +180,7 @@ class VectorDecoder(BaseVAE):
 
     def raster(self, all_points, color=[0,0,0, 1], verbose=False, white_background=True, **kwargs):
         assert len(color) == 4
+        device = all_points.device
         # print('1:', process.memory_info().rss*1e-6)
         render_size = self.imsize
         bs = all_points.shape[0]
@@ -184,10 +189,10 @@ class VectorDecoder(BaseVAE):
         outputs = []
         all_points = all_points*render_size # brings point coordinates from [0,1] back to image scale
 
-        num_ctrl_pts = torch.zeros(self.curves, dtype=torch.int32).to(all_points.device) + 2
+        num_ctrl_pts = torch.zeros(self.curves, dtype=torch.int32).to(device) + 2
         # if(isinstance(color, list)):
         if(not isinstance(color, Tensor)):
-            color = make_tensor(color, grad=False).to(all_points.device)
+            color = make_tensor(color, grad=False).to(device)
         # else:
         #     color.to(all_points.device)
         for k in range(bs):
@@ -200,26 +205,26 @@ class VectorDecoder(BaseVAE):
             # had this issue a few times with the LR finder
             if(torch.isnan(points).any()):
                 print(f"[WARNING] Found NaN values in points")
-                points = torch.rand(points.shape).to(points.device)* 0.01
+                points = torch.rand(points.shape).to(device)* 0.01
 
             # check if points are all collapsed, would throw DiffVG error..
             if(torch.all(points == 0.0)):
                 print(f"[WARNING] Found all points to be at 0.0")
-                noise_vec = torch.rand(points.shape).to(points.device)* 0.01
+                noise_vec = torch.rand(points.shape).to(device)* 0.01
                 points = points + noise_vec
 
 
             if verbose: # I think this creates this color gradient for easier visual tracing in the rastered image
                 np.random.seed(0)
-                high = np.array((0.565, 0.392, 0.173, 1))
-                low = np.array((0.094, 0.310, 0.635, 1)) # TODO change this so it takes different colors for each path
-                diff = (high-low)/(self.curves)
+                end_color = color.to(device)
+                start_color = torch.Tensor([0.0, 0.0, 0.0, 1.]).to(device)
+                color_step_size = (end_color-start_color)/(self.curves)
 
                 for i in range(self.curves): 
-                    scale = diff*i # the i creates the gradient -> different color for each segment
-                    color = low + scale
-                    color[3] = 0.7
-                    color = torch.tensor(color)
+                    color_diff = color_step_size*i # the i creates the gradient -> different color for each segment
+                    color = start_color + color_diff
+                    color[3] = 0.9
+                    # color = torch.tensor(color)
                     num_ctrl_pts = torch.zeros(1, dtype=torch.int32) + 2
                     if i*3 + 4 > self.curves * 3:
                         curve_points = torch.stack([points[i*3], points[i*3+1], points[i*3+2], points[0]])
@@ -234,12 +239,9 @@ class VectorDecoder(BaseVAE):
                         stroke_color=color)
                     shapes.append(path)
                     shape_groups.append(path_group)
-                for i in range(self.curves * 3):#from here TODO comment
-                    scale = diff*(i//3)
-                    color = low + scale
-                    color[3] = 1
-                    color = torch.tensor(color)
-                    indicator_scale = 4
+                # add the points
+                for i in range(self.curves * 3):
+                    indicator_scale = 3
                     if i%3==0:
                         color = torch.tensor([1.,0.,1.,1.]) #fuchsia
                         shape = pydiffvg.Rect(p_min = points[i]-indicator_scale,
@@ -397,17 +399,18 @@ class VectorDecoder(BaseVAE):
 
     def gaussian_pyramid_loss(self, recons, input, log_loss_images = False):
         recon_loss =self.loss_fn(recons, input, reduction='none').mean(dim=[1,2,3]) #+ self.lpips(recons, input)*0.1
-        all_recons = [recons]
-        all_inputs = [input]
-        for j in range(2,5):
-            recons = dsample(recons)
-            input = dsample(input)
+        if(self.pyramid_loss_mode == "default"):
+            all_recons = [recons]
+            all_inputs = [input]
+            for j in range(2,5):
+                recons = dsample(recons)
+                input = dsample(input)
+                if(log_loss_images):
+                    all_recons.append(recons)
+                    all_inputs.append(input)
+                recon_loss = recon_loss + self.loss_fn(recons, input, reduction='none').mean(dim=[1,2,3])/j
             if(log_loss_images):
-                all_recons.append(recons)
-                all_inputs.append(input)
-            recon_loss = recon_loss + self.loss_fn(recons, input, reduction='none').mean(dim=[1,2,3])/j
-        if(log_loss_images):
-            self.log_pyramid_images(all_recons, all_inputs, log_loss=True)
+                self.log_pyramid_images(all_recons, all_inputs, log_loss=True)
         return recon_loss
 
     def loss_function(self,
