@@ -70,7 +70,11 @@ class VAEXperiment(pl.LightningModule):
         # regularely log training reconstructions
         if(batch_idx % self.params["train_log_interval"] == 0):
             results = self.forward(real_img, labels = labels, log_path_length=True)
-            log_images(results[0], real_img, log_key="training")
+            if(results[0].shape[0] > 10):
+                log_amount = 10
+            else:
+                log_amount = results[0].shape[0]
+            log_images(results[0][:log_amount], real_img[:log_amount], log_key="training")
             train_loss = self.model.loss_function(*results,
                                             M_N = self.params['kld_weight'],
                                             optimizer_idx=optimizer_idx,

@@ -81,7 +81,7 @@ runner = Trainer(logger=wandb_logger,
                                      monitor= "val_loss",
                                      save_last= True),
                  ],
-                 overfit_batches=1,
+                #  overfit_batches=1,
                  **config['trainer_params'])
 
 
