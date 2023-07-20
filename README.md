@@ -3,10 +3,32 @@ Master's thesis on conditional SVG generative models.
 ## Setup
 First of all, make a new python env and install requirements.txt:
 ```bash
-$ conda create --name thesis python=3.10
-$ conda activate thesis
-$ pip install -r requirements.txt
+$ conda create --name SVG python=3.10
+$ conda activate SVG
 ```
+Clone and Install [diffsvg](https://github.com/BachiLi/diffvg) as explained in the repo:
+```bash
+git clone git@github.com:BachiLi/diffvg.git
+git submodule update --init --recursive
+conda install -y pytorch torchvision -c pytorch
+conda install -y numpy
+conda install -y scikit-image
+conda install -y -c anaconda cmake
+conda install -y -c conda-forge ffmpeg
+pip install svgwrite
+pip install svgpathtools
+pip install cssutils
+pip install numba
+pip install torch-tools
+pip install visdom
+python setup.py install
+```
+Install our requirements: 
+```bash
+$ conda env update -n SVG --file requirements.yaml
+```
+
+## DATA
 ### MNIST
 To download the dataset, please run the following scripts:
 ```bash
@@ -28,7 +50,11 @@ TODO:
 TheNounProject is a custom scraped dataset. It was generated with the following procedure:
 1. Register an account at [The Noun Project](https://thenounproject.com/)
 2. Get your API keys at the [developer portal](https://thenounproject.com/developers/apps)
-3. Register your API key and secret as environment variables
+3. Write your API key and secret inside an .env file in the root directory as 
+```bash
+NOUN_PROJECT_API_KEY="key"
+NOUN_PROJECT_API_SECRET="private"
+```
 4. Modify the global variables in `datasets/make_nounproject_dataset.py` accordingly
 
 Then, run the script:
