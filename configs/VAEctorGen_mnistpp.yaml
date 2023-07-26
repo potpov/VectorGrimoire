@@ -53,6 +53,8 @@ exp_params:
 trainer_params:
   devices: 1
   max_epochs: 200
+  gradient_clip_val: 0.5
+  gradient_clip_algorithm: "value"
 
 logging_params:
   project: "test"
