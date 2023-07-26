@@ -48,11 +48,14 @@ class PositionalEncodingLUT(nn.Module):
         nn.init.kaiming_normal_(self.pos_embed.weight, mode="fan_in")
 
     def forward(self, x):
-        pos = self.position[:x.size(0)]
+        pos = self.position[:x.size(0)] # x is of shape (T, bs, z_dim)
         x = x + self.pos_embed(pos)
         return self.dropout(x)
     
 class ConstEmbedding(nn.Module):
+    """
+    Learned prefix embeddings, incorporate no information from any source, so neither z nor from T.
+    """
     def __init__(self, seq_len, d_model):
         super().__init__()
 
@@ -66,11 +69,13 @@ class ConstEmbedding(nn.Module):
         # N = z.size(1)
         bs = z.size(0)
         # src = self.PE(z.new_zeros(self.seq_len, N, self.d_model))
+        
+        # get a Tensor with same properties as z
         src = self.PE(z.new_zeros(self.seq_len, bs, self.d_model))
         return src
     
 class PrefixEmbedding(nn.Module):
-    def __init__(self, seq_len, d_model):
+    def __init__(self, seq_len, d_model, T):
         self.embedding = nn.Embedding(seq_len, d_model)
         nn.init.kaiming_normal_(self.embedding.weight, mode="fan_in")
 
@@ -107,7 +112,9 @@ class LatentTransformer(nn.Module):
         src = self.embedding(z)
         out = self.decoder(src, z, tgt_mask=None, tgt_key_padding_mask=None, memory2=l)
 
-        return out
+        mapped_out = self.fcn(out)
+
+        return mapped_out
 
 class CNNVectorDecoder(VectorDecoder):
 
@@ -134,6 +141,11 @@ class CNNVectorDecoder(VectorDecoder):
 
         T = kwargs['T']
         self.T = T
+        # this creates a (T x 2) matrix with [x-translate, y-translate] entries along the first axis
+        self.translations = torch.nn.Parameter(torch.cat([torch.linspace(-1, 1, T).unsqueeze(1), torch.zeros(T).unsqueeze(1)], dim=1))
+        # Tanh gets applied before adding the translator values
+        self.tanh = nn.Tanh()
+        #torch.nn.Parameter(torch.Tensor([[-0.25, 0.0],[0.25, 0.0]]))
         print(f"using {T} paths")
         if(b_w):
             if(kwargs["optimize_colors"]):
@@ -267,6 +279,10 @@ class CNNVectorDecoder(VectorDecoder):
         # outputs = outputs.permute(1, 0, 2)  # [batch size, len, emb dim]
         # outputs = outputs[:, :, :self.latent_dim] + outputs[:, :, self.latent_dim:] # aggregate outputs of both RNNs
         z_layers = []
+
+        # translate the position of the T many shapes based on their index, first idx of tuple is x-translation, second idx is y-translation
+        translations = self.translations
+
         for i in range(self.T):
             # this handles T=1
             if(transformed_z.dim() > 2):
@@ -276,6 +292,8 @@ class CNNVectorDecoder(VectorDecoder):
             # shape_output = self.divide_shape(transformed_z[:, i, :]) # [bs, latent_size]
             # shape_latent = self.final_shape_latent(transformed_z) # [bs, latent_size]
             all_points = self.decode(current_z)#, point_predictor=self.point_predictor[i])
+            all_points = all_points + self.tanh(translations[i]) / 3 # TODO this is just a random number rn
+
             if("log_path_length" in kwargs.keys() and self.wandb_logging):
                 if(kwargs["log_path_length"]):
                     self.log_path_lengths(all_points*self.imsize, current_shape_idx=i)
@@ -551,6 +569,17 @@ class VAEctorGen(BaseVAE):
 
         # adapt to batch first - [B x T x LatentDim]
         transformed_z = transformed_z.permute(1,0,2)
+
+        if(self.decoder.wandb_logging is not None):
+            if(transformed_z.shape[1] == 2):        
+                with torch.no_grad():
+                    diff_matrix = transformed_z[:,0] - transformed_z[:,1]
+                    diff_means = diff_matrix.mean(dim=1)
+                    total_mean = diff_means.mean().abs()
+                    std_of_means = diff_means.std()
+
+                    wandb.log({"mean_diff_between_z_Ts" : total_mean.cpu().item(), "std_of_means_z_Ts" : std_of_means.cpu().item()})
+
 
         # decode latent codes
         output, transformed_z, control_loss = self.decoder.forward(transformed_z, **kwargs)
