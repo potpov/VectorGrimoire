@@ -54,7 +54,8 @@ class VectorDecoder(BaseVAE):
 
         self.curves = paths
         # self.in_channels = in_channels
-        self.scale_factor = kwargs['scale_factor']
+        if 'scale_factor' in kwargs.keys():
+            self.scale_factor = kwargs['scale_factor']
         self.learn_sampling = kwargs['learn_sampling']
         self.only_auxillary_training = kwargs['only_auxillary_training']
         self.memory_leak_training = kwargs['memory_leak_training']
@@ -303,9 +304,10 @@ class VectorDecoder(BaseVAE):
 
         bs = z.shape[0]
         z = z[:, None, :].repeat([1, self.curves *3, 1])
+        
         base_control_features = self.base_control_features[None, :, :].repeat(bs, self.curves, 1 ) # I think this is the control variable c
         z_base = torch.cat([z, base_control_features], dim=-1)
-        z_base_transform = self.decode_transform(z_base) # TODO why is this commented out
+
         if self.learn_sampling:
             self.angles = self.angles.to(z.device)
             angles= self.angles[None, :, None].repeat(bs, 1, 1)
@@ -323,16 +325,16 @@ class VectorDecoder(BaseVAE):
             z = torch.cat([z_base, x, y], dim=-1)
         else:
             id = self.id[None, :, :].repeat(bs, 1, 1) # [ BS, curves * 3, 2], e.g. [32, 60, 2]
-            z = torch.cat([z_base, id], dim=-1) # [bs, self.curves * 3, latent_dim + 2 (c) + 2 (p)]
+            fused_latent = torch.cat([z_base, id], dim=-1) # [bs, self.curves * 3, latent_dim + 2 (c) + 2 (p)]
 
         # all_points = self.decoder_input(self.decode_transform(z)) TODO this was original
-        all_points = self.decode_transform(z)
+        fused_latent = fused_latent.permute(0, 2, 1)
         # for compute_block in point_predictor:
         #     all_points = F.relu(all_points)
         #     # all_points = torch.cat([z_base_transform, all_points], dim=1)
         #     all_points = compute_block(all_points)
         # all_points = self.decode_transform(F.sigmoid(all_points/self.scale_factor))
-        all_points = self.point_predictor(all_points)
+        all_points = self.point_predictor(fused_latent)
         all_points = all_points.permute(0, 2, 1)
         return all_points
 

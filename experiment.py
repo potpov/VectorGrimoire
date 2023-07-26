@@ -124,6 +124,9 @@ class VAEXperiment(pl.LightningModule):
         print("Entering on_validation_end.")
         with torch.no_grad():
             self.sample_images()
+
+        gc.collect()
+        torch.cuda.empty_cache()
         
     def sample_images(self):
         print("Sampling images for wandb.")
