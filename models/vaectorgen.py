@@ -99,12 +99,14 @@ class LatentTransformer(nn.Module):
         decoder_layer = TransformerDecoderLayerGlobalImproved(dim_model, dim_z, n_heads, dim_FF, dropout)
         decoder_norm = nn.LayerNorm(dim_model)
         self.decoder = TransformerDecoder(decoder_layer, n_layers_decode, decoder_norm)
+        
+        self.mapping = nn.Linear(dim_model, dim_z)
 
-        self.fcn = nn.Linear(dim_model, dim_z)
-    
     def forward(self, z, label = None):
         """
         requires z to be of shape: []
+
+        returns the new z 
         """
         # N = z.size(2)
         l = self.label_embedding(label).unsqueeze(0) if self.label_condition else None
@@ -112,7 +114,7 @@ class LatentTransformer(nn.Module):
         src = self.embedding(z)
         out = self.decoder(src, z, tgt_mask=None, tgt_key_padding_mask=None, memory2=l)
 
-        mapped_out = self.fcn(out)
+        mapped_out = self.mapping(out)
 
         return mapped_out
 
@@ -186,8 +188,8 @@ class CNNVectorDecoder(VectorDecoder):
         # Logging stuff
         self.wandb_logging = wandb_logging # None if not logging
 
-    def forward(self, transformed_z: Tensor, **kwargs) -> List[Tensor]:
-        output, control_loss = self.decode_and_composite(transformed_z, verbose=False, return_overlap_loss=True, **kwargs)
+    def forward(self, transformed_z: Tensor, offset, **kwargs) -> List[Tensor]:
+        output, control_loss = self.decode_and_composite(transformed_z, offset = offset, verbose=False, return_overlap_loss=True, **kwargs)
         return [output, transformed_z, control_loss]
 
     def hard_composite(self, **kwargs):
@@ -270,7 +272,23 @@ class CNNVectorDecoder(VectorDecoder):
             break
         wandb.log(logging_dict)
 
-    def decode_and_composite(self, transformed_z: Tensor, return_overlap_loss=False, **kwargs):
+    def log_offset_parameter(self, offset):
+        """
+        offset has to be in (T, 2) format.
+
+        So if you still have the batch dimension in it, either select a single sample or mean over the batch.
+        """
+        logging_dict = {}
+        for i, row in enumerate(offset):
+            x_offset = row[0].detach().item()
+            y_offset = row[1].detach().item()
+
+            logging_dict[f"x_offset_{i}"] = x_offset
+            logging_dict[f"y_offset_{i}"] = y_offset
+            
+        wandb.log(logging_dict)
+
+    def decode_and_composite(self, transformed_z: Tensor, offset = None, return_overlap_loss=False, **kwargs):
         # bs = z.shape[0]
         layers = []
         loss = 0
@@ -279,9 +297,6 @@ class CNNVectorDecoder(VectorDecoder):
         # outputs = outputs.permute(1, 0, 2)  # [batch size, len, emb dim]
         # outputs = outputs[:, :, :self.latent_dim] + outputs[:, :, self.latent_dim:] # aggregate outputs of both RNNs
         z_layers = []
-
-        # translate the position of the T many shapes based on their index, first idx of tuple is x-translation, second idx is y-translation
-        translations = self.translations
 
         for i in range(self.T):
             # this handles T=1
@@ -292,7 +307,16 @@ class CNNVectorDecoder(VectorDecoder):
             # shape_output = self.divide_shape(transformed_z[:, i, :]) # [bs, latent_size]
             # shape_latent = self.final_shape_latent(transformed_z) # [bs, latent_size]
             all_points = self.decode(current_z)#, point_predictor=self.point_predictor[i])
-            all_points = all_points + self.tanh(translations[i]) / 3 # TODO this is just a random number rn
+            if(offset):
+                all_points = all_points + offset
+                if(self.wandb_logging):
+                    self.log_offset_parameter(offset.mean(dim=0))
+            else:
+                parametrized_offset = self.tanh(self.translations[i]) / 3 # TODO division by 3 is just a good estimate rn
+                all_points = all_points + parametrized_offset
+                if(self.wandb_logging):
+                    self.log_offset_parameter(parametrized_offset)
+
 
             if("log_path_length" in kwargs.keys() and self.wandb_logging):
                 if(kwargs["log_path_length"]):
@@ -515,9 +539,23 @@ class VAEctorGen(BaseVAE):
         ## Transformer for latent code
         self.transformer = LatentTransformer(n_embedds=T, dim_z=dim_z, **kwargs)
 
+        ## Predictions after the latent code generation
+        self.offset = nn.Linear(kwargs["dim_model"], T * 2) # predictions are [x-offset-1, y-offset-1, x-offset-2, ...]
+        self._init_offset(T)
+
         ## CNN deformation network
         self.decoder = CNNVectorDecoder(in_channels=in_channels, latent_dim=dim_z, T=T, **kwargs)
         
+
+    def _init_offset(self, n_embedds):
+        new_biases = torch.linspace(-1, 1, n_embedds) / 4 # TODO abitrary rn
+        for i, bias in enumerate(self.offset.bias):
+            if(i%2==1):
+                continue
+            else:
+                torch.nn.init.constant_(bias, new_biases[i//2])
+        nn.init.kaiming_normal_(self.offset.weight, mode="fan_in")
+
 
     def _init_embeddings(self):
         nn.init.normal_(self.fc_mu.weight, std=0.001)
@@ -570,6 +608,11 @@ class VAEctorGen(BaseVAE):
         # adapt to batch first - [B x T x LatentDim]
         transformed_z = transformed_z.permute(1,0,2)
 
+        # predict the offset for each shape in [dx_1, dy_1, ..., dx_T, dy_T] format
+        offset = F.tanh(self.offset(transformed_z)) # tanh to keep this between [-1, 1]
+        bs = offset.size(0)
+        offset = offset.view(bs, -1, 2) # reshape this to be (bs, T, 2) for easier processing later
+
         if(self.decoder.wandb_logging is not None):
             if(transformed_z.shape[1] == 2):        
                 with torch.no_grad():
@@ -582,7 +625,7 @@ class VAEctorGen(BaseVAE):
 
 
         # decode latent codes
-        output, transformed_z, control_loss = self.decoder.forward(transformed_z, **kwargs)
+        output, transformed_z, control_loss = self.decoder.forward(transformed_z, offset = offset, **kwargs)
         
         return output, img, mu, var, control_loss # required for loss function
 
