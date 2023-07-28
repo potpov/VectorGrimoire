@@ -307,8 +307,9 @@ class CNNVectorDecoder(VectorDecoder):
             # shape_output = self.divide_shape(transformed_z[:, i, :]) # [bs, latent_size]
             # shape_latent = self.final_shape_latent(transformed_z) # [bs, latent_size]
             all_points = self.decode(current_z)#, point_predictor=self.point_predictor[i])
-            if(offset):
-                all_points = all_points + offset
+            if(offset is not None):
+                # must go from (bs, 2) to (bs, self.curves * 3, 2) to match all_points dimension
+                all_points = all_points + offset[:,i,:].unsqueeze(1).repeat(1, self.curves*3, 1)
                 if(self.wandb_logging):
                     self.log_offset_parameter(offset.mean(dim=0))
             else:
@@ -508,6 +509,7 @@ class VAEctorGen(BaseVAE):
         super(VAEctorGen, self).__init__()
 
         self.dim_z = dim_z
+        self.T = T
 
         # CNN encoder, calculate with 128 img size
         modules = []
@@ -540,7 +542,7 @@ class VAEctorGen(BaseVAE):
         self.transformer = LatentTransformer(n_embedds=T, dim_z=dim_z, **kwargs)
 
         ## Predictions after the latent code generation
-        self.offset = nn.Linear(kwargs["dim_model"], T * 2) # predictions are [x-offset-1, y-offset-1, x-offset-2, ...]
+        self.offset = nn.Linear(kwargs["dim_model"], 2) # predictions are [x-offset-1, y-offset-1, x-offset-2, ...]
         self._init_offset(T)
 
         ## CNN deformation network
@@ -610,8 +612,8 @@ class VAEctorGen(BaseVAE):
 
         # predict the offset for each shape in [dx_1, dy_1, ..., dx_T, dy_T] format
         offset = F.tanh(self.offset(transformed_z)) # tanh to keep this between [-1, 1]
-        bs = offset.size(0)
-        offset = offset.view(bs, -1, 2) # reshape this to be (bs, T, 2) for easier processing later
+        # bs = offset.size(0)
+        # offset = offset.view(bs, self.T, 2) # reshape this to be (bs, T, 2) for easier processing later
 
         if(self.decoder.wandb_logging is not None):
             if(transformed_z.shape[1] == 2):        
