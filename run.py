@@ -61,7 +61,7 @@ seed_everything(config['exp_params']['manual_seed'], True)
 
 if(args.wandb):
     model = vae_models[config['model_params']['name']](**config['model_params'], wandb_logging=True)
-    wandb.watch(model, log='all')
+    wandb.watch(model, log='all', log_freq = 100) # can be "all"
 else:
     model = vae_models[config['model_params']['name']](**config['model_params'])
 

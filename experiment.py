@@ -30,6 +30,16 @@ class VAEXperiment(pl.LightningModule):
         self.hold_graph = False
         self.beta_scale = 2.0 # introduced with Im2Vec
         self.lr = params["LR"]
+
+        if("offset_LR" in params and self.model.decoder.offset_mode == "learnable"):
+            self.offset_LR = params["offset_LR"]
+        else:
+            self.offset_LR = None
+
+        if("offset_warmup" in params and self.model.decoder.offset_mode in ["learnable", "optimizable"]):
+            self.offset_warmup = params["offset_warmup"]
+        else:
+            self.offset_warmup = False
         
         if("log_fid" in self.params.keys()):
             self.log_fid = True if self.params["log_fid"] else False
@@ -61,6 +71,14 @@ class VAEXperiment(pl.LightningModule):
 
     def forward(self, input: Tensor, **kwargs) -> Tensor:
         return self.model(input, **kwargs)
+    
+    def on_train_epoch_start(self):
+        if(self.offset_warmup):
+            for name, param in self.model.named_parameters():
+                if("decoder.offset" in name or "encoder." in name):
+                    param.requires_grad = True
+                else:
+                    param.requires_grad = False
 
     def training_step(self, batch, batch_idx, optimizer_idx = 0):
         real_img, labels = batch
@@ -98,6 +116,9 @@ class VAEXperiment(pl.LightningModule):
         return train_loss['loss']
     
     def on_train_epoch_end(self):
+        if(self.offset_warmup):
+            for name, param in self.model.named_parameters():
+                param.requires_grad = True
         if(isinstance(self.model, VectorVAEnLayers)):
             if self.current_epoch % 25 ==0:
                 new_beta = self.model.beta * self.beta_scale
@@ -131,12 +152,17 @@ class VAEXperiment(pl.LightningModule):
     def sample_images(self):
         print("Sampling images for wandb.")
         # Get sample reconstruction image            
+        if(self.log_clip_sim or self.log_fid):
+            num_of_samples = 100
+        else:
+            num_of_samples = 10
         test_input, test_label = next(iter(self.trainer.datamodule.test_dataloader()))
-        test_input = test_input.to(self.curr_device)
-        test_label = test_label.to(self.curr_device)
+        test_input = test_input[:num_of_samples].to(self.curr_device)
+        test_label = test_label[:num_of_samples].to(self.curr_device)
 
-        # test_input, test_label = batch
-        recons = self.model.generate(test_input, labels = test_label, verbose=True)
+        with torch.no_grad():
+            # test_input, test_label = batch
+            recons = self.model.generate(test_input, labels = test_label, verbose=True)
         
         # make sure there are no small negative numbers for rendering
         dummy = torch.nn.ReLU()
@@ -144,31 +170,27 @@ class VAEXperiment(pl.LightningModule):
         
         log_images(recons[:5], test_input[:5], log_key="val_recons")
 
-        if(self.logger.save_dir is not None):
-            vutils.save_image(recons.data[:10],
-                            os.path.join(self.logger.save_dir , 
-                                        "Reconstructions", 
-                                        f"recons_{self.logger.name}_Epoch_{self.current_epoch}.png"),
-                            normalize=True,
-                            nrow=5)
+        # if(self.logger.save_dir is not None):
+        #     vutils.save_image(recons.data[:10],
+        #                     os.path.join(self.logger.save_dir , 
+        #                                 "Reconstructions", 
+        #                                 f"recons_{self.logger.name}_Epoch_{self.current_epoch}.png"),
+        #                     normalize=True,
+        #                     nrow=5)
 
         try:
-            if(self.log_clip_sim or self.log_fid):
-                num_of_samples = 100
-            else:
-                num_of_samples = 15
             samples = self.model.sample(num_of_samples,
                                         self.curr_device,
                                         labels = test_label)
             samples = dummy(samples[:,:3,:,:]) # drop the alpha channel for metric calculation
             log_images(samples[:5], samples[5:10], log_key="samples")
-            if(self.logger.save_dir is not None):
-                vutils.save_image(samples.cpu().data,
-                                os.path.join(self.logger.save_dir , 
-                                            "Samples",      
-                                            f"{self.logger.name}_Epoch_{self.current_epoch}.png"),
-                                normalize=True,
-                                nrow=5)
+            # if(self.logger.save_dir is not None):
+            #     vutils.save_image(samples.cpu().data,
+            #                     os.path.join(self.logger.save_dir , 
+            #                                 "Samples",      
+            #                                 f"{self.logger.name}_Epoch_{self.current_epoch}.png"),
+            #                     normalize=True,
+            #                     nrow=5)
             # Log FID score
             if(self.log_fid):
                 self.fid.update(test_input, real = True)
@@ -210,12 +232,34 @@ class VAEXperiment(pl.LightningModule):
         optims = []
         scheds = []
 
+        param_groups = []
+
+        if(self.offset_LR is not None):
+            offset_params = []
+            other_params = []
+            # Separate parameters for the 'offset' layer and other model parameters
+            for name, param in self.model.named_parameters():
+                if(name == "decoder.offset.bias" or name == "decoder.offset.weight"):
+                    offset_params.append(param)
+                else:
+                    other_params.append(param)
+
+            # Set different learning rates for different parameter groups
+            param_group_1 = {'params': other_params, 'lr': self.lr}
+            param_group_2 = {'params': offset_params, 'lr': self.offset_LR}
+
+            param_groups = [param_group_1, param_group_2]
+        else:
+            param_group_1 = {'params': self.model.parameters(), 'lr': self.lr}
+            param_groups = [param_group_1]
+
+
         if(self.params["weight_decay"] is not None):
-            optimizer = optim.AdamW(self.model.parameters(),
+            optimizer = optim.AdamW(param_groups,
                                 lr=self.lr,
                                 weight_decay=self.params['weight_decay'])
         else:
-            optimizer = optim.Adam(self.model.parameters(),
+            optimizer = optim.Adam(param_groups,
                                 lr=self.lr)
         optims.append(optimizer)
         # Check if more than 1 optimizer is required (Used for adversarial training)

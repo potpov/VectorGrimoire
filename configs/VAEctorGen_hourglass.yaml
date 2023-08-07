@@ -4,9 +4,9 @@ model_params:
   imsize: 64 # must match patch_size in data_params
   dim_z: 256 # must be equal to dim_model or mapping layer required
   loss_fn: 'MSE'
-  paths: 10 # 20 originally, how many bezier paths describe the unit circle, self.curves
+  paths: 20 # 20 originally, how many bezier paths describe the unit circle, self.curves
   beta: 0.01 # 0.1
-  radius: 100 # was 3 originally
+  radius: 200 # was 3 originally
   # scale_factor: 0.1 # was 1 originally, is the divisor of the final point_predictor output before sigmoid, not used in VAEctorGen atm
   learn_sampling: False # was False originally
   only_auxillary_training: False
@@ -14,12 +14,12 @@ model_params:
   other_losses_weight: 0
   composite_fn: 'soft'
   b_w: True
-  T: 9
+  T: 4
   optimize_colors: False
   encoder_string: "im2vec_encoder" # must be one of ["im2vec_encoder", 'RN50', 'RN101', 'RN50x4', 'RN50x16', 'RN50x64', 'ViT-B/32', 'ViT-B/16', 'ViT-L/14', 'ViT-L/14@336px']
   freeze_encoder: False
   dim_model: 256
-  n_heads: 8
+  n_heads: 16
   n_layers_decode: 4 # 4
   dim_FF: 512
   dropout: 0.1
@@ -27,12 +27,12 @@ model_params:
   dim_label: 64
   label_condition: False
   pyramid_loss_mode: "default" # currently supports {null, "default"}
-  offset_mode: "static_offset" # currently supports {optimizable, learnable, static_offset, null}
+  offset_mode: "optimizable" # currently supports {optimizable, learnable, static_offset, null}
 
 
 data_params:
-  dataset: "mnistpp"
-  data_path: "/home/mfeuerpfeil/master/thesis/datasets/MNISTpp"
+  dataset: "nounproject"
+  data_path: "/scratch1/nounproject/v2"
   train_batch_size: 64
   val_batch_size:  64
   patch_size: 64 # HAS TO BE 224 FOR CLIP RES50 TO WORK, otherwise take w/e
@@ -43,9 +43,9 @@ exp_params:
   # clip_sim_model: "openai/clip-vit-large-patch14"
   #clip_prompt_suffix: ". minimal flat 2d vector icon. black and white. on a white background. trending on artstation" # for VectorFusion, replace "black and white" with "linear color"
   LR: 0.0002 # was 0.0005 originally
-  offset_LR: 0.000001
+  offset_LR: 0.000001 # only has an effect for offset_mode "learnable"
   weight_decay: null # null to use regular Adam, float to use AdamW
-  scheduler_gamma: 0.95 # null to disable, otherwise set to 0.95 - 0.99
+  scheduler_gamma: null # null to disable, otherwise set to 0.95 - 0.99
   kld_weight: 0.01
   resample_circle_segments: False # was True originally
   b_w: True
@@ -54,14 +54,14 @@ exp_params:
 
 trainer_params:
   devices: 1
-  max_epochs: 75
+  max_epochs: 125
   gradient_clip_val: 0.5
   gradient_clip_algorithm: "value"
   num_sanity_val_steps: 1
 
 logging_params:
   project: "test"
-  save_dir: "/scratch2/moritz_logs/VAEctorgen_mnistpp_offset_grid"
+  save_dir: "/scratch2/moritz_logs/VAEctorgen_hourglass"
   # other_interpolations: True
-  name: "VAEctorGen MNIST++, static offset, grid init, T=9"
+  name: "VAEctorGen hourglass, optimizable offset, T=2"
   version: 0
