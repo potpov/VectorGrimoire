@@ -186,7 +186,7 @@ class VectorDecoder(BaseVAE):
         render_size = self.imsize
         bs = all_points.shape[0]
         if verbose:
-            render_size = 1024
+            render_size = 768
         outputs = []
         all_points = all_points*render_size # brings point coordinates from [0,1] back to image scale
 
@@ -334,7 +334,12 @@ class VectorDecoder(BaseVAE):
         #     # all_points = torch.cat([z_base_transform, all_points], dim=1)
         #     all_points = compute_block(all_points)
         # all_points = self.decode_transform(F.sigmoid(all_points/self.scale_factor))
-        all_points = self.point_predictor(fused_latent)
+
+        # all_points = point_predictor[0](fused_latent)
+        # for compute_block in point_predictor[1:]:
+        #     all_points = compute_block(all_points)
+
+        all_points = point_predictor(fused_latent)
         all_points = all_points.permute(0, 2, 1)
         return all_points
 
