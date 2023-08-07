@@ -14,27 +14,19 @@ from dataset import MNISTDataset, MNISTppDataset, NounProjectDataset, EmojiDatas
 import wandb
 from utils import get_rank
 
+
 DATASETMAP = {
-    "mnist" : MNISTDataset,
-    "mnistpp" : MNISTppDataset,
-    "nounproject" : NounProjectDataset,
-    "emoji" : EmojiDataset
+    "mnist": MNISTDataset,
+    "mnistpp": MNISTppDataset,
+    "nounproject": NounProjectDataset,
+    "emoji": EmojiDataset
 }
 
 
 parser = argparse.ArgumentParser(description='Generic runner for VAE models')
-parser.add_argument('--config',  '-c',
-                    dest="filename",
-                    metavar='FILE',
-                    help='path to the config file',
-                    default='configs/vae.yaml')
-parser.add_argument(
-    "--wandb",
-    "-w",
-    dest="wandb",
-    help="want to log the run with wandb?",
-    action=argparse.BooleanOptionalAction
-)
+parser.add_argument('--config',  '-c', dest="filename", metavar='FILE', help='path to the config file', default='configs/vae.yaml')
+parser.add_argument("--wandb", "-w", dest="wandb", help="want to log the run with wandb?", action=argparse.BooleanOptionalAction)
+parser.add_argument('--debug', action='store_true', help='disable wandb logs, set workers to 0. (default false)')
 
 args = parser.parse_args()
 with open(args.filename, 'r') as file:
@@ -43,7 +35,11 @@ with open(args.filename, 'r') as file:
     except yaml.YAMLError as exc:
         print(exc)
 
-if(args.wandb) and get_rank() == 0:
+# disabling multi-threading when debugging
+if args.debug:
+    config["data_params"]["num_workers"] = 0
+
+if args.wandb and get_rank() == 0:
     wandb_logger = WandbLogger(
         name=config['logging_params']['name'],
         save_dir=config['logging_params']['save_dir'],
@@ -51,11 +47,14 @@ if(args.wandb) and get_rank() == 0:
         project=config["logging_params"]["project"],
         log_model=True,
         entity="aiis-chair",
+        mode="disabled" if args.debug else "online",
     )
     wandb_logger.experiment.config.update(config)
 else:
-    wandb_logger = TensorBoardLogger(save_dir=config['logging_params']['save_dir'],
-                               name=config['logging_params']['name'],)
+    wandb_logger = TensorBoardLogger(
+        save_dir=config['logging_params']['save_dir'],
+        name=config['logging_params']['name']
+    )
 
 # For reproducibility
 seed_everything(config['exp_params']['manual_seed'], True)
