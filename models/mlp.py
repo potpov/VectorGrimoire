@@ -34,11 +34,11 @@ class MultiLayerPerceptron(nn.Module):
         self.activation = ACTIVATIONS[activation]
 
     def forward(self, x: torch.Tensor):
-        for i, module in enumerate(self.modules):
-            x = module(x)
-            if(i == len(self.modules)-1):
-                x = F.sigmoid(x)
-            else:
-                x = self.activation(x)
+        out = self.modules[0](x)
+        for module in self.modules[1:]:
+            out = self.activation(out)
+            out = module(out)
+                
+        out = F.sigmoid(out)
 
-        return x
+        return out
