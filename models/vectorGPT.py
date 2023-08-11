@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from torch import Tensor
 from x_transformers import Decoder
 from thesis.models.resnet import ResNet18, ResNet34, ResNet50, ResNet101, ResNet152
 from thesis.models.simple_vector_decoder import SimpleVectorDecoder
@@ -9,7 +10,6 @@ from dataclasses import dataclass, field
 @dataclass
 class ImageEncoderArgs:
     model: str = "resnet18"
-    dim_z: int = 256
 
 @dataclass
 class LatentTransformerArgs:
@@ -27,7 +27,6 @@ class SimpleVectorDecoderArgs:
 
 @dataclass
 class MultiLayerPerceptronArgs:
-    input_dim: int = 512
     dims: list = field(default_factory=lambda: [768, 512])
     activation: str = "relu"
     num_classes: int = 2
@@ -52,20 +51,51 @@ class VectorGPT(nn.Module):
         self.stop_predictor_config = self.vector_gpt_config.stop_predictor_args
 
         if(self.image_encoder_config.model == "resnet18"):
-            self.resnet = ResNet18(self.image_encoder_config.dim_z)
+            self.resnet = ResNet18(self.latent_transformer_config.dim)
         elif(self.image_encoder_config.model == "resnet34"):
-            self.resnet = ResNet34(self.image_encoder_config.dim_z)
+            self.resnet = ResNet34(self.latent_transformer_config.dim)
         elif(self.image_encoder_config.model == "resnet50"):
-            self.resnet = ResNet50(self.image_encoder_config.dim_z)
+            self.resnet = ResNet50(self.latent_transformer_config.dim)
         elif(self.image_encoder_config.model == "resnet101"):
-            self.resnet = ResNet101(self.image_encoder_config.dim_z)
+            self.resnet = ResNet101(self.latent_transformer_config.dim)
         elif(self.image_encoder_config.model == "resnet152"):
-            self.resnet = ResNet152(self.image_encoder_config.dim_z)
+            self.resnet = ResNet152(self.latent_transformer_config.dim)
         else:
             raise ValueError(f"[ERROR] You did not specify a correct Image Encoder. Expected something like 'resnet18', got {self.image_encoder_config.model}.")
         
-        self.latent_transformer = Decoder(**self.latent_transformer_config.__dict__)
+        self.latent_transformer = nn.Sequential(Decoder(**self.latent_transformer_config.__dict__), 
+                                                nn.LayerNorm(self.latent_transformer_config.dim),
+                                                nn.Linear(self.latent_transformer_config.dim, self.latent_transformer_config.dim))
         self.vector_decoder = SimpleVectorDecoder(**self.simple_vector_decoder_config.__dict__)
-        self.stop_predictor = MultiLayerPerceptron(**self.stop_predictor_config.__dict__)
+        self.stop_predictor = MultiLayerPerceptron(input_dim=self.latent_transformer_config.dim, **self.stop_predictor_config.__dict__)
 
-    
+    def forward(self, images: Tensor, stop_signals: Tensor):
+        """
+        Expects images to be in (batch, timesteps, channel, width, height).
+
+        Outputs rasterized images
+        """
+        bs = images.size(0)
+        timesteps = images.size(1)
+
+        # first we encode. (b, t, c, w, h) -> (b, t, z)
+        intermediate = [self.resnet(images[:,t,:,:]) for t in range(timesteps)]
+        encoded_images = torch.stack(intermediate, dim=1) # (b, t, z)
+
+        # then we transform (b, t, z) -> (b, t, z')
+        transformed_latents = self.latent_transformer(encoded_images)
+
+        # then we decode each t iteratively
+        for t in range(timesteps):
+            pass
+        # for each t (t') in (b, t, z')
+            # if not stop 
+                # predict image from (b, z')
+                # add that to p
+            # else
+                # forward 
+
+
+
+    def loss_function(self, images: Tensor, stop_signals:Tensor):
+        pass
