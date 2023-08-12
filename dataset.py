@@ -209,6 +209,33 @@ class NounProject(Dataset):
         return len(self.image_paths)
 
 
+class DummyCausalSVGDataset(Dataset):
+    """
+    returns black dummy images as the full composite images that act as input 
+    returns individual shape renderings for loss calculation. full image at index T requires the network to predict shape rendering at index T.
+    returns stop signal vector
+    """
+    def __init__(self, context_length: int, channels: int, width: int, **kwargs):
+        super(DummyCausalSVGDataset, self)
+        self.context_length = context_length
+        self.channels = channels
+        self.width = width
+
+    def __getitem__(self, index) -> Tensor:
+        image = torch.ones((self.channels, self.width, self.width))
+        stop_idx = torch.randint(1, (self.context_length - 1), (1,))
+
+        stop_signals = torch.zeros(self.context_length)
+        stop_signals[stop_idx:] = 1.
+
+        images = torch.stack([image]*self.context_length, 0)
+        shape_layers = images
+
+        return images, shape_layers, stop_signals
+    
+    def __len__(self):
+        return 500
+
 class MNISTDataset(LightningDataModule):
     """
     PyTorch Lightning data module
@@ -589,4 +616,61 @@ class NounProjectDataset(LightningDataModule):
             num_workers=self.num_workers,
             shuffle=True,
             pin_memory=self.pin_memory,
+        )
+
+class CausalSVGDataModule(LightningDataModule):
+    def __init__(
+        self,
+        context_length: int, 
+        channels: int, 
+        width: int
+    ):
+        super().__init__()
+
+        self.context_length = context_length
+        self.channels = channels
+        self.width = width
+
+    def setup(self, stage: Optional[str] = None) -> None:
+        self.train_dataset = DummyCausalSVGDataset(
+            self.context_length,
+            self.channels,
+            self.width,
+            train=True,
+        )
+
+        self.val_dataset = DummyCausalSVGDataset(
+            self.context_length,
+            self.channels,
+            self.width,
+            train=False,
+        )
+
+    #       ===============================================================
+
+    def train_dataloader(self) -> DataLoader:
+        return DataLoader(
+            self.train_dataset,
+            batch_size=8,
+            num_workers=1,
+            shuffle=True,
+            pin_memory=False,
+        )
+
+    def val_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
+        return DataLoader(
+            self.val_dataset,
+            batch_size=8,
+            num_workers=1,
+            shuffle=True,
+            pin_memory=False,
+        )
+
+    def test_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
+        return DataLoader(
+            self.val_dataset,
+            batch_size=8,
+            num_workers=1,
+            shuffle=True,
+            pin_memory=False,
         )
