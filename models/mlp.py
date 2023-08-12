@@ -14,7 +14,6 @@ class MultiLayerPerceptron(nn.Module):
         activation: str = "relu",
         num_classes: int = 2,
     ):
-        assert num_classes > 1, "Please provide more than a single class."
         assert (
             activation.lower() in ACTIVATIONS.keys()
         ), f"Expected one of {ACTIVATIONS.keys()}, got {activation}"
