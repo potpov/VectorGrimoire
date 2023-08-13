@@ -38,6 +38,7 @@ class VectorGPTArgs:
     latent_transformer_args: LatentTransformerArgs = LatentTransformerArgs()
     simple_vector_decoder_args: SimpleVectorDecoderArgs = SimpleVectorDecoderArgs()
     stop_predictor_args: MultiLayerPerceptronArgs = MultiLayerPerceptronArgs()
+    context_length: int = 25
 
 class VectorGPT(nn.Module):
     def __init__(self,
@@ -64,6 +65,7 @@ class VectorGPT(nn.Module):
         else:
             raise ValueError(f"[ERROR] You did not specify a correct Image Encoder. Expected something like 'resnet18', got {self.image_encoder_config.model}.")
         
+        self.positional_embedding = nn.Embedding(self.vector_gpt_config.context_length, self.latent_transformer_config.dim)
         self.latent_transformer = nn.Sequential(Decoder(**self.latent_transformer_config.__dict__), 
                                                 nn.LayerNorm(self.latent_transformer_config.dim),
                                                 nn.Linear(self.latent_transformer_config.dim, self.latent_transformer_config.dim))
@@ -83,6 +85,9 @@ class VectorGPT(nn.Module):
         # first we encode. (b, t, c, w, h) -> (b, t, z)
         intermediate = [self.resnet(full_images[:,t,:,:]) for t in range(timesteps)]
         encoded_images = torch.stack(intermediate, dim=1) # (b, t, z)
+
+        pos_embeddings = self.positional_embedding(torch.arange(timesteps)) # (t, z)
+        encoded_images = encoded_images + pos_embeddings # (b, t, z)
 
         # then we transform (b, t, z) -> (b, t, z')
         transformed_latents = self.latent_transformer(encoded_images)
