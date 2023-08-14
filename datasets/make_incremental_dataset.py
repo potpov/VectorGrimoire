@@ -23,7 +23,7 @@ FIGR8_PATH = "/scratch4/mcipriano/SVG/FIGR-8-SVG/Data"
 OUT_DIR = "/scratch4/mcipriano/SVG/incremental_FIGR-8/"
 OUT_W = 500
 OUT_H = 500
-DEBUG = True
+DEBUG = False
 
 
 def raster(svg_file: Drawing):
@@ -47,20 +47,22 @@ def export_dataset(policy: str, context_length: int = 50, patience: int = 5):
     the policy specify how to sort and group each path. Lines which are part of a Path can also be considered
     as path themselves
     @param policy: one of: "closed", "length", "position".
-    "closed" returns only closed path (sort by area), "length" and "position" first both break all the continous lines
-    in paths and create a path for each of them. "length" sort them by length, "position" sort them from the top-left
-    corner of the image.
+    "closed" returns only closed path (sort by area), "length" sort by length of segments,
+    "position" (BETA) compute the distance from the origin of the min (x, y) point in the bounding box of the path
+     and use that for sorting
     @param context_length: ideal number of sub-image for each SVG path
     @param patience: threshold to discard an SVG image, images with less than this number of paths will be discarded.
-    This applies only if "closed" policy is selected. it does not apply to policies that work with flatten SVG.
+    This applies only if "closed" policy is selected and after all the connected segments in the image are merged into
+    paths.
     @return: 0 if export is sucessful
     """
 
     assert policy in ["closed", "length", "position"], "Wrong policy or policy not implemented yet!"
+    print(f"Generating incremental dataset with policy: {policy}")
 
     df = pd.DataFrame(columns=['filename', 'class', 'split'])
 
-    for folder in os.listdir(FIGR8_PATH):
+    for folder in tqdm(os.listdir(FIGR8_PATH), total=len(os.listdir(FIGR8_PATH))):
         for image_id, img_name in enumerate(os.listdir(os.path.join(FIGR8_PATH, folder))):
             file_path = os.path.join(FIGR8_PATH, folder, img_name)
             paths, attributes = svg2paths(file_path)
@@ -112,7 +114,7 @@ def export_dataset(policy: str, context_length: int = 50, patience: int = 5):
                     plt.imshow(img)
                     plt.show()
             np.save(
-                os.path.join(OUT_DIR, policy, f"{folder[0]}_{image_id}.npy"),
+                os.path.join(OUT_DIR, policy, f"{folder}_{image_id}.npy"),
                 np.stack(imgs)
             )
             new_row = {
@@ -124,9 +126,14 @@ def export_dataset(policy: str, context_length: int = 50, patience: int = 5):
 
     # save final csv
     df.to_csv(os.path.join(OUT_DIR, policy, 'split.csv'), index=False)
+    return 0
 
 
 def compute_stats():
+    """
+    show the distribution of the number of path and the number of lines foreach path in the dataset.
+    @return: None
+    """
     path_count = []
     line_count = []
     sample_num = 5000
