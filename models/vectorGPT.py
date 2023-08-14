@@ -123,7 +123,6 @@ class VectorGPT(nn.Module):
         Outputs the loss. Precise formula TBD. Currently averages over time and batch dimension.
         """
         assert gt_shape_layers.size(1) == pred_images.size(1) == gt_stop_signals.size(1) == stop_signals.size(1), "Received different amount of timesteps for stop signals or images."
-        timesteps = gt_shape_layers.size(1)
 
         # drop alpha channel for MSE loss calculation
         if(pred_images.size(2) == 4):

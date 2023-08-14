@@ -10,7 +10,8 @@ from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import WandbLogger, TensorBoardLogger
 from pytorch_lightning import seed_everything
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, LearningRateFinder, EarlyStopping
-from thesis.dataset import MNISTDataset, MNISTppDataset, NounProjectDataset, EmojiDataset
+from thesis.dataset import MNISTDataset, MNISTppDataset, NounProjectDataset, EmojiDataset, MNISTDatasetCSVG
+from thesis.models.vectorGPT import VectorGPT, VectorGPTArgs
 import wandb
 
 torch.set_float32_matmul_precision('high')
@@ -19,8 +20,18 @@ DATASETMAP = {
     "mnist" : MNISTDataset,
     "mnistpp" : MNISTppDataset,
     "nounproject" : NounProjectDataset,
-    "emoji" : EmojiDataset
+    "emoji" : EmojiDataset,
+    "mnistCSVG": MNISTDatasetCSVG
 }
+
+MODELS = {'VanillaVAE':VanillaVAE,
+              'VectorVAE':VectorVAE,
+              'VectorVAEnLayers': VectorVAEnLayers,
+              "Im2VecPlus":Im2VecPlus,
+              "CLIPV2Vec":CLIPV2Vec,
+              "CLIPT2Vec":CLIPT2Vec,
+              "VectorGPT" : VectorGPT,
+              }
 
 
 parser = argparse.ArgumentParser(description='Generic runner for VAE models')
@@ -60,10 +71,10 @@ else:
 seed_everything(config['exp_params']['manual_seed'], True)
 
 if(args.wandb):
-    model = vae_models[config['model_params']['name']](**config['model_params'], wandb_logging=True)
+    model = MODELS[config['model_params']['name']](**config['model_params'], wandb_logging=True)
     wandb.watch(model, log='all', log_freq = 100) # can be "all"
 else:
-    model = vae_models[config['model_params']['name']](**config['model_params'])
+    model = MODELS[config['model_params']['name']](**config['model_params'])
 
 experiment = VAEXperiment(model,
                           config['exp_params'])

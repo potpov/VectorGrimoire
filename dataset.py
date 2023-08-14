@@ -236,6 +236,57 @@ class DummyCausalSVGDataset(Dataset):
     def __len__(self):
         return 500
 
+class MNISTforCSVG(Dataset):
+    """
+    MNIST dataset from a root directory for causal svg generation.
+
+    mnist
+    |
+    |--------------|
+    training    testing
+    |              |
+    0-9           0-9
+    """
+
+    def __init__(self, root, context_length: int = 2, train=True, transform=None):
+        super(MNISTforCSVG, self)
+        self.root = root
+        self.train = train
+        self.transform = transform
+        self.context_length = context_length
+
+        self.image_folder = os.path.join(root, "training" if train else "testing")
+
+        self.image_paths = []
+        self.labels = []
+
+        for label in range(10):
+            label_folder = os.path.join(self.image_folder, str(label))
+            image_files = os.listdir(label_folder)
+            for image_file in image_files:
+                image_path = os.path.join(label_folder, image_file)
+                self.image_paths.append(image_path)
+                self.labels.append(label)
+
+    def __getitem__(self, index):
+        image_path = self.image_paths[index]
+        label = self.labels[index]
+
+        image = Image.open(image_path)
+        if self.transform is not None:
+            image = self.transform(image)
+        
+        width = image.size(1)
+        black_image = torch.ones((3, width, width)) # needs to be black because of MNIST inversion transformation
+        images = torch.stack([black_image] + [image]*(self.context_length-1), dim=0)
+        shape_layers = torch.stack([image]*(self.context_length), dim=0)
+        stop_signals = torch.cat([torch.Tensor([0.]), torch.Tensor([1.]*(self.context_length-1))], dim=0)
+
+        return images, shape_layers, stop_signals
+
+    def __len__(self):
+        return len(self.image_paths)
+
 class MNISTDataset(LightningDataModule):
     """
     PyTorch Lightning data module
@@ -673,4 +724,104 @@ class CausalSVGDataModule(LightningDataModule):
             num_workers=1,
             shuffle=True,
             pin_memory=False,
+        )
+
+class MNISTDatasetCSVG(LightningDataModule):
+    """
+    PyTorch Lightning data module
+
+    Args:
+        data_dir: root directory of your dataset.
+        train_batch_size: the batch size to use during training.
+        val_batch_size: the batch size to use during validation.
+        patch_size: the size of the crop to take from the original images.
+        num_workers: the number of parallel workers to create to load data
+            items (see PyTorch's Dataloader documentation for more details).
+        pin_memory: whether prepared items should be loaded into pinned memory
+            or not. This can improve performance on GPUs.
+    """
+
+    def __init__(
+        self,
+        data_path: str,
+        train_batch_size: int = 8,
+        val_batch_size: int = 8,
+        patch_size: Union[int, Sequence[int]] = (256, 256),
+        num_workers: int = 0,
+        pin_memory: bool = False,
+        context_length: int = 3,
+        **kwargs,
+    ):
+        super().__init__()
+
+        self.data_dir = data_path
+        self.train_batch_size = train_batch_size
+        self.val_batch_size = val_batch_size
+        self.patch_size = patch_size
+        self.num_workers = num_workers
+        self.pin_memory = pin_memory
+        self.context_length = context_length
+
+    def setup(self, stage: Optional[str] = None) -> None:
+        # =========================  MNIST Dataset  =========================
+
+        train_transforms = transforms.Compose(
+            [
+                transforms.Resize(self.patch_size, antialias=True),
+                transforms.RandomInvert(1.0),
+                transforms.Grayscale(num_output_channels=3),
+                transforms.ToTensor(),
+            ]
+        )
+
+        val_transforms = transforms.Compose(
+            [
+                transforms.Resize(self.patch_size, antialias=True),
+                transforms.RandomInvert(1.0),
+                transforms.Grayscale(num_output_channels=3),
+                transforms.ToTensor(),
+            ]
+        )
+
+        self.train_dataset = MNISTforCSVG(
+            self.data_dir,
+            train=True,
+            transform=train_transforms,
+            context_length=self.context_length
+        )
+
+        self.val_dataset = MNISTforCSVG(
+            self.data_dir,
+            train=False,
+            transform=val_transforms,
+            context_length=self.context_length
+        )
+
+    #       ===============================================================
+
+    def train_dataloader(self) -> DataLoader:
+        return DataLoader(
+            self.train_dataset,
+            batch_size=self.train_batch_size,
+            num_workers=self.num_workers,
+            shuffle=True,
+            pin_memory=self.pin_memory,
+        )
+
+    def val_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
+        return DataLoader(
+            self.val_dataset,
+            batch_size=self.val_batch_size,
+            num_workers=self.num_workers,
+            shuffle=False,
+            pin_memory=self.pin_memory,
+        )
+
+    def test_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
+        return DataLoader(
+            self.val_dataset,
+            batch_size=144,
+            num_workers=self.num_workers,
+            shuffle=True,
+            pin_memory=self.pin_memory,
         )
