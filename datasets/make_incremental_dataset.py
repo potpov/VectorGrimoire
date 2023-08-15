@@ -83,9 +83,18 @@ def export_dataset(policy: str, context_length: int = 25, patience: int = 5, res
         df = pd.DataFrame(columns=['filename', 'class', 'split'])
 
     for folder_id, folder in tqdm(enumerate(folders, start=start_id), total=len(folders), initial=start_id):
+        inner_bar = tqdm(
+            total=len(os.listdir(os.path.join(FIGR8_PATH, folder))),
+            desc=f"Processing folder {folder}",
+            leave=False
+        )
         for image_id, img_name in enumerate(os.listdir(os.path.join(FIGR8_PATH, folder))):
             file_path = os.path.join(FIGR8_PATH, folder, img_name)
             paths, attributes = svg2paths(file_path)
+
+            if len(paths) == 0:  # empty SVG? let's log out this guy
+                print(f"WARNING: No path found for {folder}/{img_name}. Skipping")
+                continue
 
             if DEBUG:
                 plt.imshow(raster(disvg(paths, paths2Drawing=True)))
@@ -96,10 +105,6 @@ def export_dataset(policy: str, context_length: int = 25, patience: int = 5, res
             # also: a closed path must be formed by 1 or more connected lines anyway!
             paths = [item for sublist in paths for item in sublist]  # flatten paths
             paths = Path(*paths).continuous_subpaths()  # grouping connected lines
-
-            if len(paths) == 0:  # no continous segments at all? let's log out this guy
-                print(f"WARNING: No continous path found for {folder}/{img_name}. Skipping")
-                continue
 
             if policy == "closed":
                 paths = [p for p in paths if p.isclosed()]
@@ -145,8 +150,10 @@ def export_dataset(policy: str, context_length: int = 25, patience: int = 5, res
                 "split": "train"
             }
             df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+            inner_bar.update(1)
 
         df.to_csv(os.path.join(OUT_DIR, policy, 'split.csv'), index=False)  # backup at the end of every folder
+        inner_bar.close()
 
     # update test samples and save final splits
     df = df.groupby("class").apply(update_split)
