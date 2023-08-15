@@ -25,7 +25,7 @@ FIGR8_PATH = "/scratch4/mcipriano/SVG/FIGR-8-SVG/Data"
 OUT_DIR = "/scratch4/mcipriano/SVG/incremental_FIGR-8/"
 OUT_W = 128
 OUT_H = 128
-DEBUG = True
+DEBUG = False
 
 
 def raster(svg_file: Drawing):
@@ -45,7 +45,14 @@ def raster(svg_file: Drawing):
     return img
 
 
-def export_dataset(policy: str, context_length: int = 50, patience: int = 5):
+def update_split(group):
+    n_samples = int(group.shape[0] * 0.25)
+    rows_to_update = group.sample(n_samples).index
+    group.loc[rows_to_update, "split"] = "test"
+    return group
+
+
+def export_dataset(policy: str, context_length: int = 25, patience: int = 5):
     """
     For each SVG entry of the dataset create a raster versions of each path which is part of that entry.
     the policy specify how to sort and group each path. Lines which are part of a Path can also be considered
@@ -66,7 +73,7 @@ def export_dataset(policy: str, context_length: int = 50, patience: int = 5):
 
     df = pd.DataFrame(columns=['filename', 'class', 'split'])
 
-    for folder in tqdm(os.listdir(FIGR8_PATH), total=len(os.listdir(FIGR8_PATH))):
+    for folder_id, folder in tqdm(enumerate(os.listdir(FIGR8_PATH)), total=len(os.listdir(FIGR8_PATH))):
         for image_id, img_name in enumerate(os.listdir(os.path.join(FIGR8_PATH, folder))):
             file_path = os.path.join(FIGR8_PATH, folder, img_name)
             paths, attributes = svg2paths(file_path)
@@ -117,18 +124,17 @@ def export_dataset(policy: str, context_length: int = 50, patience: int = 5):
                 if DEBUG:
                     plt.imshow(img)
                     plt.show()
-            np.save(
-                os.path.join(OUT_DIR, policy, f"{folder}_{image_id}.npy"),
-                np.stack(imgs)
-            )
+            filename = f"F{folder_id}_I{image_id}_P{len(imgs)}.npy"
+            np.save(os.path.join(OUT_DIR, policy, filename), np.stack(imgs))
             new_row = {
-                "filename": f"{folder[0]}_{image_id}.npy",
+                "filename": filename,
                 "class": folder,
                 "split": "train"
             }
             df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
 
-    # save final csv
+    # update test samples and save final csv
+    df = df.groupby("class").apply(update_split)
     df.to_csv(os.path.join(OUT_DIR, policy, 'split.csv'), index=False)
     return 0
 
@@ -166,7 +172,7 @@ if __name__ == '__main__':
     parser.add_argument('--policy', '-p', help='policy for grouping', default='length')
     args = parser.parse_args()
 
-    # num_svg * num_image_per_svg (~10) * H * W * 8 bit -> convert to gigabyte
+    # num_svg * num_image_per_svg (UB 10) * H * W * 8 bit -> convert to gigabyte
     num_files = len(list(glob(os.path.join(FIGR8_PATH, "*"))))
     print(f"Rough output size with current configuration is: "
           f"{round(num_files * 10 * OUT_H * OUT_W  * 8 * 1.25e-10, 2)} gigabyte")
