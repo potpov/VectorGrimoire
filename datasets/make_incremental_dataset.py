@@ -17,13 +17,15 @@ import os
 import io
 from tqdm import tqdm
 from pathlib import Path as LinuxPath
+from glob import glob
+import argparse
 
 
 FIGR8_PATH = "/scratch4/mcipriano/SVG/FIGR-8-SVG/Data"
 OUT_DIR = "/scratch4/mcipriano/SVG/incremental_FIGR-8/"
-OUT_W = 500
-OUT_H = 500
-DEBUG = False
+OUT_W = 128
+OUT_H = 128
+DEBUG = True
 
 
 def raster(svg_file: Drawing):
@@ -38,6 +40,8 @@ def raster(svg_file: Drawing):
         output_height=OUT_H)
     img = Image.open(io.BytesIO(svg_png_image))
     img = np.flip(img, axis=0)  # images are rastered upside down -> wtf?
+    img = 255 - img[:, :, 3]  # RGBA -> grey-scale
+    img = img / 255  # shift to 0-1 range
     return img
 
 
@@ -157,9 +161,20 @@ def compute_stats():
 
 
 if __name__ == '__main__':
-    policy = "position"  # -> "closed", "length", "position"
-    LinuxPath(os.path.join(OUT_DIR, policy)).mkdir(parents=True, exist_ok=True)
-    export_dataset(policy)
+
+    parser = argparse.ArgumentParser(description='Export for SVG dataset')
+    parser.add_argument('--policy', '-p', help='policy for grouping', default='length')
+    args = parser.parse_args()
+
+    # num_svg * num_image_per_svg (~10) * H * W * 8 bit -> convert to gigabyte
+    num_files = len(list(glob(os.path.join(FIGR8_PATH, "*"))))
+    print(f"Rough output size with current configuration is: "
+          f"{round(num_files * 10 * OUT_H * OUT_W  * 8 * 1.25e-10, 2)} gigabyte")
+
+    if args.policy == "position":
+        print("Warning. position policy is still in beta.")
+    LinuxPath(os.path.join(OUT_DIR, args.policy)).mkdir(parents=True, exist_ok=True)
+    export_dataset(args.policy)
 
 
 
