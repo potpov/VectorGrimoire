@@ -51,7 +51,7 @@ def update_split(group):
     return group
 
 
-def export_dataset(policy: str, context_length: int = 25, patience: int = 5):
+def export_dataset(policy: str, context_length: int = 25, patience: int = 5, resume: bool = False):
     """
     For each SVG entry of the dataset create a raster versions of each path which is part of that entry.
     the policy specify how to sort and group each path. Lines which are part of a Path can also be considered
@@ -64,15 +64,25 @@ def export_dataset(policy: str, context_length: int = 25, patience: int = 5):
     @param patience: threshold to discard an SVG image, images with less than this number of paths will be discarded.
     This applies only if "closed" policy is selected and after all the connected segments in the image are merged into
     paths.
+    @param resume: if true, load last completed folder from the csv and resume the extraction process
     @return: 0 if export is sucessful
     """
 
     assert policy in ["closed", "length", "position"], "Wrong policy or policy not implemented yet!"
     print(f"Generating incremental dataset with policy: {policy}")
 
-    df = pd.DataFrame(columns=['filename', 'class', 'split'])
+    folders = os.listdir(FIGR8_PATH)
+    if resume:
+        df = pd.read_csv(os.path.join(OUT_DIR, policy, 'split.csv'))
+        start_id = len(df["class"].unique())
+        assert folders[:start_id] == df["class"].unique().tolist()
+        folders = folders[start_id:]  # removing processed folders
+        print(f"Resuming preprocessing from folder {folders[0]} at index {start_id}")
+    else:
+        start_id = 0
+        df = pd.DataFrame(columns=['filename', 'class', 'split'])
 
-    for folder_id, folder in tqdm(enumerate(os.listdir(FIGR8_PATH)), total=len(os.listdir(FIGR8_PATH))):
+    for folder_id, folder in tqdm(enumerate(folders, start=start_id), total=len(folders), initial=start_id):
         for image_id, img_name in enumerate(os.listdir(os.path.join(FIGR8_PATH, folder))):
             file_path = os.path.join(FIGR8_PATH, folder, img_name)
             paths, attributes = svg2paths(file_path)
@@ -86,6 +96,10 @@ def export_dataset(policy: str, context_length: int = 25, patience: int = 5):
             # also: a closed path must be formed by 1 or more connected lines anyway!
             paths = [item for sublist in paths for item in sublist]  # flatten paths
             paths = Path(*paths).continuous_subpaths()  # grouping connected lines
+
+            if len(paths) == 0:  # no continous segments at all? let's log out this guy
+                print(f"WARNING: No continous path found for {folder}/{img_name}. Skipping")
+                continue
 
             if policy == "closed":
                 paths = [p for p in paths if p.isclosed()]
@@ -172,6 +186,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Export for SVG dataset')
     parser.add_argument('--policy', '-p', help='policy for grouping', default='length')
     parser.add_argument('--context_len', '-l', help='max sub-images', default=25)
+    parser.add_argument('--resume', '-r', action='store_true', help='resume export (default false)')
     args = parser.parse_args()
 
     # num_svg * num_image_per_svg (UB 10) * H * W * 8 bit -> convert to gigabyte
@@ -183,7 +198,7 @@ if __name__ == '__main__':
     if args.policy == "position":
         print("Warning. position policy is still in beta.")
     LinuxPath(os.path.join(OUT_DIR, args.policy)).mkdir(parents=True, exist_ok=True)
-    export_dataset(policy=args.policy, context_length=int(args.context_len))
+    export_dataset(policy=args.policy, context_length=int(args.context_len), resume=args.resume)
 
 
 
