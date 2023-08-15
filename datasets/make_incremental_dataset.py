@@ -22,7 +22,7 @@ import argparse
 
 
 FIGR8_PATH = "/scratch4/mcipriano/SVG/FIGR-8-SVG/Data"
-OUT_DIR = "/scratch4/mcipriano/SVG/incremental_FIGR-8/"
+OUT_DIR = "/scratch2/mcipriano/SVG/incremental_FIGR-8/"
 OUT_W = 128
 OUT_H = 128
 DEBUG = False
@@ -41,8 +41,7 @@ def raster(svg_file: Drawing):
     img = Image.open(io.BytesIO(svg_png_image))
     img = np.flip(img, axis=0)  # images are rastered upside down -> wtf?
     img = 255 - img[:, :, 3]  # RGBA -> grey-scale
-    img = img / 255  # shift to 0-1 range
-    return img
+    return img.astype(np.uint8)
 
 
 def update_split(group):
@@ -133,7 +132,9 @@ def export_dataset(policy: str, context_length: int = 25, patience: int = 5):
             }
             df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
 
-    # update test samples and save final csv
+        df.to_csv(os.path.join(OUT_DIR, policy, 'split.csv'), index=False)  # backup at the end of every folder
+
+    # update test samples and save final splits
     df = df.groupby("class").apply(update_split)
     df.to_csv(os.path.join(OUT_DIR, policy, 'split.csv'), index=False)
     return 0
@@ -170,17 +171,19 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Export for SVG dataset')
     parser.add_argument('--policy', '-p', help='policy for grouping', default='length')
+    parser.add_argument('--context_len', '-l', help='max sub-images', default=25)
     args = parser.parse_args()
 
     # num_svg * num_image_per_svg (UB 10) * H * W * 8 bit -> convert to gigabyte
-    num_files = len(list(glob(os.path.join(FIGR8_PATH, "*"))))
-    print(f"Rough output size with current configuration is: "
-          f"{round(num_files * 10 * OUT_H * OUT_W  * 8 * 1.25e-10, 2)} gigabyte")
+    num_files = sum([len(os.listdir(os.path.join(FIGR8_PATH, p))) for p in os.listdir(FIGR8_PATH)])
+    print(f"The number of unique images in this dataset is: {num_files}.")
+    print(f"Maximum output size with current configuration is: "
+          f"{round(num_files * int(args.context_len) * OUT_H * OUT_W  * 8 * 1.25e-10, 2)} gigabyte")
 
     if args.policy == "position":
         print("Warning. position policy is still in beta.")
     LinuxPath(os.path.join(OUT_DIR, args.policy)).mkdir(parents=True, exist_ok=True)
-    export_dataset(args.policy)
+    export_dataset(policy=args.policy, context_length=int(args.context_len))
 
 
 
