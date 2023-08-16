@@ -184,7 +184,7 @@ class SimpleVectorDecoder(nn.Module):
         bs = z.shape[0]
         z = z[:, None, :].repeat([1, self.curves *3, 1])
         
-        base_control_features = self.base_control_features[None, :, :].repeat(bs, self.curves, 1 ) # I think this is the control variable c
+        base_control_features = self.base_control_features[None, :, :].repeat(bs, self.curves, 1 ).to(z.device) # I think this is the control variable c
         z_base = torch.cat([z, base_control_features], dim=-1)
 
         id = self.id[None, :, :].repeat(bs, 1, 1) # [ BS, curves * 3, 2], e.g. [32, 60, 2]
