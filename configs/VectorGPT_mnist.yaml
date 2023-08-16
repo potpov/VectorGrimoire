@@ -1,11 +1,11 @@
 model_params:
   name: "VectorGPT"
   image_encoder_model: "resnet18"
-  latent_transformer_dim: 512
+  latent_transformer_dim: 256
   latent_transformer_heads: 8
-  latent_transformer_depth: 16
+  latent_transformer_depth: 8
   latent_transformer_layer_dropout: 0.1
-  vector_decoder_latent_dim: 512
+  vector_decoder_latent_dim: 256
   vector_decoder_paths: 5
   vector_decoder_radius: 3
   vector_decoder_render_size : 128
@@ -15,7 +15,7 @@ model_params:
   context_length: 3
 
 data_params:
-  dataset: "mnist"
+  dataset: "mnistCSVG"
   data_path: "/home/mfeuerpfeil/master/thesis/datasets/mnist_png"
   train_batch_size: 32
   val_batch_size:  32
@@ -23,13 +23,12 @@ data_params:
   num_workers: 4
 
 exp_params:
-  log_fid: False # True
+  # log_fid: False # True
   # clip_sim_model: "openai/clip-vit-large-patch14"
   #clip_prompt_suffix: ". minimal flat 2d vector icon. black and white. on a white background. trending on artstation" # for VectorFusion, replace "black and white" with "linear color"
   LR: 0.0005 # was 0.0005 originally
   weight_decay: 0.0
   scheduler_gamma: 0.95
-  kld_weight: 0.1
   train_log_interval: 200 # ~ 8000 / batch_size / 4
   manual_seed: 1265
 
