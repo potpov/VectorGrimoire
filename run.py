@@ -3,16 +3,16 @@ import yaml
 import argparse
 import numpy as np
 from pathlib import Path
-from models import *
-from experiment import VAEXperiment
+from experiment import VAEXperiment, VectorGPTExperiment
 import torch.backends.cudnn as cudnn
 from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import WandbLogger, TensorBoardLogger
 from pytorch_lightning import seed_everything
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, LearningRateFinder, EarlyStopping
 from thesis.dataset import MNISTDataset, MNISTppDataset, NounProjectDataset, EmojiDataset, MNISTDatasetCSVG
-from thesis.models.vectorGPT import VectorGPT, VectorGPTArgs
+from thesis.models import VAEctorGen, VectorGPT, VanillaVAE, VectorVAEnLayers
 import wandb
+import torch
 
 torch.set_float32_matmul_precision('high')
 
@@ -25,11 +25,8 @@ DATASETMAP = {
 }
 
 MODELS = {'VanillaVAE':VanillaVAE,
-              'VectorVAE':VectorVAE,
+              'VAEctorGen':VAEctorGen,
               'VectorVAEnLayers': VectorVAEnLayers,
-              "Im2VecPlus":Im2VecPlus,
-              "CLIPV2Vec":CLIPV2Vec,
-              "CLIPT2Vec":CLIPT2Vec,
               "VectorGPT" : VectorGPT,
               }
 
@@ -76,8 +73,10 @@ if(args.wandb):
 else:
     model = MODELS[config['model_params']['name']](**config['model_params'])
 
-experiment = VAEXperiment(model,
-                          config['exp_params'])
+if(config['model_params']['name'] == "VectorGPT"):
+    experiment = VectorGPTExperiment(model, **config['exp_params'])
+else:    
+    experiment = VAEXperiment(model, config['exp_params'])
 
 data = DATASETMAP[config["data_params"]["dataset"]](**config["data_params"], pin_memory=config['trainer_params']['devices'] > 0)
 

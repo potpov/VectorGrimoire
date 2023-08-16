@@ -84,7 +84,7 @@ class VectorGPT(nn.Module):
         intermediate = [self.resnet(full_images[:,t,:,:]) for t in range(timesteps)]
         encoded_images = torch.stack(intermediate, dim=1) # (b, t, z)
 
-        pos_embeddings = self.positional_embedding(torch.arange(timesteps)) # (t, z)
+        pos_embeddings = self.positional_embedding(torch.arange(timesteps).to(encoded_images.device)) # (t, z)
         encoded_images = encoded_images + pos_embeddings # (b, t, z)
 
         # then we transform (b, t, z) -> (b, t, z')
@@ -97,7 +97,7 @@ class VectorGPT(nn.Module):
             rasterized_shape, _, _, _ = self.vector_decoder(transformed_latents[:,t,:])
             rasterized_shapes.append(rasterized_shape)
 
-            stop_pred = self.stop_predictor(transformed_latents[:,t,:])
+            stop_pred = self.stop_predictor.to(transformed_latents.device)(transformed_latents[:,t,:])
             stop_preds.append(stop_pred)
 
         # re-introduce the time dimension
@@ -109,7 +109,7 @@ class VectorGPT(nn.Module):
 
 
 
-    def loss_function(self, gt_shape_layers: Tensor, pred_images: Tensor, gt_stop_signals: Tensor, stop_signals:Tensor):
+    def loss_function(self, gt_shape_layers: Tensor, pred_images: Tensor, gt_stop_signals: Tensor, stop_signals:Tensor, **kwargs):
         """
         Inputs:
         gt_shape_layers & pred_images in format (b, t, c, w, h)
