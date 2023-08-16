@@ -3,7 +3,7 @@ import random
 import torch
 from torch import Tensor
 import wandb
-from thesis.models import BaseVAE
+from models import BaseVAE
 from torch import nn
 from torch.nn import functional as F
 from PIL import Image
@@ -13,12 +13,12 @@ from utils import fig2data, make_tensor
 import pydiffvg
 import math
 import numpy as np
-import kornia
+from kornia.geometry.transform.pyramid import PyrDown
 import torchvision
 import matplotlib.pyplot as plt
 from torchvision import transforms
 
-dsample = kornia.transform.PyrDown()
+dsample = PyrDown()
 
 
 # import os

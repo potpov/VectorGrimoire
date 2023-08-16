@@ -3,6 +3,8 @@ from PIL import Image
 import wandb
 import numpy as np
 import torch
+import os
+
 
 def fig2data(fig):
     """
@@ -15,10 +17,12 @@ def fig2data(fig):
     X = np.array(fig.canvas.renderer.buffer_rgba())
     return X[:,:,:3]
 
+
 def make_tensor(x, grad=False):
     x = torch.tensor(x, dtype=torch.float32)
     x.requires_grad = grad
     return x
+
 
 def log_images(recons, real_imgs, log_key="validation", captions=None):
     if captions is not None:
@@ -75,3 +79,16 @@ def log_images(recons, real_imgs, log_key="validation", captions=None):
             wandb.log({log_key: wandb.Image(combined_img)})
         except:
             pass
+
+
+def get_rank() -> int:
+    if not torch.distributed.is_available():
+        return 0  # Training on CPU
+    if not torch.distributed.is_initialized():
+        rank = os.environ.get("LOCAL_RANK")  # from pytorch-lightning
+        if rank is not None:
+            return int(rank)
+        else:
+            return 0
+    else:
+        return torch.distributed.get_rank()

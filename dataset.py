@@ -12,6 +12,8 @@ from torchvision.io import read_image
 from PIL import Image
 import zipfile
 import glob
+import pandas as pd
+import numpy as np
 
 
 # Add your custom dataset class here
@@ -493,6 +495,115 @@ class EmojiDataset(LightningDataModule):
             num_workers=self.num_workers,
             shuffle=True,
             pin_memory=self.pin_memory,
+        )
+
+
+class Figr8CausalSVGDataset(Dataset):
+    """
+    returns black dummy images as the full composite images that act as input
+    returns individual shape renderings for loss calculation. full image at index T requires the network to predict shape rendering at index T.
+    returns stop signal vector
+    """
+
+    def __init__(self, root_path: str, context_length: int, channels: int, width: int, **kwargs):
+        super(Figr8CausalSVGDataset, self)
+        self.context_length = context_length
+        self.channels = channels
+        self.width = width
+        self.root_path = root_path
+        self.split = pd.read_csv(os.path.join(self.root_path, "split.csv"))
+        self.split = self.split[self.split["split"] == ("train" if kwargs["train"] else "test")]
+
+    def __getitem__(self, index) -> tuple:
+        filename = self.split.iloc[index]["filename"]
+        images = np.load(os.path.join(self.root_path, filename))
+        images = torch.from_numpy(images)
+        num_features = images.shape[0]
+        if images.max() > 1:
+            images = images / 255  # shift to [0-1] (imgs stored as uint8)
+
+        # padding images with fewer features than CL
+        pad_len = self.context_length - num_features
+        pad = torch.ones(pad_len, *images.shape[1:])  # 1 -> white -> no features
+        images = torch.concat((images, pad), dim=0)
+
+        # adding channel (Dataset is gray-scale, if you use 3 channels those are replicated)
+        images = images[:, None].repeat((1, self.channels, 1, 1))
+
+        # creating binary stop ground truth
+        stop_signals = torch.zeros(self.context_length)
+        stop_signals[num_features:] = 1.
+
+        shape_layers = images  # TODO: kept this for backward-compatibility, do we need it?
+
+        # TODO: conditioning on captions, class for the image can be found in  self.split.iloc[index]["class"]
+
+        return images, shape_layers, stop_signals
+
+    def __len__(self):
+        return len(self.split)
+
+
+class CausalSVGDataModule(LightningDataModule):
+    def __init__(
+        self,
+        root_path: str,
+        context_length: int,
+        channels: int,
+        width: int,
+        **kwargs,
+    ):
+        super().__init__()
+
+        self.root_path = root_path
+        self.context_length = context_length
+        self.channels = channels
+        self.width = width
+
+    def setup(self, stage: Optional[str] = None) -> None:
+        self.train_dataset = Figr8CausalSVGDataset(
+            self.root_path,
+            self.context_length,
+            self.channels,
+            self.width,
+            train=True,
+        )
+
+        self.val_dataset = Figr8CausalSVGDataset(
+            self.root_path,
+            self.context_length,
+            self.channels,
+            self.width,
+            train=False,
+        )
+
+    #       ===============================================================
+
+    def train_dataloader(self) -> DataLoader:
+        return DataLoader(
+            self.train_dataset,
+            batch_size=8,
+            num_workers=1,
+            shuffle=True,
+            pin_memory=False,
+        )
+
+    def val_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
+        return DataLoader(
+            self.val_dataset,
+            batch_size=8,
+            num_workers=1,
+            shuffle=True,
+            pin_memory=False,
+        )
+
+    def test_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
+        return DataLoader(
+            self.val_dataset,
+            batch_size=8,
+            num_workers=1,
+            shuffle=True,
+            pin_memory=False,
         )
 
 

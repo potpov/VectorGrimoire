@@ -5,15 +5,15 @@ import random
 import torch
 from torch import Tensor
 from torch import optim
-from thesis.models import BaseVAE, VectorVAEnLayers
+from models import BaseVAE, VectorVAEnLayers
 import pytorch_lightning as pl
 from torchvision import transforms
 import torchvision.utils as vutils
 from torchvision.datasets import CelebA
 from torch.utils.data import DataLoader
-from thesis.utils import log_images
+from utils import log_images
 from torchmetrics.image.fid import FrechetInceptionDistance
-from torchmetrics.multimodal import CLIPScore
+from torchmetrics.multimodal.clip_score import CLIPScore
 
 
 class VAEXperiment(pl.LightningModule):
