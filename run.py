@@ -10,7 +10,7 @@ from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import WandbLogger, TensorBoardLogger
 from pytorch_lightning import seed_everything
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, LearningRateFinder, EarlyStopping
-from dataset import MNISTDataset, MNISTppDataset, NounProjectDataset, EmojiDataset
+from dataset import MNISTDataset, MNISTppDataset, NounProjectDataset, EmojiDataset, CausalSVGDataModule
 import wandb
 from utils import get_rank
 
@@ -19,7 +19,8 @@ DATASETMAP = {
     "mnist": MNISTDataset,
     "mnistpp": MNISTppDataset,
     "nounproject": NounProjectDataset,
-    "emoji": EmojiDataset
+    "emoji": EmojiDataset,
+    "causalSVG": CausalSVGDataModule,
 }
 
 
