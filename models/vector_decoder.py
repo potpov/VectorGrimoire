@@ -47,10 +47,15 @@ class VectorDecoder(BaseVAE):
             self.other_losses_weight = kwargs['other_losses_weight']
         if 'reparametrize' in kwargs.keys():
             self.reparametrize_ = kwargs['reparametrize']
+        if 'pyramid_loss_mode' in kwargs.keys():
+            self.pyramid_loss_mode = kwargs['pyramid_loss_mode']
+        else:
+            self.pyramid_loss_mode = "default"
 
         self.curves = paths
         # self.in_channels = in_channels
-        self.scale_factor = kwargs['scale_factor']
+        if 'scale_factor' in kwargs.keys():
+            self.scale_factor = kwargs['scale_factor']
         self.learn_sampling = kwargs['learn_sampling']
         self.only_auxillary_training = kwargs['only_auxillary_training']
         self.memory_leak_training = kwargs['memory_leak_training']
@@ -89,17 +94,33 @@ class VectorDecoder(BaseVAE):
         else:
             self.decode_transform = lambda x: x
         num_one_hot = base_control_features.shape[1]
-        fused_latent_dim = latent_dim + num_one_hot+ (sample_rate*2)
+        fused_latent_dim = latent_dim + num_one_hot + (sample_rate*2)
         self.decoder_input = get_computational_unit(fused_latent_dim, fused_latent_dim*2, unit)
 
-        self.point_predictor = nn.ModuleList([
-            get_computational_unit(fused_latent_dim*2, fused_latent_dim*2, unit),
-            get_computational_unit(fused_latent_dim*2, fused_latent_dim*2, unit),
-            get_computational_unit(fused_latent_dim*2, fused_latent_dim*2, unit),
-            get_computational_unit(fused_latent_dim*2, fused_latent_dim*2, unit),
-            get_computational_unit(fused_latent_dim*2, 2, unit),
-            # nn.Sigmoid()  # bound spatial extent
-        ])
+        # self.point_predictor = nn.ModuleList([
+        #     get_computational_unit(fused_latent_dim*2, fused_latent_dim*2, unit),
+        #     get_computational_unit(fused_latent_dim*2, fused_latent_dim*2, unit),
+        #     get_computational_unit(fused_latent_dim*2, fused_latent_dim*2, unit),
+        #     get_computational_unit(fused_latent_dim*2, fused_latent_dim*2, unit),
+        #     get_computational_unit(fused_latent_dim*2, 2, unit),
+        #     # nn.Sigmoid()  # bound spatial extent
+        # ])
+        self.point_predictor = nn.Sequential(
+            nn.Conv1d(fused_latent_dim, fused_latent_dim, kernel_size=3, padding=1, padding_mode='circular', stride=1, dilation=1),
+            nn.BatchNorm1d(fused_latent_dim),
+            nn.LeakyReLU(),
+            nn.Conv1d(fused_latent_dim, fused_latent_dim, kernel_size=3, padding=1, padding_mode='circular', stride=1, dilation=1),
+            nn.BatchNorm1d(fused_latent_dim),
+            nn.LeakyReLU(),
+            nn.Conv1d(fused_latent_dim, fused_latent_dim, kernel_size=3, padding=1, padding_mode='circular', stride=1, dilation=1),
+            nn.BatchNorm1d(fused_latent_dim),
+            nn.LeakyReLU(),
+            nn.Conv1d(fused_latent_dim, fused_latent_dim, kernel_size=3, padding=1, padding_mode='circular', stride=1, dilation=1),
+            nn.BatchNorm1d(fused_latent_dim),
+            nn.LeakyReLU(),
+            nn.Conv1d(fused_latent_dim, 2, kernel_size=3, padding=1, padding_mode='circular', stride=1, dilation=1),
+            nn.Sigmoid()  # bound spatial extent for image coordinates
+        ) # TODO add better initialization
         if self.learn_sampling:
             self.sample_deformation = nn.Sequential(
                 get_computational_unit(latent_dim + 2+ (sample_rate*2), latent_dim*2, unit),
@@ -152,27 +173,29 @@ class VectorDecoder(BaseVAE):
     def sample_circle(self, r, angles, sample_rate=10):
         pos = []
         for i in range(1, sample_rate+1):
-            x = (torch.cos(angles*(sample_rate/i)) * r)# + r
-            y = (torch.sin(angles*(sample_rate/i)) * r)# + r
+            x = (torch.cos(angles*(sample_rate/i)) * r) + r
+            y = (torch.sin(angles*(sample_rate/i)) * r) + r
             pos.append(x)
             pos.append(y)
         return torch.stack(pos, dim=-1)
 
     def raster(self, all_points, color=[0,0,0, 1], verbose=False, white_background=True, **kwargs):
         assert len(color) == 4
+        device = all_points.device
         # print('1:', process.memory_info().rss*1e-6)
         render_size = self.imsize
         bs = all_points.shape[0]
         if verbose:
-            render_size = render_size*2
+            render_size = 768
         outputs = []
         all_points = all_points*render_size # brings point coordinates from [0,1] back to image scale
 
-        num_ctrl_pts = torch.zeros(self.curves, dtype=torch.int32).to(all_points.device) + 2
-        if(isinstance(color, list)):
-            color = make_tensor(color, grad=True).to(all_points.device)
-        else:
-            color.to(all_points.device)
+        num_ctrl_pts = torch.zeros(self.curves, dtype=torch.int32).to(device) + 2
+        # if(isinstance(color, list)):
+        if(not isinstance(color, Tensor)):
+            color = make_tensor(color, grad=False).to(device)
+        # else:
+        #     color.to(all_points.device)
         for k in range(bs):
             # Get point parameters from network
             render = pydiffvg.RenderFunction.apply
@@ -183,27 +206,26 @@ class VectorDecoder(BaseVAE):
             # had this issue a few times with the LR finder
             if(torch.isnan(points).any()):
                 print(f"[WARNING] Found NaN values in points")
-                points = torch.rand(points.shape).to(points.device)* 0.01
+                points = torch.rand(points.shape).to(device)* 0.01
 
             # check if points are all collapsed, would throw DiffVG error..
             if(torch.all(points == 0.0)):
                 print(f"[WARNING] Found all points to be at 0.0")
-                noise_vec = torch.rand(points.shape).to(points.device)* 0.01
+                noise_vec = torch.rand(points.shape).to(device)* 0.01
                 points = points + noise_vec
 
 
             if verbose: # I think this creates this color gradient for easier visual tracing in the rastered image
                 np.random.seed(0)
-                colors = np.random.rand(self.curves, 4)
-                high = np.array((0.565, 0.392, 0.173, 1))
-                low = np.array((0.094, 0.310, 0.635, 1))
-                diff = (high-low)/(self.curves)
-                colors[:, 3] = 1
-                for i in range(self.curves):
-                    scale = diff*i
-                    color = low + scale
-                    color[3] = 1
-                    color = torch.tensor(color)
+                end_color = color.to(device)
+                start_color = torch.Tensor([0.0, 0.0, 0.0, 1.]).to(device)
+                color_step_size = (end_color-start_color)/(self.curves)
+
+                for i in range(self.curves): 
+                    color_diff = color_step_size*i # the i creates the gradient -> different color for each segment
+                    color = start_color + color_diff
+                    color[3] = 0.9
+                    # color = torch.tensor(color)
                     num_ctrl_pts = torch.zeros(1, dtype=torch.int32) + 2
                     if i*3 + 4 > self.curves * 3:
                         curve_points = torch.stack([points[i*3], points[i*3+1], points[i*3+2], points[0]])
@@ -211,28 +233,26 @@ class VectorDecoder(BaseVAE):
                         curve_points = points[i*3:i*3 + 4]
                     path = pydiffvg.Path(
                         num_control_points=num_ctrl_pts, points=curve_points,
-                        is_closed=False, stroke_width=torch.tensor(4))
+                        is_closed=False, stroke_width=torch.tensor(2))
                     path_group = pydiffvg.ShapeGroup(
                         shape_ids=torch.tensor([i]),
                         fill_color=None,
                         stroke_color=color)
                     shapes.append(path)
                     shape_groups.append(path_group)
-                for i in range(self.curves * 3):#from here TODO comment
-                    scale = diff*(i//3)
-                    color = low + scale
-                    color[3] = 1
-                    color = torch.tensor(color)
+                # add the points
+                for i in range(self.curves * 3):
+                    indicator_scale = 3
                     if i%3==0:
-                        # color = torch.tensor(colors[i//3]) #green
-                        shape = pydiffvg.Rect(p_min = points[i]-8,
-                                             p_max = points[i]+8)
+                        color = torch.tensor([1.,0.,1.,1.]) #fuchsia
+                        shape = pydiffvg.Rect(p_min = points[i]-indicator_scale,
+                                             p_max = points[i]+indicator_scale)
                         group = pydiffvg.ShapeGroup(shape_ids=torch.tensor([self.curves+i]),
                                                            fill_color=color)
                 
                     else:
-                        # color = torch.tensor(colors[i//3]) #purple
-                        shape = pydiffvg.Circle(radius=torch.tensor(8.0),
+                        color = torch.tensor([0.,0.5,0.,1.]) #green
+                        shape = pydiffvg.Circle(radius=torch.tensor(indicator_scale),
                                                  center=points[i])
                         group = pydiffvg.ShapeGroup(shape_ids=torch.tensor([self.curves+i]),
                                                            fill_color=color)
@@ -284,9 +304,10 @@ class VectorDecoder(BaseVAE):
 
         bs = z.shape[0]
         z = z[:, None, :].repeat([1, self.curves *3, 1])
+        
         base_control_features = self.base_control_features[None, :, :].repeat(bs, self.curves, 1 ) # I think this is the control variable c
         z_base = torch.cat([z, base_control_features], dim=-1)
-        z_base_transform = self.decode_transform(z_base) # TODO why is this commented out
+
         if self.learn_sampling:
             self.angles = self.angles.to(z.device)
             angles= self.angles[None, :, None].repeat(bs, 1, 1)
@@ -303,15 +324,23 @@ class VectorDecoder(BaseVAE):
             y = (torch.sin(new_angles) * self.circle_rad)# + r
             z = torch.cat([z_base, x, y], dim=-1)
         else:
-            id = self.id[None, :, :].repeat(bs, 1, 1)
-            z = torch.cat([z_base, id], dim=-1) # [bs, self.curves * 3, latent_dim + 2 (c) + 2 (p)]
+            id = self.id[None, :, :].repeat(bs, 1, 1) # [ BS, curves * 3, 2], e.g. [32, 60, 2]
+            fused_latent = torch.cat([z_base, id], dim=-1) # [bs, self.curves * 3, latent_dim + 2 (c) + 2 (p)]
 
-        all_points = self.decoder_input(self.decode_transform(z))
-        for compute_block in point_predictor:
-            all_points = F.relu(all_points)
-            # all_points = torch.cat([z_base_transform, all_points], dim=1)
-            all_points = compute_block(all_points)
-        all_points = self.decode_transform(F.sigmoid(all_points/self.scale_factor))
+        # all_points = self.decoder_input(self.decode_transform(z)) TODO this was original
+        fused_latent = fused_latent.permute(0, 2, 1)
+        # for compute_block in point_predictor:
+        #     all_points = F.relu(all_points)
+        #     # all_points = torch.cat([z_base_transform, all_points], dim=1)
+        #     all_points = compute_block(all_points)
+        # all_points = self.decode_transform(F.sigmoid(all_points/self.scale_factor))
+
+        # all_points = point_predictor[0](fused_latent)
+        # for compute_block in point_predictor[1:]:
+        #     all_points = compute_block(all_points)
+
+        all_points = point_predictor(fused_latent)
+        all_points = all_points.permute(0, 2, 1)
         return all_points
 
     def reparameterize(self, mu: Tensor, logvar: Tensor) -> Tensor:
@@ -377,17 +406,18 @@ class VectorDecoder(BaseVAE):
 
     def gaussian_pyramid_loss(self, recons, input, log_loss_images = False):
         recon_loss =self.loss_fn(recons, input, reduction='none').mean(dim=[1,2,3]) #+ self.lpips(recons, input)*0.1
-        all_recons = [recons]
-        all_inputs = [input]
-        for j in range(2,5):
-            recons = dsample(recons)
-            input = dsample(input)
+        if(self.pyramid_loss_mode == "default"):
+            all_recons = [recons]
+            all_inputs = [input]
+            for j in range(2,5):
+                recons = dsample(recons)
+                input = dsample(input)
+                if(log_loss_images):
+                    all_recons.append(recons)
+                    all_inputs.append(input)
+                recon_loss = recon_loss + self.loss_fn(recons, input, reduction='none').mean(dim=[1,2,3])/j
             if(log_loss_images):
-                all_recons.append(recons)
-                all_inputs.append(input)
-            recon_loss = recon_loss + self.loss_fn(recons, input, reduction='none').mean(dim=[1,2,3])/j
-        if(log_loss_images):
-            self.log_pyramid_images(all_recons, all_inputs, log_loss=True)
+                self.log_pyramid_images(all_recons, all_inputs, log_loss=True)
         return recon_loss
 
     def loss_function(self,
@@ -398,7 +428,7 @@ class VectorDecoder(BaseVAE):
                       other_losses:int = 0,
                       **kwargs) -> dict:
         """
-        Computes the VAE loss function.
+        Computes the VAE loss function. Reconstruction loss has upper bound of 20.83.
         KL(N(\mu, \sigma), N(0, 1)) = \log \frac{1}{\sigma} + \frac{\sigma^2 + \mu^2}{2} - \frac{1}{2}
         :param args:
         :param kwargs:

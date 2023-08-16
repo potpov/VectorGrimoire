@@ -15,6 +15,8 @@ import wandb
 from utils import get_rank
 
 
+torch.set_float32_matmul_precision('high')
+
 DATASETMAP = {
     "mnist": MNISTDataset,
     "mnistpp": MNISTppDataset,
@@ -62,7 +64,7 @@ seed_everything(config['exp_params']['manual_seed'], True)
 
 if args.wandb and get_rank() == 0:
     model = vae_models[config['model_params']['name']](**config['model_params'], wandb_logging=True)
-    wandb.watch(model, log='all')
+    wandb.watch(model, log='all', log_freq = 100) # can be "all"
 else:
     model = vae_models[config['model_params']['name']](**config['model_params'])
 
@@ -74,13 +76,14 @@ data.setup()
 runner = Trainer(logger=wandb_logger,
                  callbacks=[
                      LearningRateMonitor(logging_interval="epoch", log_momentum=True),
-                     # LearningRateFinder(early_stop_threshold=None),
-                     EarlyStopping("val_loss", 0.002, 4),
+                     #  LearningRateFinder(early_stop_threshold=None, num_training_steps=200),
+                     #  EarlyStopping("val_loss", 0.002, 3),
                      ModelCheckpoint(save_top_k=1, 
                                      dirpath =os.path.join(config['logging_params']['save_dir'], "checkpoints"),
                                      monitor= "val_loss",
                                      save_last= True),
                  ],
+                #  overfit_batches=1,
                  **config['trainer_params'])
 
 

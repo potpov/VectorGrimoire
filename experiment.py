@@ -29,6 +29,16 @@ class VAEXperiment(pl.LightningModule):
         self.hold_graph = False
         self.beta_scale = 2.0 # introduced with Im2Vec
         self.lr = params["LR"]
+
+        if("offset_LR" in params and self.model.decoder.offset_mode == "learnable"):
+            self.offset_LR = params["offset_LR"]
+        else:
+            self.offset_LR = None
+
+        if("offset_warmup" in params and self.model.decoder.offset_mode in ["learnable", "optimizable"]):
+            self.offset_warmup = params["offset_warmup"]
+        else:
+            self.offset_warmup = False
         
         if("log_fid" in self.params.keys()):
             self.log_fid = True if self.params["log_fid"] else False
@@ -60,6 +70,14 @@ class VAEXperiment(pl.LightningModule):
 
     def forward(self, input: Tensor, **kwargs) -> Tensor:
         return self.model(input, **kwargs)
+    
+    def on_train_epoch_start(self):
+        if(self.offset_warmup):
+            for name, param in self.model.named_parameters():
+                if("decoder.offset" in name or "encoder." in name):
+                    param.requires_grad = True
+                else:
+                    param.requires_grad = False
 
     def training_step(self, batch, batch_idx, optimizer_idx = 0):
         real_img, labels = batch
@@ -69,7 +87,11 @@ class VAEXperiment(pl.LightningModule):
         # regularely log training reconstructions
         if(batch_idx % self.params["train_log_interval"] == 0):
             results = self.forward(real_img, labels = labels, log_path_length=True)
-            log_images(results[0], real_img, log_key="training")
+            if(results[0].shape[0] > 10):
+                log_amount = 10
+            else:
+                log_amount = results[0].shape[0]
+            log_images(results[0][:log_amount], real_img[:log_amount], log_key="training")
             train_loss = self.model.loss_function(*results,
                                             M_N = self.params['kld_weight'],
                                             optimizer_idx=optimizer_idx,
@@ -93,6 +115,9 @@ class VAEXperiment(pl.LightningModule):
         return train_loss['loss']
     
     def on_train_epoch_end(self):
+        if(self.offset_warmup):
+            for name, param in self.model.named_parameters():
+                param.requires_grad = True
         if(isinstance(self.model, VectorVAEnLayers)):
             if self.current_epoch % 25 ==0:
                 new_beta = self.model.beta * self.beta_scale
@@ -102,6 +127,7 @@ class VAEXperiment(pl.LightningModule):
         return {}
 
     def validation_step(self, batch, batch_idx, optimizer_idx = 0):
+        print("Entering validation step.")
         real_img, labels = batch
         self.curr_device = real_img.device
 
@@ -115,16 +141,27 @@ class VAEXperiment(pl.LightningModule):
 
         
     def on_validation_end(self) -> None:
-        self.sample_images()
+        print("Entering on_validation_end.")
+        with torch.no_grad():
+            self.sample_images()
+
+        gc.collect()
+        torch.cuda.empty_cache()
         
     def sample_images(self):
+        print("Sampling images for wandb.")
         # Get sample reconstruction image            
+        if(self.log_clip_sim or self.log_fid):
+            num_of_samples = 100
+        else:
+            num_of_samples = 10
         test_input, test_label = next(iter(self.trainer.datamodule.test_dataloader()))
-        test_input = test_input.to(self.curr_device)
-        test_label = test_label.to(self.curr_device)
+        test_input = test_input[:num_of_samples].to(self.curr_device)
+        test_label = test_label[:num_of_samples].to(self.curr_device)
 
-        # test_input, test_label = batch
-        recons = self.model.generate(test_input, labels = test_label, verbose=True)
+        with torch.no_grad():
+            # test_input, test_label = batch
+            recons = self.model.generate(test_input, labels = test_label, verbose=True)
         
         # make sure there are no small negative numbers for rendering
         dummy = torch.nn.ReLU()
@@ -132,28 +169,27 @@ class VAEXperiment(pl.LightningModule):
         
         log_images(recons[:5], test_input[:5], log_key="val_recons")
 
-        if(self.logger.save_dir is not None):
-            vutils.save_image(recons.data[:10],
-                            os.path.join(self.logger.save_dir , 
-                                        "Reconstructions", 
-                                        f"recons_{self.logger.name}_Epoch_{self.current_epoch}.png"),
-                            normalize=True,
-                            nrow=5)
+        # if(self.logger.save_dir is not None):
+        #     vutils.save_image(recons.data[:10],
+        #                     os.path.join(self.logger.save_dir , 
+        #                                 "Reconstructions", 
+        #                                 f"recons_{self.logger.name}_Epoch_{self.current_epoch}.png"),
+        #                     normalize=True,
+        #                     nrow=5)
 
         try:
-            num_of_samples = 100
             samples = self.model.sample(num_of_samples,
                                         self.curr_device,
                                         labels = test_label)
             samples = dummy(samples[:,:3,:,:]) # drop the alpha channel for metric calculation
             log_images(samples[:5], samples[5:10], log_key="samples")
-            if(self.logger.save_dir is not None):
-                vutils.save_image(samples.cpu().data,
-                                os.path.join(self.logger.save_dir , 
-                                            "Samples",      
-                                            f"{self.logger.name}_Epoch_{self.current_epoch}.png"),
-                                normalize=True,
-                                nrow=5)
+            # if(self.logger.save_dir is not None):
+            #     vutils.save_image(samples.cpu().data,
+            #                     os.path.join(self.logger.save_dir , 
+            #                                 "Samples",      
+            #                                 f"{self.logger.name}_Epoch_{self.current_epoch}.png"),
+            #                     normalize=True,
+            #                     nrow=5)
             # Log FID score
             if(self.log_fid):
                 self.fid.update(test_input, real = True)
@@ -171,22 +207,23 @@ class VAEXperiment(pl.LightningModule):
                 self.logger.log_metrics({"val_recons_FID" : fid_recon_score, "val_sample_FID" : fid_sample_score})#, sync_dist=True ,prog_bar=True)
 
             if(self.log_clip_sim):
-                with torch.no_grad():
-                    _label_translate_dict = self.trainer.datamodule.val_dataset._int_to_label
-                    # was used to test VRAM usage
-                    # _max_clip_calculations = 100
-                    
-                    self.clip_sim.update(recons, [_label_translate_dict[label]+self.clip_prompt_suffix for label in test_label.cpu().numpy()])
-                    clip_sim_recon_score = self.clip_sim.compute()
-                    self.clip_sim.reset()
+                
+                _label_translate_dict = self.trainer.datamodule.val_dataset._int_to_label
+                # was used to test VRAM usage
+                # _max_clip_calculations = 100
+                
+                self.clip_sim.update(recons, [_label_translate_dict[label]+self.clip_prompt_suffix for label in test_label.cpu().numpy()])
+                clip_sim_recon_score = self.clip_sim.compute()
+                self.clip_sim.reset()
 
-                    self.clip_sim.update(samples, [_label_translate_dict[label]+self.clip_prompt_suffix for label in test_label.cpu().numpy()[:num_of_samples]])
-                    clip_sim_sample_score = self.clip_sim.compute()
-                    self.clip_sim.reset()
+                self.clip_sim.update(samples, [_label_translate_dict[label]+self.clip_prompt_suffix for label in test_label.cpu().numpy()[:num_of_samples]])
+                clip_sim_sample_score = self.clip_sim.compute()
+                self.clip_sim.reset()
 
                 self.logger.log_metrics({"val_recons_CLIP_sim" : clip_sim_recon_score, "val_sample_CLIP_sim" : clip_sim_sample_score})#, sync_dist=True ,prog_bar=True)
                 
-        except Warning:
+        except Exception as e:
+            print(f"[ERROR] at sampling")
             pass
 
     def configure_optimizers(self):
@@ -194,9 +231,35 @@ class VAEXperiment(pl.LightningModule):
         optims = []
         scheds = []
 
-        optimizer = optim.AdamW(self.model.parameters(),
-                               lr=self.lr,
-                               weight_decay=self.params['weight_decay'])
+        param_groups = []
+
+        if(self.offset_LR is not None):
+            offset_params = []
+            other_params = []
+            # Separate parameters for the 'offset' layer and other model parameters
+            for name, param in self.model.named_parameters():
+                if(name == "decoder.offset.bias" or name == "decoder.offset.weight"):
+                    offset_params.append(param)
+                else:
+                    other_params.append(param)
+
+            # Set different learning rates for different parameter groups
+            param_group_1 = {'params': other_params, 'lr': self.lr}
+            param_group_2 = {'params': offset_params, 'lr': self.offset_LR}
+
+            param_groups = [param_group_1, param_group_2]
+        else:
+            param_group_1 = {'params': self.model.parameters(), 'lr': self.lr}
+            param_groups = [param_group_1]
+
+
+        if(self.params["weight_decay"] is not None):
+            optimizer = optim.AdamW(param_groups,
+                                lr=self.lr,
+                                weight_decay=self.params['weight_decay'])
+        else:
+            optimizer = optim.Adam(param_groups,
+                                lr=self.lr)
         optims.append(optimizer)
         # Check if more than 1 optimizer is required (Used for adversarial training)
         try:
@@ -223,4 +286,5 @@ class VAEXperiment(pl.LightningModule):
                     pass
                 return optims, scheds
         except:
-            return optims
+            pass
+        return optims

@@ -646,8 +646,8 @@ class NounProjectDataset(LightningDataModule):
         train_transforms = transforms.Compose(
             [
                 transforms.Resize(self.patch_size, antialias=True),
-                transforms.RandomHorizontalFlip(),
-                transforms.RandomRotation(5.0, fill=256),
+                # transforms.RandomHorizontalFlip(),
+                # transforms.RandomRotation(5.0, fill=256),
                 transforms.Grayscale(num_output_channels=3),
                 transforms.ToTensor(),
             ]
