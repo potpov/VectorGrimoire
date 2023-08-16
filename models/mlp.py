@@ -19,25 +19,25 @@ class MultiLayerPerceptron(nn.Module):
         ), f"Expected one of {ACTIVATIONS.keys()}, got {activation}"
 
         super(MultiLayerPerceptron, self).__init__()
-        self.modules = []
+        modules = []
         # first layer manually
-        self.modules.append(nn.Linear(input_dim, dims[0]))
+        modules.append(nn.Linear(input_dim, dims[0]))
+        if(activation == "relu"):
+                modules.append(nn.ReLU())
 
         # intermediate layers
         for i, dim in enumerate(dims[:-1]):
-            self.modules.append(nn.Linear(dims[i], dims[i+1]))
+            modules.append(nn.Linear(dims[i], dims[i+1]))
+            if(activation == "relu"):
+                modules.append(nn.ReLU())
 
         # final prediction layer
-        self.modules.append(nn.Linear(dims[-1], num_classes))
+        modules.append(nn.Linear(dims[-1], num_classes))
+        modules.append(nn.Sigmoid())
 
-        self.activation = ACTIVATIONS[activation]
+        self.model = nn.Sequential(*modules)
+
 
     def forward(self, x: torch.Tensor):
-        out = self.modules[0](x)
-        for module in self.modules[1:]:
-            out = self.activation(out)
-            out = module(out)
-                
-        out = F.sigmoid(out)
-
+        out = self.model(x)
         return out
