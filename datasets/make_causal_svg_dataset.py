@@ -45,6 +45,11 @@ def raster(svg_file: Drawing):
 
 
 def update_split(group):
+    """
+    Generate a test split for each class using 1/4 of the whole data
+    @param group: Dataframe with entries for a given class
+    @return: Same dataframe with the split value updated for 25% of the samples
+    """
     n_samples = int(group.shape[0] * 0.25)
     rows_to_update = group.sample(n_samples).index
     group.loc[rows_to_update, "split"] = "test"
@@ -85,15 +90,14 @@ def export_dataset(policy: str, context_length: int = 25, patience: int = 5, res
     for folder_id, folder in tqdm(enumerate(folders, start=start_id), total=len(folders), initial=start_id):
         inner_bar = tqdm(
             total=len(os.listdir(os.path.join(FIGR8_PATH, folder))),
-            desc=f"Processing folder {folder}",
+            desc=f"Processing folder for class \"{folder}\"",
             leave=False
         )
         for image_id, img_name in enumerate(os.listdir(os.path.join(FIGR8_PATH, folder))):
             file_path = os.path.join(FIGR8_PATH, folder, img_name)
             paths, attributes = svg2paths(file_path)
 
-            if len(paths) == 0:  # empty SVG? let's log out this guy
-                print(f"WARNING: No path found for {folder}/{img_name}. Skipping")
+            if len(paths) == 0:  # empty SVG
                 continue
 
             if DEBUG:
