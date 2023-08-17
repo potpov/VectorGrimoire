@@ -80,9 +80,13 @@ def export_dataset(policy: str, context_length: int = 25, patience: int = 5, res
     if resume:
         df = pd.read_csv(os.path.join(OUT_DIR, policy, 'split.csv'))
         start_id = len(df["class"].unique())
+        print(f"Last id found in dataset {start_id} -  len of dataset: {len(folders)}")
+        if start_id == len(folders):
+            print("Process is already complete. Abort.")
+            return 0
         assert folders[:start_id] == df["class"].unique().tolist()
         folders = folders[start_id:]  # removing processed folders
-        print(f"Resuming preprocessing from folder {folders[0]} at index {start_id}")
+        print(f"Resuming preprocessing from folder {folders[0]}")
     else:
         start_id = 0
         df = pd.DataFrame(columns=['filename', 'class', 'split'])
