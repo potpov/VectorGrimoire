@@ -56,14 +56,16 @@ class VectorGPTExperiment(pl.LightningModule):
         #                                     log_loss_images = True)
         # else:
         predicted_shapes, stop_preds = self.forward(full_images)
-        train_loss = self.model.loss_function(gt_shape_layers= shape_layers,
+        train_loss, recons_loss, stop_prediction_loss = self.model.loss_function(gt_shape_layers= shape_layers,
                                                 pred_images=predicted_shapes,
                                                 gt_stop_signals=stop_signals,
                                                 stop_signals=stop_preds,
                                                 optimizer_idx=optimizer_idx,
                                                 batch_idx = batch_idx)
 
-        self.log_dict({"train_loss": train_loss}, sync_dist=True, prog_bar=True)
+        self.log_dict({"train_loss": train_loss, 
+                       "train_recons_loss" : recons_loss, 
+                       "train_stop_prediction_loss" : stop_prediction_loss}, sync_dist=True, prog_bar=True)
 
         return train_loss
     
