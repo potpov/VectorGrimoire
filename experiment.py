@@ -11,10 +11,9 @@ from torchvision import transforms
 import torchvision.utils as vutils
 from torchvision.datasets import CelebA
 from torch.utils.data import DataLoader
-from thesis.utils import log_images
+from utils import log_images
 from torchmetrics.image.fid import FrechetInceptionDistance
-from torchmetrics.multimodal import CLIPScore
-import wandb
+from torchmetrics.multimodal.clip_score import CLIPScore
 
 class VectorGPTExperiment(pl.LightningModule):
     def __init__(self,
