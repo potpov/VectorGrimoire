@@ -51,7 +51,7 @@ def log_images(recons, real_imgs, log_key="validation", captions=None):
         combined_imgs = [
             get_concat_h(input_imgs[i], recons_imgs[i]) for i in range(len(input_imgs))
         ]
-        if captions:
+        if captions is not None:
             wandb.log(
                 {
                     log_key: [
