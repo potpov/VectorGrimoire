@@ -5,7 +5,7 @@ import random
 import torch
 from torch import Tensor
 from torch import optim
-from models import BaseVAE, VectorVAEnLayers
+from thesis.models import BaseVAE, VectorVAEnLayers, VectorGPT
 import pytorch_lightning as pl
 from torchvision import transforms
 import torchvision.utils as vutils
@@ -15,6 +15,114 @@ from utils import log_images
 from torchmetrics.image.fid import FrechetInceptionDistance
 from torchmetrics.multimodal.clip_score import CLIPScore
 
+class VectorGPTExperiment(pl.LightningModule):
+    def __init__(self,
+                 vector_gpt_model: VectorGPT,
+                 lr: float = 0.0003,
+                 weight_decay: float= 0.0,
+                 scheduler_gamma: float= 0.99,
+                 train_log_interval: int= 250,
+                 manual_seed: int = 42,
+                 **kwargs) -> None:
+        super(VectorGPTExperiment, self).__init__()
+
+        self.model = vector_gpt_model
+        self.lr = lr
+        self.weight_decay = weight_decay
+        self.scheduler_gamma = scheduler_gamma
+        self.train_log_interval = train_log_interval
+        self.manual_seed = manual_seed
+        self.curr_device = None
+
+    def forward(self, full_images: Tensor, **kwargs) -> Tensor:
+        return self.model(full_images, **kwargs)
+    
+    def training_step(self, batch, batch_idx, optimizer_idx = 0):
+        full_images, shape_layers, stop_signals = batch
+        self.curr_device = full_images.device
+
+        # regularely log training reconstructions
+        # if(batch_idx % self.train_log_interval == 0):
+        #     predicted_shapes, stop_preds = self.forward(full_images)
+        #     # if(results[0].shape[0] > 10):
+        #     #     log_amount = 10
+        #     # else:
+        #     #     log_amount = results[0].shape[0]
+        #     # log_images(results[0][:log_amount], real_img[:log_amount], log_key="training")
+        #     train_loss = self.model.loss_function(*results,
+        #                                     M_N = self.params['kld_weight'],
+        #                                     optimizer_idx=optimizer_idx,
+        #                                     batch_idx = batch_idx,
+        #                                     log_loss_images = True)
+        # else:
+        predicted_shapes, stop_preds = self.forward(full_images)
+        train_loss = self.model.loss_function(gt_shape_layers= shape_layers,
+                                                pred_images=predicted_shapes,
+                                                gt_stop_signals=stop_signals,
+                                                stop_signals=stop_preds,
+                                                optimizer_idx=optimizer_idx,
+                                                batch_idx = batch_idx)
+
+        self.log_dict({"train_loss": train_loss}, sync_dist=True, prog_bar=True)
+
+        return train_loss
+    
+    def on_train_epoch_end(self):
+        gc.collect()
+        torch.cuda.empty_cache()
+        return {}
+
+    def validation_step(self, batch, batch_idx, optimizer_idx = 0):
+        full_images, shape_layers, stop_signals = batch
+        self.curr_device = full_images.device
+
+        predicted_shapes, stop_preds = self.forward(full_images)
+        val_loss = self.model.loss_function(gt_shape_layers= shape_layers,
+                                                pred_images=predicted_shapes,
+                                                gt_stop_signals=stop_signals,
+                                                stop_signals=stop_preds,
+                                                optimizer_idx=optimizer_idx,
+                                                batch_idx = batch_idx)
+
+        self.log_dict({"val_loss": val_loss}, sync_dist=True, prog_bar=True)
+
+        return val_loss
+
+    def on_validation_end(self) -> None:
+        gc.collect()
+        torch.cuda.empty_cache()
+        return {}
+    
+    def configure_optimizers(self):
+
+        optims = []
+        scheds = []
+
+        param_groups = []
+
+        param_group_1 = {'params': self.model.parameters(), 'lr': self.lr}
+        param_groups = [param_group_1]
+
+
+        if(self.weight_decay is not None):
+            optimizer = optim.AdamW(param_groups,
+                                lr=self.lr,
+                                weight_decay=self.weight_decay)
+        else:
+            optimizer = optim.Adam(param_groups,
+                                lr=self.lr)
+        optims.append(optimizer)
+        
+        try:
+            if self.scheduler_gamma is not None:
+                scheduler = optim.lr_scheduler.ExponentialLR(optims[0],
+                                                             gamma = self.scheduler_gamma)
+                scheds.append(scheduler)
+
+                return optims, scheds
+        except:
+            pass
+        return optims
 
 class VAEXperiment(pl.LightningModule):
 

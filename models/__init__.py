@@ -2,7 +2,8 @@ from .base import *
 from .vanilla_vae import *
 from .vq_vae import *
 from .vector_vae_nlayers import *
-from models.vaectorgen import VAEctorGen
+from thesis.models.vaectorgen import VAEctorGen
+from .vectorGPT import VectorGPT
 
 vae_models = {"VanillaVAE": VanillaVAE, 
               "VQVAE": VQVAE,
