@@ -72,12 +72,12 @@ class VectorGPT(nn.Module):
                                                    activation=self.stop_predictor_activation,
                                                    num_classes=self.stop_predictor_num_classes)
 
-    def forward(self, input_images: Tensor):
+    def forward(self, input_images: Tensor, drop_alpha_channel = False, **kwargs):
         """
         Expects images to be in (batch, timesteps, channel, width, height).
         Important: expects separate shape layers as input, not composite images.
 
-        Outputs rasterized shape layers
+        Outputs rasterized shape layers (b, t, c, w, h) and stop signals (b, t)
         """
         bs = input_images.size(0)
         timesteps = input_images.size(1)
@@ -104,6 +104,8 @@ class VectorGPT(nn.Module):
 
         # re-introduce the time dimension
         rasterized_shapes = torch.stack(rasterized_shapes, dim=1) # (b, t, c, w, h)
+        if drop_alpha_channel:
+            rasterized_shapes = rasterized_shapes[:, :, :3, :, :]
         stop_preds = torch.stack(stop_preds, dim=1) # (b, t, 1)
         stop_preds = stop_preds.squeeze(-1) # (b, t)
 
@@ -129,18 +131,21 @@ class VectorGPT(nn.Module):
         if(pred_images.size(2) == 4):
             pred_images = pred_images[:, :, :3, :, :]
         
-        # mask out the loss calculation for stop loss beyond the first stop signal
+        # # mask out the loss calculation for stop loss beyond the first stop signal
         mask = gt_stop_signals >= 0.
         selected_gt_stop_signals = torch.masked_select(gt_stop_signals, mask)
         selected_stop_signals = torch.masked_select(stop_signals, mask)
 
         # mask out loss calculation for shape predictions from the first stop signal on
         mask = gt_stop_signals == 0.
-        selected_gt_shape_layers = torch.masked_select(gt_shape_layers, mask)
-        selected_pred_images = torch.masked_select(pred_images, mask)
+        expanded_mask = mask.unsqueeze(2).unsqueeze(3).unsqueeze(4)
+        selected_gt_shape_layers = torch.masked_select(gt_shape_layers, expanded_mask)
+        selected_pred_images = torch.masked_select(pred_images, expanded_mask)
 
         stop_prediction_loss = F.binary_cross_entropy(selected_stop_signals, selected_gt_stop_signals)
         recons_loss = F.mse_loss(selected_pred_images, selected_gt_shape_layers)
+        # stop_prediction_loss = F.binary_cross_entropy(stop_signals, gt_stop_signals)
+        # recons_loss = F.mse_loss(pred_images, gt_shape_layers)
 
         final_loss = (1 - self.reconstruction_loss_weight)*stop_prediction_loss + self.reconstruction_loss_weight*recons_loss
         

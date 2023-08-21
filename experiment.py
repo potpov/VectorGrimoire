@@ -55,7 +55,7 @@ class VectorGPTExperiment(pl.LightningModule):
         #                                     batch_idx = batch_idx,
         #                                     log_loss_images = True)
         # else:
-        predicted_shapes, stop_preds = self.forward(input_shape_layers)
+        predicted_shapes, stop_preds = self.forward(input_shape_layers, drop_alpha_channel=True)
         train_loss, recons_loss, stop_prediction_loss = self.model.loss_function(gt_shape_layers= target_shape_layers,
                                                 pred_images=predicted_shapes,
                                                 gt_stop_signals=stop_signals,
@@ -63,12 +63,13 @@ class VectorGPTExperiment(pl.LightningModule):
                                                 optimizer_idx=optimizer_idx,
                                                 batch_idx = batch_idx)
         
+        # always log the first batch and variable amount of timesteps up to 10
         if(batch_idx % self.train_log_interval == 0):
             if(predicted_shapes[0].shape[0] > 10):
                 log_amount = 10
             else:
                 log_amount = predicted_shapes[0].shape[0]
-            log_images(predicted_shapes[0][:log_amount], target_shape_layers[:log_amount], log_key="training predctions")
+            log_images(predicted_shapes[0][:log_amount], target_shape_layers[0][:log_amount], log_key="training predctions")
 
 
         self.log_dict({"train_loss": train_loss, 
@@ -105,19 +106,19 @@ class VectorGPTExperiment(pl.LightningModule):
         return {}
     
     def sample_images(self, num_of_samples = 10):
-        test_input, test_label = next(iter(self.trainer.datamodule.test_dataloader()))
-        test_input = test_input[:num_of_samples].to(self.curr_device)
-        test_label = test_label[:num_of_samples].to(self.curr_device)
+        full_images, shape_layers, stop_signals = next(iter(self.trainer.datamodule.test_dataloader()))
+        test_input = full_images[:num_of_samples].to(self.curr_device)
+        test_targets = shape_layers[:num_of_samples].to(self.curr_device)
 
         with torch.no_grad():
             # test_input, test_label = batch
-            recons = self.model.forward(test_input, labels = test_label, verbose=True)
+            shape_preds, stop_preds = self.model.forward(test_input, drop_alpha_channel=True)
         
         # make sure there are no small negative numbers for rendering
         dummy = torch.nn.ReLU()
-        recons = dummy(recons)
+        shape_preds = dummy(shape_preds)
         
-        log_images(recons[:5], test_input[:5], log_key="val_recons")
+        log_images(shape_preds[:5], test_targets[:5], log_key="val_preds")
     
     def configure_optimizers(self):
 

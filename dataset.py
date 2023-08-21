@@ -811,7 +811,7 @@ class MNISTDatasetCSVG(LightningDataModule):
         patch_size: Union[int, Sequence[int]] = (256, 256),
         num_workers: int = 0,
         pin_memory: bool = False,
-        context_length: int = 3,
+        context_length: int = 2,
         **kwargs,
     ):
         super().__init__()

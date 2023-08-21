@@ -78,7 +78,7 @@ def log_images(recons, real_imgs, log_key="validation", captions=None):
             combined_img = get_concat_h(input_img, recons_img)
             wandb.log({log_key: wandb.Image(combined_img)})
         except Exception as e:
-            print(f"[ERROR] Failed to log sample images for wandb. {e.message}")
+            print(f"[ERROR] Failed to log sample images for wandb. {e}")
             pass
 
 
