@@ -3,9 +3,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 from x_transformers import Decoder
-from thesis.models.resnet import ResNet18, ResNet34, ResNet50, ResNet101, ResNet152
-from thesis.models.simple_vector_decoder import SimpleVectorDecoder
-from thesis.models.mlp import MultiLayerPerceptron
+from models.resnet import ResNet18, ResNet34, ResNet50, ResNet101, ResNet152
+from models.simple_vector_decoder import SimpleVectorDecoder
+from models.mlp import MultiLayerPerceptron
 
 class VectorGPT(nn.Module):
     def __init__(self,
