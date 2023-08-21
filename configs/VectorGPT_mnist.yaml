@@ -9,6 +9,7 @@ model_params:
   vector_decoder_paths: 5
   vector_decoder_radius: 3
   vector_decoder_render_size : 128 # 128
+  vector_decoder_filled: True
   stop_predictor_dims: [768, 512] #[768, 512]
   stop_predictor_activation: "relu"
   stop_predictor_num_classes: 1

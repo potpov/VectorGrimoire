@@ -9,6 +9,7 @@ model_params:
   vector_decoder_paths: 5
   vector_decoder_radius: 3
   vector_decoder_render_size : 128 # 128
+  vector_decoder_filled: False
   stop_predictor_dims: [768, 512] #[768, 512]
   stop_predictor_activation: "relu"
   stop_predictor_num_classes: 1
@@ -18,14 +19,14 @@ model_params:
 data_params:
   dataset: "causalSVG"
   data_path: "/scratch2/svg/length"
-  train_batch_size: 4
-  val_batch_size:  4
+  train_batch_size: 8
+  val_batch_size:  8
   width: 128 # has to be equal to vector_decoder_render_size
   num_workers: 8
   channels: 3
 
 exp_params:
-  LR: 0.0001 # was 0.0005 originally
+  LR: 0.0003 # was 0.0005 originally
   weight_decay: 0.0
   scheduler_gamma: 0.95
   train_log_interval: 50 # ~ 8000 / batch_size / 4

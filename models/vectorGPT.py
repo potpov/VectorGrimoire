@@ -19,6 +19,7 @@ class VectorGPT(nn.Module):
                     vector_decoder_paths: int = 5,
                     vector_decoder_radius: int = 3,
                     vector_decoder_render_size: int = 128,
+                    vector_decoder_filled: bool = True,
                     stop_predictor_dims: list = [768, 512],
                     stop_predictor_activation: str = "relu",
                     stop_predictor_num_classes: int = 1,
@@ -37,6 +38,7 @@ class VectorGPT(nn.Module):
         self.vector_decoder_paths = vector_decoder_paths
         self.vector_decoder_radius = vector_decoder_radius
         self.vector_decoder_render_size = vector_decoder_render_size
+        self.vector_decoder_filled = vector_decoder_filled
         self.stop_predictor_dims = stop_predictor_dims
         self.stop_predictor_activation = stop_predictor_activation
         self.stop_predictor_num_classes = stop_predictor_num_classes
@@ -66,7 +68,8 @@ class VectorGPT(nn.Module):
         self.vector_decoder = SimpleVectorDecoder(latent_dim=self.vector_decoder_latent_dim,
                                                   paths=self.vector_decoder_paths,
                                                   radius=self.vector_decoder_radius,
-                                                  render_size=self.vector_decoder_render_size)
+                                                  render_size=self.vector_decoder_render_size,
+                                                  filled=self.vector_decoder_filled)
         self.stop_predictor = MultiLayerPerceptron(input_dim=self.latent_transformer_dim,
                                                    dims=self.stop_predictor_dims,
                                                    activation=self.stop_predictor_activation,
