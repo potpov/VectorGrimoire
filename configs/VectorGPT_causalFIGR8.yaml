@@ -20,7 +20,8 @@ data_params:
   dataset: "causalSVG"
   data_path: "/scratch2/mcipriano/SVG/incremental_FIGR-8/length"
   channels: 3
-  reduced: True  # run with only "arraw" classes, around 12.3k training samples
+  subset:  # use none or comment for using the whole dataset
+    - user
   width: 128  # KEEP THIS SYNC WITH make_causal_svg_dateset
   context_length: 15  # KEEP THIS SYNC WITH make_causal_svg_dateset
   train_batch_size: 8

@@ -217,16 +217,16 @@ class Figr8CausalSVGDataset(Dataset):
      F{folder_id}_I{svg_id}_P{features}.npy    split.csv
     """
 
-    def __init__(self, root_path: str, context_length: int, channels: int, width: int, reduced: bool = False, **kwargs):
+    def __init__(self, root_path: str, context_length: int, channels: int, width: int, subset: List, **kwargs):
         super(Figr8CausalSVGDataset, self)
         self.context_length = context_length
         self.channels = channels
         self.width = width  # TODO: can we remove this?
         self.root_path = root_path
-        self.reduced = reduced
+        self.subset = subset
         self.split = pd.read_csv(os.path.join(self.root_path, "split.csv"))
-        if self.reduced:
-            self.split = self.split[self.split["class"] == "arrow"]
+        if self.subset and len(self.subset) > 0:
+            self.split = self.split[self.split['class'].isin(self.subset)]
         self.split = self.split[self.split["split"] == ("train" if kwargs["train"] else "test")]
 
     def __getitem__(self, index) -> tuple:
@@ -641,7 +641,7 @@ class CausalSVGDataModule(LightningDataModule):
         channels: int,
         width: int,
         num_workers: int = 0,
-        reduced: bool = False,
+        subset: List = None,
         **kwargs,
     ):
         super().__init__()
@@ -654,9 +654,11 @@ class CausalSVGDataModule(LightningDataModule):
         self.channels = channels
         self.width = width
         self.num_workers = num_workers
-        self.reduced = reduced
-        if reduced:
-            print("Using subset of original dataset: taking only the most common class \"arrow\"")
+        self.subset = subset
+        if subset:
+            print(f"Using subset of original dataset: {self.subset}")
+        else:
+            print("Executing on the whole dataset!")
 
     def setup(self, stage: Optional[str] = None) -> None:
         self.train_dataset = Figr8CausalSVGDataset(
@@ -664,7 +666,7 @@ class CausalSVGDataModule(LightningDataModule):
             self.context_length,
             self.channels,
             self.width,
-            reduced=self.reduced,
+            subset=self.subset,
             train=True,
         )
 
@@ -673,7 +675,7 @@ class CausalSVGDataModule(LightningDataModule):
             self.context_length,
             self.channels,
             self.width,
-            reduced=self.reduced,
+            subset=self.subset,
             train=False,
         )
 
