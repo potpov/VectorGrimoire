@@ -17,7 +17,7 @@ model_params:
 data_params:
   dataset: "causalSVG"
   root_path: "/scratch2/mcipriano/SVG/incremental_FIGR-8/length"
-  channels: 1
+  channels: 3
   width: 128  # KEEP THIS SYNC WITH make_causal_svg_dateset
   context_length: 15  # KEEP THIS SYNC WITH make_causal_svg_dateset
   train_batch_size: 32

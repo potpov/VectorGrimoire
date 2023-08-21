@@ -787,62 +787,6 @@ class NounProjectDataset(LightningDataModule):
             pin_memory=self.pin_memory,
         )
 
-class CausalSVGDataModule(LightningDataModule):
-    def __init__(
-        self,
-        context_length: int, 
-        channels: int, 
-        width: int
-    ):
-        super().__init__()
-
-        self.context_length = context_length
-        self.channels = channels
-        self.width = width
-
-    def setup(self, stage: Optional[str] = None) -> None:
-        self.train_dataset = DummyCausalSVGDataset(
-            self.context_length,
-            self.channels,
-            self.width,
-            train=True,
-        )
-
-        self.val_dataset = DummyCausalSVGDataset(
-            self.context_length,
-            self.channels,
-            self.width,
-            train=False,
-        )
-
-    #       ===============================================================
-
-    def train_dataloader(self) -> DataLoader:
-        return DataLoader(
-            self.train_dataset,
-            batch_size=8,
-            num_workers=1,
-            shuffle=True,
-            pin_memory=False,
-        )
-
-    def val_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
-        return DataLoader(
-            self.val_dataset,
-            batch_size=8,
-            num_workers=1,
-            shuffle=True,
-            pin_memory=False,
-        )
-
-    def test_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
-        return DataLoader(
-            self.val_dataset,
-            batch_size=8,
-            num_workers=1,
-            shuffle=True,
-            pin_memory=False,
-        )
 
 class MNISTDatasetCSVG(LightningDataModule):
     """
