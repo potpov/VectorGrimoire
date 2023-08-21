@@ -15,13 +15,14 @@ from utils import log_images
 from torchmetrics.image.fid import FrechetInceptionDistance
 from torchmetrics.multimodal.clip_score import CLIPScore
 
+
 class VectorGPTExperiment(pl.LightningModule):
     def __init__(self,
                  vector_gpt_model: VectorGPT,
                  lr: float = 0.0003,
-                 weight_decay: float= 0.0,
-                 scheduler_gamma: float= 0.99,
-                 train_log_interval: int= 250,
+                 weight_decay: float = 0.0,
+                 scheduler_gamma: float = 0.99,
+                 train_log_interval: int = 250,
                  manual_seed: int = 42,
                  **kwargs) -> None:
         super(VectorGPTExperiment, self).__init__()
@@ -66,15 +67,28 @@ class VectorGPTExperiment(pl.LightningModule):
         # always log the first batch and variable amount of timesteps up to 10
         if(batch_idx % self.train_log_interval == 0):
             if(predicted_shapes[0].shape[0] > 10):
+=======
+        predicted_shapes, stop_preds = self.forward(input_shape_layers)
+        train_loss, recons_loss, stop_prediction_loss = self.model.loss_function(
+            gt_shape_layers= target_shape_layers,
+            pred_images=predicted_shapes,
+            gt_stop_signals=stop_signals,
+            stop_signals=stop_preds,
+            optimizer_idx=optimizer_idx,
+            batch_idx=batch_idx
+        )
+        
+        if batch_idx % self.train_log_interval == 0:
+            if predicted_shapes[0].shape[0] > 10:
+>>>>>>> Stashed changes
                 log_amount = 10
             else:
                 log_amount = predicted_shapes[0].shape[0]
             log_images(predicted_shapes[0][:log_amount], target_shape_layers[0][:log_amount], log_key="training predctions")
 
-
         self.log_dict({"train_loss": train_loss, 
-                       "train_recons_loss" : recons_loss, 
-                       "train_stop_prediction_loss" : stop_prediction_loss}, sync_dist=True, prog_bar=True)
+                       "train_recons_loss": recons_loss,
+                       "train_stop_prediction_loss": stop_prediction_loss}, sync_dist=True, prog_bar=True)
 
         return train_loss
     

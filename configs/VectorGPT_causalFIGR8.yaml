@@ -36,7 +36,9 @@ exp_params:
   manual_seed: 1265
 
 trainer_params:
-  devices: 1
+#  devices: 1
+#    - 1
+#    - 2
   max_epochs: 250
 
 logging_params:
