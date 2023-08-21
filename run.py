@@ -81,7 +81,7 @@ if(config['model_params']['name'] == "VectorGPT"):
 else:    
     experiment = VAEXperiment(model, config['exp_params'])
 
-data = DATASETMAP[config["data_params"]["dataset"]](**config["data_params"], pin_memory=True)
+data = DATASETMAP[config["data_params"]["dataset"]](**config["data_params"], pin_memory=True, context_length = config['model_params']["context_length"])
 
 data.setup()
 runner = Trainer(logger=wandb_logger,
