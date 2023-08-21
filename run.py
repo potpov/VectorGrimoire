@@ -9,7 +9,7 @@ from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import WandbLogger, TensorBoardLogger
 from pytorch_lightning import seed_everything
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, LearningRateFinder, EarlyStopping
-from thesis.dataset import MNISTDataset, MNISTppDataset, NounProjectDataset, EmojiDataset, MNISTDatasetCSVG
+from thesis.dataset import MNISTDataset, MNISTppDataset, NounProjectDataset, EmojiDataset, MNISTDatasetCSVG, CausalSVGDataModule
 from thesis.models import VAEctorGen, VectorGPT, VanillaVAE, VectorVAEnLayers
 import wandb
 from utils import get_rank
@@ -81,7 +81,7 @@ if(config['model_params']['name'] == "VectorGPT"):
 else:    
     experiment = VAEXperiment(model, config['exp_params'])
 
-data = DATASETMAP[config["data_params"]["dataset"]](**config["data_params"], pin_memory=True)
+data = DATASETMAP[config["data_params"]["dataset"]](**config["data_params"], pin_memory=True, context_length = config['model_params']["context_length"])
 
 data.setup()
 runner = Trainer(logger=wandb_logger,

@@ -11,7 +11,7 @@ from torchvision import transforms
 import torchvision.utils as vutils
 from torchvision.datasets import CelebA
 from torch.utils.data import DataLoader
-from utils import log_images
+from thesis.utils import log_images
 from torchmetrics.image.fid import FrechetInceptionDistance
 from torchmetrics.multimodal.clip_score import CLIPScore
 
@@ -34,12 +34,12 @@ class VectorGPTExperiment(pl.LightningModule):
         self.manual_seed = manual_seed
         self.curr_device = None
 
-    def forward(self, full_images: Tensor, **kwargs) -> Tensor:
-        return self.model(full_images, **kwargs)
+    def forward(self, input_shape_layers: Tensor, **kwargs) -> Tensor:
+        return self.model(input_shape_layers, **kwargs)
     
     def training_step(self, batch, batch_idx, optimizer_idx = 0):
-        full_images, shape_layers, stop_signals = batch
-        self.curr_device = full_images.device
+        input_shape_layers, target_shape_layers, stop_signals = batch
+        self.curr_device = input_shape_layers.device
 
         # regularely log training reconstructions
         # if(batch_idx % self.train_log_interval == 0):
@@ -55,15 +55,26 @@ class VectorGPTExperiment(pl.LightningModule):
         #                                     batch_idx = batch_idx,
         #                                     log_loss_images = True)
         # else:
-        predicted_shapes, stop_preds = self.forward(full_images)
-        train_loss = self.model.loss_function(gt_shape_layers= shape_layers,
+        predicted_shapes, stop_preds = self.forward(input_shape_layers, drop_alpha_channel=True)
+        train_loss, recons_loss, stop_prediction_loss = self.model.loss_function(gt_shape_layers= target_shape_layers,
                                                 pred_images=predicted_shapes,
                                                 gt_stop_signals=stop_signals,
                                                 stop_signals=stop_preds,
                                                 optimizer_idx=optimizer_idx,
                                                 batch_idx = batch_idx)
+        
+        # always log the first batch and variable amount of timesteps up to 10
+        if(batch_idx % self.train_log_interval == 0):
+            if(predicted_shapes[0].shape[0] > 10):
+                log_amount = 10
+            else:
+                log_amount = predicted_shapes[0].shape[0]
+            log_images(predicted_shapes[0][:log_amount], target_shape_layers[0][:log_amount], log_key="training predctions")
 
-        self.log_dict({"train_loss": train_loss}, sync_dist=True, prog_bar=True)
+
+        self.log_dict({"train_loss": train_loss, 
+                       "train_recons_loss" : recons_loss, 
+                       "train_stop_prediction_loss" : stop_prediction_loss}, sync_dist=True, prog_bar=True)
 
         return train_loss
     
@@ -77,7 +88,7 @@ class VectorGPTExperiment(pl.LightningModule):
         self.curr_device = full_images.device
 
         predicted_shapes, stop_preds = self.forward(full_images)
-        val_loss = self.model.loss_function(gt_shape_layers= shape_layers,
+        val_loss, _, _ = self.model.loss_function(gt_shape_layers= shape_layers,
                                                 pred_images=predicted_shapes,
                                                 gt_stop_signals=stop_signals,
                                                 stop_signals=stop_preds,
@@ -89,9 +100,25 @@ class VectorGPTExperiment(pl.LightningModule):
         return val_loss
 
     def on_validation_end(self) -> None:
+        self.sample_images()
         gc.collect()
         torch.cuda.empty_cache()
         return {}
+    
+    def sample_images(self, num_of_samples = 10):
+        full_images, shape_layers, stop_signals = next(iter(self.trainer.datamodule.test_dataloader()))
+        test_input = full_images[:num_of_samples].to(self.curr_device)
+        test_targets = shape_layers[:num_of_samples].to(self.curr_device)
+
+        with torch.no_grad():
+            # test_input, test_label = batch
+            shape_preds, stop_preds = self.model.forward(test_input, drop_alpha_channel=True)
+        
+        # make sure there are no small negative numbers for rendering
+        dummy = torch.nn.ReLU()
+        shape_preds = dummy(shape_preds)
+        
+        log_images(shape_preds[:5], test_targets[:5], log_key="val_preds")
     
     def configure_optimizers(self):
 
