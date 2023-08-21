@@ -130,7 +130,6 @@ class VectorGPT(nn.Module):
         # drop alpha channel for MSE loss calculation
         if pred_images.shape[2] == 4:
             pred_images = pred_images[:, :, :3, :, :]
-<<<<<<< Updated upstream
         
         # mask out the loss calculation for stop loss beyond the first stop signal
         mask = gt_stop_signals >= 0.
