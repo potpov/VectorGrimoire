@@ -43,15 +43,15 @@ class VectorGPT(nn.Module):
         self.context_length = context_length
         self.reconstruction_loss_weight = reconstruction_loss_weight
 
-        if(self.image_encoder_model == "resnet18"):
+        if self.image_encoder_model == "resnet18":
             self.resnet = ResNet18(self.latent_transformer_dim)
-        elif(self.image_encoder_model == "resnet34"):
+        elif self.image_encoder_model == "resnet34":
             self.resnet = ResNet34(self.latent_transformer_dim)
-        elif(self.image_encoder_model == "resnet50"):
+        elif self.image_encoder_model == "resnet50":
             self.resnet = ResNet50(self.latent_transformer_dim)
-        elif(self.image_encoder_model == "resnet101"):
+        elif self.image_encoder_model == "resnet101":
             self.resnet = ResNet101(self.latent_transformer_dim)
-        elif(self.image_encoder_model == "resnet152"):
+        elif self.image_encoder_model == "resnet152":
             self.resnet = ResNet152(self.latent_transformer_dim)
         else:
             raise ValueError(f"[ERROR] You did not specify a correct Image Encoder. Expected something like 'resnet18', got {self.image_encoder_model}.")
@@ -99,7 +99,7 @@ class VectorGPT(nn.Module):
             rasterized_shape, _, _, _ = self.vector_decoder(transformed_latents[:,t,:])
             rasterized_shapes.append(rasterized_shape)
 
-            stop_pred = self.stop_predictor.to(transformed_latents.device)(transformed_latents[:,t,:])
+            stop_pred = self.stop_predictor.to(transformed_latents.device).forward(transformed_latents[:,t,:])
             stop_preds.append(stop_pred)
 
         # re-introduce the time dimension
@@ -110,8 +110,6 @@ class VectorGPT(nn.Module):
         stop_preds = stop_preds.squeeze(-1) # (b, t)
 
         return rasterized_shapes, stop_preds
-
-
 
     def loss_function(self, gt_shape_layers: Tensor, pred_images: Tensor, gt_stop_signals: Tensor, stop_signals:Tensor, **kwargs):
         """
@@ -128,7 +126,7 @@ class VectorGPT(nn.Module):
         assert gt_shape_layers.size(1) == pred_images.size(1) == gt_stop_signals.size(1) == stop_signals.size(1), "Received different amount of timesteps for stop signals or images."
 
         # drop alpha channel for MSE loss calculation
-        if(pred_images.size(2) == 4):
+        if pred_images.size(2) == 4:
             pred_images = pred_images[:, :, :3, :, :]
         
         # # mask out the loss calculation for stop loss beyond the first stop signal

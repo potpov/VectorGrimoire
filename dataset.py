@@ -1,16 +1,11 @@
 import os
 import torch
 from torch import Tensor
-from pathlib import Path
-from typing import List, Optional, Sequence, Union, Any, Callable
-from torchvision.datasets.folder import default_loader
+from typing import List, Optional, Sequence, Union
 from pytorch_lightning import LightningDataModule
 from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
-from torchvision.datasets import CelebA
-from torchvision.io import read_image
 from PIL import Image
-import zipfile
 import glob
 import pandas as pd
 import numpy as np
@@ -111,7 +106,8 @@ class MNISTpp(Dataset):
 
     def __len__(self):
         return len(self.image_paths)
-    
+
+
 class Emoji(Dataset):
     """
     Emoji dataset from a root directory. There are no labels available.
@@ -288,6 +284,7 @@ class DummyCausalSVGDataset(Dataset):
     def __len__(self):
         return 500
 
+
 class MNISTforCSVG(Dataset):
     """
     MNIST dataset from a root directory for causal svg generation.
@@ -341,6 +338,7 @@ class MNISTforCSVG(Dataset):
 
     def __len__(self):
         return len(self.image_paths)
+
 
 class MNISTDataset(LightningDataModule):
     """
@@ -535,6 +533,7 @@ class MNISTppDataset(LightningDataModule):
             pin_memory=self.pin_memory,
         )
 
+
 class EmojiDataset(LightningDataModule):
     """
     PyTorch Lightning data module
@@ -632,15 +631,21 @@ class EmojiDataset(LightningDataModule):
 class CausalSVGDataModule(LightningDataModule):
     def __init__(
         self,
-        root_path: str,
+        data_path: str,
+        train_batch_size: int,
+        val_batch_size: int,
         context_length: int,
         channels: int,
         width: int,
+        num_workers: int,
         **kwargs,
     ):
         super().__init__()
 
-        self.root_path = root_path
+        self.train_batch_size = train_batch_size
+        self.val_batch_size = val_batch_size
+        self.num_workers = num_workers
+        self.root_path = data_path
         self.context_length = context_length
         self.channels = channels
         self.width = width
@@ -667,8 +672,8 @@ class CausalSVGDataModule(LightningDataModule):
     def train_dataloader(self) -> DataLoader:
         return DataLoader(
             self.train_dataset,
-            batch_size=8,
-            num_workers=1,
+            batch_size=self.train_batch_size,
+            num_workers=self.num_workers,
             shuffle=True,
             pin_memory=False,
         )
@@ -676,18 +681,18 @@ class CausalSVGDataModule(LightningDataModule):
     def val_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
         return DataLoader(
             self.val_dataset,
-            batch_size=8,
-            num_workers=1,
-            shuffle=True,
+            batch_size=self.val_batch_size,
+            num_workers=self.num_workers,
+            shuffle=False,
             pin_memory=False,
         )
 
     def test_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
         return DataLoader(
             self.val_dataset,
-            batch_size=8,
-            num_workers=1,
-            shuffle=True,
+            batch_size=100,
+            num_workers=self.num_workers,
+            shuffle=False,
             pin_memory=False,
         )
 
@@ -787,7 +792,8 @@ class NounProjectDataset(LightningDataModule):
             pin_memory=self.pin_memory,
         )
 
-class CausalSVGDataModule(LightningDataModule):
+
+class DummyCausalSVGDataModule(LightningDataModule):
     def __init__(
         self,
         context_length: int, 
@@ -843,6 +849,7 @@ class CausalSVGDataModule(LightningDataModule):
             shuffle=True,
             pin_memory=False,
         )
+
 
 class MNISTDatasetCSVG(LightningDataModule):
     """
