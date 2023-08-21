@@ -35,7 +35,7 @@ exp_params:
   manual_seed: 1265
 
 trainer_params:
-#  devices: 1
+  devices: 1
 #    - 1
 #    - 2
   max_epochs: 250
@@ -45,3 +45,4 @@ logging_params:
   save_dir: "/scratch2/mcipriano/SVG/results"
   name: "VectorGPT_FIGR8"
   version: 0
+  author: "Marco"

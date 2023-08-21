@@ -57,12 +57,14 @@ class VectorGPTExperiment(pl.LightningModule):
         #                                     log_loss_images = True)
         # else:
         predicted_shapes, stop_preds = self.forward(input_shape_layers, drop_alpha_channel=True)
-        train_loss, recons_loss, stop_prediction_loss = self.model.loss_function(gt_shape_layers= target_shape_layers,
-                                                pred_images=predicted_shapes,
-                                                gt_stop_signals=stop_signals,
-                                                stop_signals=stop_preds,
-                                                optimizer_idx=optimizer_idx,
-                                                batch_idx = batch_idx)
+        train_loss, recons_loss, stop_prediction_loss = self.model.loss_function(
+            gt_shape_layers= target_shape_layers,
+            pred_images=predicted_shapes,
+            gt_stop_signals=stop_signals,
+            stop_signals=stop_preds,
+            optimizer_idx=optimizer_idx,
+            batch_idx = batch_idx
+        )
         
         # always log the first batch and variable amount of timesteps up to 10
         if batch_idx % self.train_log_interval == 0:
@@ -89,7 +91,7 @@ class VectorGPTExperiment(pl.LightningModule):
 
         predicted_shapes, stop_preds = self.forward(full_images)
         val_loss, _, _ = self.model.loss_function(
-            gt_shape_layers= shape_layers,
+            gt_shape_layers=shape_layers,
             pred_images=predicted_shapes,
             gt_stop_signals=stop_signals,
             stop_signals=stop_preds,
@@ -132,14 +134,14 @@ class VectorGPTExperiment(pl.LightningModule):
         param_group_1 = {'params': self.model.parameters(), 'lr': self.lr}
         param_groups = [param_group_1]
 
-
-        if(self.weight_decay is not None):
-            optimizer = optim.AdamW(param_groups,
-                                lr=self.lr,
-                                weight_decay=self.weight_decay)
+        if not self.weight_decay:
+            optimizer = optim.AdamW(
+                param_groups,
+                lr=self.lr,
+                weight_decay=self.weight_decay
+            )
         else:
-            optimizer = optim.Adam(param_groups,
-                                lr=self.lr)
+            optimizer = optim.Adam(param_groups, lr=self.lr)
         optims.append(optimizer)
         
         try:
@@ -152,6 +154,7 @@ class VectorGPTExperiment(pl.LightningModule):
         except:
             pass
         return optims
+
 
 class VAEXperiment(pl.LightningModule):
 
@@ -167,27 +170,27 @@ class VAEXperiment(pl.LightningModule):
         self.beta_scale = 2.0 # introduced with Im2Vec
         self.lr = params["LR"]
 
-        if("offset_LR" in params and self.model.decoder.offset_mode == "learnable"):
+        if "offset_LR" in params and self.model.decoder.offset_mode == "learnable":
             self.offset_LR = params["offset_LR"]
         else:
             self.offset_LR = None
 
-        if("offset_warmup" in params and self.model.decoder.offset_mode in ["learnable", "optimizable"]):
+        if "offset_warmup" in params and self.model.decoder.offset_mode in ["learnable", "optimizable"]:
             self.offset_warmup = params["offset_warmup"]
         else:
             self.offset_warmup = False
         
-        if("log_fid" in self.params.keys()):
+        if "log_fid" in self.params.keys():
             self.log_fid = True if self.params["log_fid"] else False
-            if(self.log_fid):
+            if self.log_fid:
                 self.fid = FrechetInceptionDistance(feature=768, reset_real_features=False, normalize=True)
         else:
             self.log_fid = False
             print("Not logging FID score. To enable, add 'log_fid: True' to the 'exp_params' of the config .yaml file")
 
-        if("clip_sim_model" in self.params.keys() and "clip_prompt_suffix" in self.params.keys()):
+        if "clip_sim_model" in self.params.keys() and "clip_prompt_suffix" in self.params.keys():
                 self.log_clip_sim = True if self.params["clip_sim_model"] in ['openai/clip-vit-base-patch16', 'openai/clip-vit-base-patch32', 'openai/clip-vit-large-patch14-336', 'openai/clip-vit-large-patch14'] else False
-                if(self.log_clip_sim):
+                if self.log_clip_sim:
                     self.clip_prompt_suffix = self.params["clip_prompt_suffix"]
                     self.clip_sim = CLIPScore(model_name_or_path=self.params["clip_sim_model"])
                 else:
@@ -209,7 +212,7 @@ class VAEXperiment(pl.LightningModule):
         return self.model(input, **kwargs)
     
     def on_train_epoch_start(self):
-        if(self.offset_warmup):
+        if self.offset_warmup:
             for name, param in self.model.named_parameters():
                 if("decoder.offset" in name or "encoder." in name):
                     param.requires_grad = True
@@ -220,11 +223,10 @@ class VAEXperiment(pl.LightningModule):
         real_img, labels = batch
         self.curr_device = real_img.device
 
-
         # regularely log training reconstructions
-        if(batch_idx % self.params["train_log_interval"] == 0):
+        if batch_idx % self.params["train_log_interval"] == 0:
             results = self.forward(real_img, labels = labels, log_path_length=True)
-            if(results[0].shape[0] > 10):
+            if results[0].shape[0] > 10:
                 log_amount = 10
             else:
                 log_amount = results[0].shape[0]
