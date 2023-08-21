@@ -636,6 +636,7 @@ class CausalSVGDataModule(LightningDataModule):
         context_length: int,
         channels: int,
         width: int,
+        num_workers: int = 0,
         **kwargs,
     ):
         super().__init__()
@@ -644,6 +645,7 @@ class CausalSVGDataModule(LightningDataModule):
         self.context_length = context_length
         self.channels = channels
         self.width = width
+        self.num_workers = num_workers
 
     def setup(self, stage: Optional[str] = None) -> None:
         self.train_dataset = Figr8CausalSVGDataset(
@@ -668,7 +670,7 @@ class CausalSVGDataModule(LightningDataModule):
         return DataLoader(
             self.train_dataset,
             batch_size=8,
-            num_workers=1,
+            num_workers=self.num_workers,
             shuffle=True,
             pin_memory=False,
         )
@@ -677,7 +679,7 @@ class CausalSVGDataModule(LightningDataModule):
         return DataLoader(
             self.val_dataset,
             batch_size=8,
-            num_workers=1,
+            num_workers=self.num_workers,
             shuffle=True,
             pin_memory=False,
         )
@@ -686,7 +688,7 @@ class CausalSVGDataModule(LightningDataModule):
         return DataLoader(
             self.val_dataset,
             batch_size=8,
-            num_workers=1,
+            num_workers=self.num_workers,
             shuffle=True,
             pin_memory=False,
         )
