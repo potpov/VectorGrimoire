@@ -38,8 +38,8 @@ class VectorGPTExperiment(pl.LightningModule):
     def forward(self, input_shape_layers: Tensor, **kwargs) -> Tensor:
         return self.model(input_shape_layers, **kwargs)
     
-    def training_step(self, batch, batch_idx, optimizer_idx = 0):
-        input_shape_layers, target_shape_layers, stop_signals = batch
+    def training_step(self, batch, batch_idx, optimizer_idx=0):
+        input_shape_layers, target_shape_layers, stop_signals, captions = batch
         self.curr_device = input_shape_layers.device
 
         # regularely log training reconstructions
@@ -58,12 +58,12 @@ class VectorGPTExperiment(pl.LightningModule):
         # else:
         predicted_shapes, stop_preds = self.forward(input_shape_layers, drop_alpha_channel=True)
         train_loss, recons_loss, stop_prediction_loss = self.model.loss_function(
-            gt_shape_layers= target_shape_layers,
+            gt_shape_layers=target_shape_layers,
             pred_images=predicted_shapes,
             gt_stop_signals=stop_signals,
             stop_signals=stop_preds,
             optimizer_idx=optimizer_idx,
-            batch_idx = batch_idx
+            batch_idx=batch_idx
         )
         
         # always log the first batch and variable amount of timesteps up to 10
@@ -72,7 +72,12 @@ class VectorGPTExperiment(pl.LightningModule):
                 log_amount = 10
             else:
                 log_amount = predicted_shapes[0].shape[0]
-            log_images(predicted_shapes[0][:log_amount], target_shape_layers[0][:log_amount], log_key="training predctions")
+            log_images(
+                predicted_shapes[0][:log_amount],
+                target_shape_layers[0][:log_amount],
+                log_key="training predctions",
+                captions=captions[0]
+            )
 
         self.log_dict({"train_loss": train_loss, 
                        "train_recons_loss": recons_loss,
@@ -85,8 +90,8 @@ class VectorGPTExperiment(pl.LightningModule):
         torch.cuda.empty_cache()
         return {}
 
-    def validation_step(self, batch, batch_idx, optimizer_idx = 0):
-        full_images, shape_layers, stop_signals = batch
+    def validation_step(self, batch, batch_idx, optimizer_idx=0):
+        full_images, shape_layers, stop_signals, captions = batch
         self.curr_device = full_images.device
 
         predicted_shapes, stop_preds = self.forward(full_images)
@@ -109,8 +114,8 @@ class VectorGPTExperiment(pl.LightningModule):
         torch.cuda.empty_cache()
         return {}
     
-    def sample_images(self, num_of_samples = 10):
-        full_images, shape_layers, stop_signals = next(iter(self.trainer.datamodule.val_dataloader()))
+    def sample_images(self, num_of_samples=10):
+        full_images, shape_layers, stop_signals, captions = next(iter(self.trainer.datamodule.val_dataloader()))
         test_input = full_images[:num_of_samples].to(self.curr_device)
         test_targets = shape_layers[:num_of_samples].to(self.curr_device)[:, :, :3, :, :]
 
@@ -122,7 +127,7 @@ class VectorGPTExperiment(pl.LightningModule):
         dummy = torch.nn.ReLU()
         shape_preds = dummy(shape_preds)
         
-        log_images(shape_preds[0], test_targets[0], log_key="val_preds")
+        log_images(shape_preds[0], test_targets[0], log_key="val_preds", captions=captions[0])
     
     def configure_optimizers(self):
 
@@ -214,7 +219,7 @@ class VAEXperiment(pl.LightningModule):
     def on_train_epoch_start(self):
         if self.offset_warmup:
             for name, param in self.model.named_parameters():
-                if("decoder.offset" in name or "encoder." in name):
+                if "decoder.offset" in name or "encoder." in name:
                     param.requires_grad = True
                 else:
                     param.requires_grad = False
@@ -254,10 +259,10 @@ class VAEXperiment(pl.LightningModule):
         return train_loss['loss']
     
     def on_train_epoch_end(self):
-        if(self.offset_warmup):
+        if self.offset_warmup:
             for name, param in self.model.named_parameters():
                 param.requires_grad = True
-        if(isinstance(self.model, VectorVAEnLayers)):
+        if isinstance(self.model, VectorVAEnLayers):
             if self.current_epoch % 25 ==0:
                 new_beta = self.model.beta * self.beta_scale
                 self.model.beta = min(new_beta, 4)
@@ -330,7 +335,7 @@ class VAEXperiment(pl.LightningModule):
             #                     normalize=True,
             #                     nrow=5)
             # Log FID score
-            if(self.log_fid):
+            if self.log_fid:
                 self.fid.update(test_input, real = True)
 
                 # log reconstruction fid
@@ -345,7 +350,7 @@ class VAEXperiment(pl.LightningModule):
 
                 self.logger.log_metrics({"val_recons_FID" : fid_recon_score, "val_sample_FID" : fid_sample_score})#, sync_dist=True ,prog_bar=True)
 
-            if(self.log_clip_sim):
+            if self.log_clip_sim:
                 
                 _label_translate_dict = self.trainer.datamodule.val_dataset._int_to_label
                 # was used to test VRAM usage

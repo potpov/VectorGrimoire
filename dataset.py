@@ -251,10 +251,8 @@ class Figr8CausalSVGDataset(Dataset):
         # creating binary stop ground truth
         stop_signals = torch.zeros(self.context_length)
         stop_signals[num_features:] = 1.
-
-        # TODO: conditioning on captions, class for the image can be found in  self.split.iloc[index]["class"]
-
-        return images, shape_layers, stop_signals
+        caption = f"An image of {self.split.iloc[index]['class']}"
+        return images, shape_layers, stop_signals, caption
 
     def __len__(self):
         return len(self.split)

@@ -25,17 +25,10 @@ def make_tensor(x, grad=False):
     return x
 
 
-def log_images(recons, real_imgs, log_key="validation", captions=None):
+def log_images(recons, real_imgs, log_key="validation", captions="Captions not set"):
 
     if get_rank() != 0:
         return
-
-    if captions is not None:
-        assert len(captions) == len(
-            recons
-        ), "shapes of captions and reconstructions do not match"
-    else:
-        captions = ""
 
     image_result = torch.concat((
         make_grid(real_imgs, nrow=4),
