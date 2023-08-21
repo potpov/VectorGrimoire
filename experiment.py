@@ -88,12 +88,14 @@ class VectorGPTExperiment(pl.LightningModule):
         self.curr_device = full_images.device
 
         predicted_shapes, stop_preds = self.forward(full_images)
-        val_loss, _, _ = self.model.loss_function(gt_shape_layers= shape_layers,
-                                                pred_images=predicted_shapes,
-                                                gt_stop_signals=stop_signals,
-                                                stop_signals=stop_preds,
-                                                optimizer_idx=optimizer_idx,
-                                                batch_idx = batch_idx)
+        val_loss, _, _ = self.model.loss_function(
+            gt_shape_layers= shape_layers,
+            pred_images=predicted_shapes,
+            gt_stop_signals=stop_signals,
+            stop_signals=stop_preds,
+            optimizer_idx=optimizer_idx,
+            batch_idx=batch_idx
+        )
 
         self.log_dict({"val_loss": val_loss}, sync_dist=True, prog_bar=True)
 

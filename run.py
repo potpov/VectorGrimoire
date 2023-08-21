@@ -15,7 +15,6 @@ import wandb
 from utils import get_rank
 import torch
 
-
 torch.set_float32_matmul_precision('high')
 
 DATASETMAP = {
@@ -27,11 +26,12 @@ DATASETMAP = {
     "mnistCSVG": MNISTDatasetCSVG
 }
 
-MODELS = {'VanillaVAE':VanillaVAE,
-              'VAEctorGen':VAEctorGen,
-              'VectorVAEnLayers': VectorVAEnLayers,
-              "VectorGPT" : VectorGPT,
-              }
+MODELS = {
+    "VanillaVAE": VanillaVAE,
+    "VAEctorGen": VAEctorGen,
+    "VectorVAEnLayers": VectorVAEnLayers,
+    "VectorGPT": VectorGPT,
+  }
 
 
 parser = argparse.ArgumentParser(description='Generic runner for VAE models')
@@ -72,11 +72,11 @@ seed_everything(config['exp_params']['manual_seed'], True)
 
 if args.wandb and get_rank() == 0:
     model = MODELS[config['model_params']['name']](**config['model_params'], wandb_logging=True)
-    wandb.watch(model, log='all', log_freq = 100) # can be "all"
+    wandb.watch(model, log='all', log_freq = 100)  # can be "all"
 else:
     model = MODELS[config['model_params']['name']](**config['model_params'])
 
-if(config['model_params']['name'] == "VectorGPT"):
+if config['model_params']['name'] == "VectorGPT":
     experiment = VectorGPTExperiment(model, **config['exp_params'])
 else:    
     experiment = VAEXperiment(model, config['exp_params'])
@@ -94,8 +94,9 @@ runner = Trainer(logger=wandb_logger,
                                      monitor= "val_loss",
                                      save_last= True),
                  ],
-                #  overfit_batches=1,
-                 **config['trainer_params'])
+                 #  overfit_batches=1,
+                 **config['trainer_params']
+                 )
 
 
 Path(f"{wandb_logger.save_dir}/Samples").mkdir(exist_ok=True, parents=True)
