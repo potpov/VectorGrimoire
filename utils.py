@@ -4,6 +4,7 @@ import wandb
 import numpy as np
 import torch
 import os
+from torchvision.utils import make_grid
 
 
 def fig2data(fig):
@@ -29,57 +30,17 @@ def log_images(recons, real_imgs, log_key="validation", captions=None):
         assert len(captions) == len(
             recons
         ), "shapes of captions and reconstructions do not match"
+    else:
+        captions = ""
 
-    def get_concat_h(im1, im2):
-        max_heigth = np.max([im1.height, im2.height])
-        dst = Image.new("RGB", (im1.width + im2.width, max_heigth), color="white")
-        dst.paste(im1, (0, 0))
-        dst.paste(im2, (im1.width, 0))
-        return dst
+    image_result = torch.concat((
+        make_grid(real_imgs, nrow=4),
+        make_grid(recons, nrow=4)
+        ),
+        dim=-1
+    )
 
-    try:
-        # try to log all validation images
-        input_imgs = [
-            transforms.ToPILImage()(real_imgs[i]).convert("RGB")
-            for i in range(len(real_imgs))
-        ]
-        recons_imgs = [
-            transforms.ToPILImage()(recons[i]).convert("RGB")
-            for i in range(len(recons))
-        ]
-
-        combined_imgs = [
-            get_concat_h(input_imgs[i], recons_imgs[i]) for i in range(len(input_imgs))
-        ]
-        if captions is not None:
-            wandb.log(
-                {
-                    log_key: [
-                        wandb.Image(combined_imgs[i], caption=captions[i])
-                        for i in range(len(combined_imgs))
-                    ]
-                }
-            )
-        else:
-            wandb.log(
-                {
-                    log_key: [
-                        wandb.Image(combined_imgs[i]) for i in range(len(combined_imgs))
-                    ]
-                }
-            )
-
-    except Exception as e:
-        # when fails, try to log at least the first one
-        try:
-            input_img = transforms.ToPILImage()(real_imgs[0]).convert("RGB")
-            recons_img = transforms.ToPILImage()(recons[0]).convert("RGB")
-
-            combined_img = get_concat_h(input_img, recons_img)
-            wandb.log({log_key: wandb.Image(combined_img)})
-        except Exception as e:
-            print(f"[ERROR] Failed to log sample images for wandb. {e}")
-            pass
+    wandb.log(wandb.Image(image_result, caption=captions))
 
 
 def get_rank() -> int:

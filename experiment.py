@@ -120,7 +120,7 @@ class VectorGPTExperiment(pl.LightningModule):
         dummy = torch.nn.ReLU()
         shape_preds = dummy(shape_preds)
         
-        log_images(shape_preds[:5], test_targets[:5], log_key="val_preds")
+        log_images(shape_preds[0], test_targets[0], log_key="val_preds")
     
     def configure_optimizers(self):
 
