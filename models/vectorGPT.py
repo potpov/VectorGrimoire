@@ -19,6 +19,7 @@ class VectorGPT(nn.Module):
                     vector_decoder_paths: int = 5,
                     vector_decoder_radius: int = 3,
                     vector_decoder_render_size: int = 128,
+                    vector_decoder_filled: bool = True,
                     stop_predictor_dims: list = [768, 512],
                     stop_predictor_activation: str = "relu",
                     stop_predictor_num_classes: int = 1,
@@ -37,21 +38,22 @@ class VectorGPT(nn.Module):
         self.vector_decoder_paths = vector_decoder_paths
         self.vector_decoder_radius = vector_decoder_radius
         self.vector_decoder_render_size = vector_decoder_render_size
+        self.vector_decoder_filled = vector_decoder_filled
         self.stop_predictor_dims = stop_predictor_dims
         self.stop_predictor_activation = stop_predictor_activation
         self.stop_predictor_num_classes = stop_predictor_num_classes
         self.context_length = context_length
         self.reconstruction_loss_weight = reconstruction_loss_weight
 
-        if(self.image_encoder_model == "resnet18"):
+        if self.image_encoder_model == "resnet18":
             self.resnet = ResNet18(self.latent_transformer_dim)
-        elif(self.image_encoder_model == "resnet34"):
+        elif self.image_encoder_model == "resnet34":
             self.resnet = ResNet34(self.latent_transformer_dim)
-        elif(self.image_encoder_model == "resnet50"):
+        elif self.image_encoder_model == "resnet50":
             self.resnet = ResNet50(self.latent_transformer_dim)
-        elif(self.image_encoder_model == "resnet101"):
+        elif self.image_encoder_model == "resnet101":
             self.resnet = ResNet101(self.latent_transformer_dim)
-        elif(self.image_encoder_model == "resnet152"):
+        elif self.image_encoder_model == "resnet152":
             self.resnet = ResNet152(self.latent_transformer_dim)
         else:
             raise ValueError(f"[ERROR] You did not specify a correct Image Encoder. Expected something like 'resnet18', got {self.image_encoder_model}.")
@@ -66,7 +68,8 @@ class VectorGPT(nn.Module):
         self.vector_decoder = SimpleVectorDecoder(latent_dim=self.vector_decoder_latent_dim,
                                                   paths=self.vector_decoder_paths,
                                                   radius=self.vector_decoder_radius,
-                                                  render_size=self.vector_decoder_render_size)
+                                                  render_size=self.vector_decoder_render_size,
+                                                  filled=self.vector_decoder_filled)
         self.stop_predictor = MultiLayerPerceptron(input_dim=self.latent_transformer_dim,
                                                    dims=self.stop_predictor_dims,
                                                    activation=self.stop_predictor_activation,
@@ -99,7 +102,7 @@ class VectorGPT(nn.Module):
             rasterized_shape, _, _, _ = self.vector_decoder(transformed_latents[:,t,:])
             rasterized_shapes.append(rasterized_shape)
 
-            stop_pred = self.stop_predictor.to(transformed_latents.device)(transformed_latents[:,t,:])
+            stop_pred = self.stop_predictor.to(transformed_latents.device).forward(transformed_latents[:,t,:])
             stop_preds.append(stop_pred)
 
         # re-introduce the time dimension
@@ -110,8 +113,6 @@ class VectorGPT(nn.Module):
         stop_preds = stop_preds.squeeze(-1) # (b, t)
 
         return rasterized_shapes, stop_preds
-
-
 
     def loss_function(self, gt_shape_layers: Tensor, pred_images: Tensor, gt_stop_signals: Tensor, stop_signals:Tensor, **kwargs):
         """

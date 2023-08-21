@@ -108,9 +108,9 @@ class VectorGPTExperiment(pl.LightningModule):
         return {}
     
     def sample_images(self, num_of_samples = 10):
-        full_images, shape_layers, stop_signals = next(iter(self.trainer.datamodule.test_dataloader()))
+        full_images, shape_layers, stop_signals = next(iter(self.trainer.datamodule.val_dataloader()))
         test_input = full_images[:num_of_samples].to(self.curr_device)
-        test_targets = shape_layers[:num_of_samples].to(self.curr_device)
+        test_targets = shape_layers[:num_of_samples].to(self.curr_device)[:, :, :3, :, :]
 
         with torch.no_grad():
             # test_input, test_label = batch
