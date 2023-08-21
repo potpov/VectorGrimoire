@@ -26,6 +26,10 @@ def make_tensor(x, grad=False):
 
 
 def log_images(recons, real_imgs, log_key="validation", captions=None):
+
+    if get_rank() != 0:
+        return
+
     if captions is not None:
         assert len(captions) == len(
             recons
