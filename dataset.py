@@ -302,6 +302,7 @@ class MNISTforCSVG(Dataset):
 
     def __init__(self, root, context_length: int = 2, train=True, transform=None):
         super(MNISTforCSVG, self)
+        assert context_length > 1, "context length must be greater than 1"
         self.root = root
         self.train = train
         self.transform = transform
@@ -329,12 +330,14 @@ class MNISTforCSVG(Dataset):
             image = self.transform(image)
         
         width = image.size(1)
-        black_image = torch.ones((3, width, width)) # needs to be black because of MNIST inversion transformation
-        images = torch.stack([black_image] + [image]*(self.context_length-1), dim=0)
-        shape_layers = torch.stack([image]*(self.context_length), dim=0)
-        stop_signals = torch.cat([torch.Tensor([0.]), torch.Tensor([1.]*(self.context_length-1))], dim=0)
+        white_image = torch.ones((3, width, width))
+        input_images = torch.stack([white_image] + [image] + [white_image]*(max(self.context_length-2, 0)), dim=0)
+        gt_shape_layers = torch.stack([image] + [white_image]*(self.context_length-1), dim=0)
 
-        return images, shape_layers, stop_signals
+        # 0 is not stop, 1 is stop, -1 is padding, makes masking easier
+        stop_signals = torch.cat([torch.Tensor([0.]), torch.Tensor([1.]), torch.Tensor([-1.]*(max(self.context_length-2, 0)))], dim=0)
+
+        return input_images, gt_shape_layers, stop_signals#, label
 
     def __len__(self):
         return len(self.image_paths)

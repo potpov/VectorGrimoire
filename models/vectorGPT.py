@@ -23,6 +23,7 @@ class VectorGPT(nn.Module):
                     stop_predictor_activation: str = "relu",
                     stop_predictor_num_classes: int = 1,
                     context_length: int = 25,
+                    reconstruction_loss_weight: float = 0.7,
                     **kwargs
                  ):
         super(VectorGPT, self).__init__()
@@ -40,6 +41,7 @@ class VectorGPT(nn.Module):
         self.stop_predictor_activation = stop_predictor_activation
         self.stop_predictor_num_classes = stop_predictor_num_classes
         self.context_length = context_length
+        self.reconstruction_loss_weight = reconstruction_loss_weight
 
         if(self.image_encoder_model == "resnet18"):
             self.resnet = ResNet18(self.latent_transformer_dim)
@@ -70,18 +72,18 @@ class VectorGPT(nn.Module):
                                                    activation=self.stop_predictor_activation,
                                                    num_classes=self.stop_predictor_num_classes)
 
-    def forward(self, full_images: Tensor):
+    def forward(self, input_images: Tensor):
         """
         Expects images to be in (batch, timesteps, channel, width, height).
-        Important: expects fully composited images, not just the separate shape layers.
+        Important: expects separate shape layers as input, not composite images.
 
-        Outputs rasterized images
+        Outputs rasterized shape layers
         """
-        bs = full_images.size(0)
-        timesteps = full_images.size(1)
+        bs = input_images.size(0)
+        timesteps = input_images.size(1)
 
         # first we encode. (b, t, c, w, h) -> (b, t, z)
-        intermediate = [self.resnet(full_images[:,t,:,:]) for t in range(timesteps)]
+        intermediate = [self.resnet(input_images[:,t,:,:]) for t in range(timesteps)]
         encoded_images = torch.stack(intermediate, dim=1) # (b, t, z)
 
         pos_embeddings = self.positional_embedding(torch.arange(timesteps).to(encoded_images.device)) # (t, z)
@@ -118,7 +120,8 @@ class VectorGPT(nn.Module):
 
         Important: gt_shape_layers are the individually rendered shapes for loss calculation, not the complete composition
         
-        Outputs the loss. Precise formula TBD. Currently averages over time and batch dimension.
+        Outputs three losses: [final_loss, recons_loss, stop_prediction_loss]
+        Precise formula TBD. Currently averages over time and batch dimension.
         """
         assert gt_shape_layers.size(1) == pred_images.size(1) == gt_stop_signals.size(1) == stop_signals.size(1), "Received different amount of timesteps for stop signals or images."
 
@@ -126,8 +129,19 @@ class VectorGPT(nn.Module):
         if(pred_images.size(2) == 4):
             pred_images = pred_images[:, :, :3, :, :]
         
-        # learning even beyond the first stop as the encoder then must learn to capute "completeness"
-        stop_prediction_loss = F.binary_cross_entropy(stop_signals, gt_stop_signals)
-        recons_loss = F.mse_loss(pred_images, gt_shape_layers)
+        # mask out the loss calculation for stop loss beyond the first stop signal
+        mask = gt_stop_signals >= 0.
+        selected_gt_stop_signals = torch.masked_select(gt_stop_signals, mask)
+        selected_stop_signals = torch.masked_select(stop_signals, mask)
+
+        # mask out loss calculation for shape predictions from the first stop signal on
+        mask = gt_stop_signals == 0.
+        selected_gt_shape_layers = torch.masked_select(gt_shape_layers, mask)
+        selected_pred_images = torch.masked_select(pred_images, mask)
+
+        stop_prediction_loss = F.binary_cross_entropy(selected_stop_signals, selected_gt_stop_signals)
+        recons_loss = F.mse_loss(selected_pred_images, selected_gt_shape_layers)
+
+        final_loss = (1 - self.reconstruction_loss_weight)*stop_prediction_loss + self.reconstruction_loss_weight*recons_loss
         
-        return stop_prediction_loss + recons_loss
+        return final_loss, recons_loss, stop_prediction_loss
