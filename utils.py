@@ -40,7 +40,7 @@ def log_images(recons, real_imgs, log_key="validation", captions=None):
         dim=-1
     )
 
-    wandb.log(wandb.Image(image_result, caption=captions))
+    wandb.log({log_key: wandb.Image(image_result, caption=captions)})
 
 
 def get_rank() -> int:
