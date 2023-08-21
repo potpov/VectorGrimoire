@@ -54,7 +54,7 @@ if args.wandb and get_rank() == 0:
     wandb_logger = WandbLogger(
         name=config['logging_params']['name'],
         save_dir=config['logging_params']['save_dir'],
-        tags=config['logging_params']['author'],
+        tags=[config['logging_params']['author']],
         project=config["logging_params"]["project"],
         log_model=True,
         entity="aiis-chair",

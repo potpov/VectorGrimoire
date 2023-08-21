@@ -12,6 +12,7 @@ class SimpleVectorDecoder(nn.Module):
                  paths: int = 4,
                  radius: int = 3,
                  render_size: int = 128,
+                 filled: bool = True,
                  **kwargs) -> None:
         super(SimpleVectorDecoder, self).__init__()
 
@@ -19,6 +20,7 @@ class SimpleVectorDecoder(nn.Module):
 
         self.curves = paths
         self.number_of_points = self.curves * 3
+        self.filled = filled
 
         self.loss_fn = F.mse_loss
 
@@ -75,6 +77,11 @@ class SimpleVectorDecoder(nn.Module):
 
         if(not isinstance(color, Tensor)):
             color = torch.tensor(color, dtype=torch.float32, requires_grad=True).to(device)
+
+        if self.filled:
+            fill_color = color
+        else:
+            fill_color = None
 
         for k in range(bs):
             # Get point parameters from network
@@ -147,7 +154,7 @@ class SimpleVectorDecoder(nn.Module):
                 shapes.append(path)
                 path_group = pydiffvg.ShapeGroup(
                     shape_ids=torch.tensor([len(shapes) - 1]),
-                    fill_color=color,
+                    fill_color=fill_color,
                     stroke_color=color)
                 shape_groups.append(path_group)
             scene_args = pydiffvg.RenderFunction.serialize_scene(render_size, render_size, shapes, shape_groups)
