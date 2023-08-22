@@ -9,7 +9,8 @@ test.png
 wandb/*
 *.ckpt
 !inference.ipynb
-
+configs/*.yaml
+!VectorGPT.yaml
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

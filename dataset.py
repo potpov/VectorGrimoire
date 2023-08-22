@@ -211,7 +211,7 @@ class Figr8CausalSVGDataset(Dataset):
     """
     FIGR8 dataset from a root directory for causal svg generation
 
-     Lenght
+     Length
      |
      |---------------------------------------------|
      F{folder_id}_I{svg_id}_P{features}.npy    split.csv
@@ -248,7 +248,7 @@ class Figr8CausalSVGDataset(Dataset):
         # input is all shifted one place to the right and starts with white canvas
         images = torch.concat((torch.ones(1, self.channels, *images.shape[1:]), shape_layers[:-1]))
 
-        # creating binary stop ground truth
+        # creating stop ground truth with 0: no stop, 1: stop, -1: padding
         stop_signals = torch.zeros(self.context_length)
         stop_signals[num_features] = 1.
         stop_signals[-pad_len:] = -1.

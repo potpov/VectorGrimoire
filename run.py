@@ -46,6 +46,11 @@ with open(args.filename, 'r') as file:
     except yaml.YAMLError as exc:
         print(exc)
 
+# assertions for the config file
+assert config["model_params"]["context_length"] == config["data_params"]["context_length"], f"context length in model and data params must be the same"
+assert config["data_params"]["dataset"] in DATASETMAP.keys(), f"dataset {config['data_params']['dataset']} not supported, try one of {list(DATASETMAP.keys())}"
+assert config["model_params"]["name"] in MODELS.keys(), f"model {config['model_params']['name']} not supported, try one of {list(MODELS.keys())}"
+
 # disabling multi-threading when debugging
 if args.debug:
     config["data_params"]["num_workers"] = 0
