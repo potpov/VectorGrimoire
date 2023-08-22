@@ -92,7 +92,7 @@ def make_causal_mnist_pp_dataset(base_path:str, num_samples:int, output_path:str
 
         # TODO if we start with a random digit, this must be changed to include the start digit in the filename
         filename = f"I{i}_P{num_features}.npy"
-        np.save(os.path.join(output_path, split, filename), sample_images)
+        np.save(os.path.join(output_path, filename), sample_images)
         new_row = {
                 "filename": filename,
                 "class": num_features,
