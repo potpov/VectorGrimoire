@@ -36,7 +36,7 @@ MODELS = {
 
 parser = argparse.ArgumentParser(description='Generic runner for VAE models')
 parser.add_argument('--config',  '-c', dest="filename", metavar='FILE', help='path to the config file', default='configs/vae.yaml')
-parser.add_argument("--wandb", "-w", dest="wandb", action='store_false', help="want to log the run with wandb? (default true)")
+parser.add_argument("--wandb", "-w", dest="wandb", action='store_true', help="want to log the run with wandb? (default false)")
 parser.add_argument('--debug', action='store_true', help='disable wandb logs, set workers to 0. (default false)')
 
 args = parser.parse_args()
@@ -86,7 +86,7 @@ else:
     model = MODELS[config['model_params']['name']](**config['model_params'])
 
 if config['model_params']['name'] == "VectorGPT":
-    experiment = VectorGPTExperiment(model, **config['exp_params'])
+    experiment = VectorGPTExperiment(model, **config['exp_params'], wandb = args.wandb)
 else:    
     experiment = VAEXperiment(model, config['exp_params'])
 
