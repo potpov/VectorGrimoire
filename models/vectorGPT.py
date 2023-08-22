@@ -3,9 +3,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 from x_transformers import Decoder
-from thesis.models.resnet import ResNet18, ResNet34, ResNet50, ResNet101, ResNet152
-from thesis.models.simple_vector_decoder import SimpleVectorDecoder
-from thesis.models.mlp import MultiLayerPerceptron
+from models.resnet import ResNet18, ResNet34, ResNet50, ResNet101, ResNet152
+from models.simple_vector_decoder import SimpleVectorDecoder
+from models.mlp import MultiLayerPerceptron
 
 class VectorGPT(nn.Module):
     def __init__(self,
@@ -129,19 +129,19 @@ class VectorGPT(nn.Module):
         assert gt_shape_layers.size(1) == pred_images.size(1) == gt_stop_signals.size(1) == stop_signals.size(1), "Received different amount of timesteps for stop signals or images."
 
         # drop alpha channel for MSE loss calculation
-        if pred_images.size(2) == 4:
+        if pred_images.shape[2] == 4:
             pred_images = pred_images[:, :, :3, :, :]
         
-        # # mask out the loss calculation for stop loss beyond the first stop signal
+        # mask out the loss calculation for stop loss beyond the first stop signal
         mask = gt_stop_signals >= 0.
         selected_gt_stop_signals = torch.masked_select(gt_stop_signals, mask)
         selected_stop_signals = torch.masked_select(stop_signals, mask)
 
         # mask out loss calculation for shape predictions from the first stop signal on
         mask = gt_stop_signals == 0.
-        expanded_mask = mask.unsqueeze(2).unsqueeze(3).unsqueeze(4)
-        selected_gt_shape_layers = torch.masked_select(gt_shape_layers, expanded_mask)
-        selected_pred_images = torch.masked_select(pred_images, expanded_mask)
+        mask = mask.view(*mask.shape, 1, 1, 1)  # ensure broadcasting
+        selected_gt_shape_layers = torch.masked_select(gt_shape_layers, mask)
+        selected_pred_images = torch.masked_select(pred_images, mask)
 
         stop_prediction_loss = F.binary_cross_entropy(selected_stop_signals, selected_gt_stop_signals)
         recons_loss = F.mse_loss(selected_pred_images, selected_gt_shape_layers)
