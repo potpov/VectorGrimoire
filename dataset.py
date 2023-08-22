@@ -250,7 +250,8 @@ class Figr8CausalSVGDataset(Dataset):
 
         # creating binary stop ground truth
         stop_signals = torch.zeros(self.context_length)
-        stop_signals[num_features:] = 1.
+        stop_signals[num_features] = 1.
+        stop_signals[-pad_len:] = -1.
         caption = f"An image of {self.split.iloc[index]['class']}"
         return images, shape_layers, stop_signals, caption
 
