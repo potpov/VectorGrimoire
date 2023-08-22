@@ -114,5 +114,5 @@ if __name__ == '__main__':
     make_causal_mnist_pp_dataset(args.input_path,
                                  int(args.num_samples),
                                  args.output_path,
-                                 context_length=int(args.context_length),
+                                 context_length=int(args.context_len),
                                  seed=42)
