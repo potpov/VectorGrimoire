@@ -9,7 +9,6 @@ from models.mlp import MultiLayerPerceptron
 
 class VectorGPT(nn.Module):
     def __init__(self,
-                    # vector_gpt_config: VectorGPTArgs,
                     image_encoder_model: str = "resnet18",
                     latent_transformer_dim: int = 512,
                     latent_transformer_depth: int = 8,
@@ -57,7 +56,7 @@ class VectorGPT(nn.Module):
             self.resnet = ResNet152(self.latent_transformer_dim)
         else:
             raise ValueError(f"[ERROR] You did not specify a correct Image Encoder. Expected something like 'resnet18', got {self.image_encoder_model}.")
-        
+
         self.positional_embedding = nn.Embedding(self.context_length, self.latent_transformer_dim)
         self.latent_transformer = nn.Sequential(Decoder(dim=self.latent_transformer_dim,
                                                         depth=self.latent_transformer_depth,
@@ -82,7 +81,6 @@ class VectorGPT(nn.Module):
 
         Outputs rasterized shape layers (b, t, c, w, h) and stop signals (b, t)
         """
-        bs = input_images.size(0)
         timesteps = input_images.size(1)
 
         # first we encode. (b, t, c, w, h) -> (b, t, z)
@@ -131,7 +129,7 @@ class VectorGPT(nn.Module):
         # drop alpha channel for MSE loss calculation
         if pred_images.shape[2] == 4:
             pred_images = pred_images[:, :, :3, :, :]
-        
+
         # mask out the loss calculation for stop loss beyond the first stop signal
         mask = gt_stop_signals >= 0.
         selected_gt_stop_signals = torch.masked_select(gt_stop_signals, mask)
@@ -149,5 +147,5 @@ class VectorGPT(nn.Module):
         # recons_loss = F.mse_loss(pred_images, gt_shape_layers)
 
         final_loss = (1 - self.reconstruction_loss_weight)*stop_prediction_loss + self.reconstruction_loss_weight*recons_loss
-        
+
         return final_loss, recons_loss, stop_prediction_loss

@@ -249,9 +249,11 @@ class Figr8CausalSVGDataset(Dataset):
         images = torch.concat((torch.ones(1, self.channels, *images.shape[1:]), shape_layers[:-1]))
 
         # creating stop ground truth with 0: no stop, 1: stop, -1: padding
+        stop_pad_len = pad_len - 1  # stop signals require one less padding than images
         stop_signals = torch.zeros(self.context_length)
         stop_signals[num_features] = 1.
-        stop_signals[-pad_len:] = -1.
+        if stop_pad_len >= 1:
+            stop_signals[-stop_pad_len:] = -1.
         caption = f"An image of {self.split.iloc[index]['class']}"
         return images, shape_layers, stop_signals, caption
 
