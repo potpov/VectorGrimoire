@@ -15,6 +15,8 @@ model_params:
   stop_predictor_num_classes: 1  # always 1 for now
   context_length: 15  # must be kept in sync with data_params.context_length
   reconstruction_loss_weight: 0.99  # reconstruction loss must be weighted much more in b/w images as white bg results in much less MSE
+  loss_mode: "default"  # supported: [null, "default", "pyramid"]
+  log_loss_images: True
 
 data_params:
   dataset: "causalSVG"  # must be in the DATASETMAP in run.py
@@ -30,7 +32,7 @@ data_params:
   num_workers: 4
 
 exp_params:
-  LR: 0.0003  # was 0.0005 originally
+  lr: 0.0003  # was 0.0005 originally
   weight_decay: 0.0  # specify positive float to enable, start experimenting with 1.e-4/1.e-3
   scheduler_gamma: 0.95  # 0.95 is a good starting value
   train_log_interval: 50 # len(dataset) / train_batch_size / desired_logging_frequency
