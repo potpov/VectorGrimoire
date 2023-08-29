@@ -28,7 +28,6 @@ class VectorGPT(nn.Module):
                     context_length: int = 25,
                     reconstruction_loss_weight: float = 0.7,
                     loss_mode = None,
-                    log_loss_images: bool = False,
                     wandb_logging: bool = False,
                     **kwargs
                  ):
@@ -50,7 +49,6 @@ class VectorGPT(nn.Module):
         self.context_length = context_length
         self.reconstruction_loss_weight = reconstruction_loss_weight
         self.loss_mode = loss_mode
-        self.log_loss_images = log_loss_images
         self.wandb_logging = wandb_logging
 
         assert self.loss_mode in [None, "default", "pyramid"], f"Loss mode {self.loss_mode} not supported."
@@ -138,7 +136,7 @@ class VectorGPT(nn.Module):
         loss_image = torch.from_numpy(cm(loss_tensor.detach().cpu())).permute(0,3,1,2)
         return loss_image
 
-    def gaussian_pyramid_loss(self, recons_images: Tensor, gt_images: Tensor, down_sample_steps: int = 3):
+    def gaussian_pyramid_loss(self, recons_images: Tensor, gt_images: Tensor, down_sample_steps: int = 3, log_loss: bool = False):
         """
         Calculates the gaussian pyramid loss between reconstructed images and ground truth images.
 
@@ -153,7 +151,7 @@ class VectorGPT(nn.Module):
         dsample = kornia.geometry.transform.pyramid.PyrDown()
         timesteps_to_log = 4
         recon_loss = F.mse_loss(recons_images, gt_images, reduction='none')
-        if self.log_loss_images and self.wandb_logging:
+        if log_loss:
             all_loss_images = []
             all_loss_images.append(self.transform_loss_tensor_to_image(recon_loss[:timesteps_to_log]))
         recon_loss = recon_loss.mean()
@@ -162,21 +160,22 @@ class VectorGPT(nn.Module):
             recons_images = dsample(recons_images)
             gt_images = dsample(gt_images)
             loss_images = F.mse_loss(recons_images, gt_images, reduction='none')
-            if self.log_loss_images and self.wandb_logging:
+            if log_loss:
                 all_loss_images.append(self.transform_loss_tensor_to_image(loss_images[:timesteps_to_log]))
 
             recon_loss = recon_loss + (loss_images.mean() / weight)
 
-        if self.log_loss_images and self.wandb_logging:
+        if log_loss:
             log_all_images(all_loss_images, log_key="pyramid loss", caption=f"Gaussian Pyramid Loss, {down_sample_steps+1} steps")
         return recon_loss
 
-    def loss_function(self, gt_shape_layers: Tensor, pred_images: Tensor, gt_stop_signals: Tensor, stop_signals:Tensor, **kwargs):
+    def loss_function(self, gt_shape_layers: Tensor, pred_images: Tensor, gt_stop_signals: Tensor, stop_signals:Tensor, log_loss: bool = False, **kwargs):
         """
-        Inputs:
-        gt_shape_layers & pred_images in format (b, t, c, w, h)
-        gt_stop_signals in format (b, t)
-        stop signals in format (b, t)
+        Args:
+            - gt_shape_layers & pred_images in format (b, t, c, w, h)
+            - gt_stop_signals in format (b, t)
+            - stop signals in format (b, t)
+            - log_loss (bool): Whether to log the loss images to wandb. Default: False
 
         Important: gt_shape_layers are the individually rendered shapes for loss calculation, not the complete composition
         
@@ -203,10 +202,10 @@ class VectorGPT(nn.Module):
         selected_pred_images = torch.masked_select(pred_images, mask).view(-1, c, w, h)
 
         if self.loss_mode == "pyramid":
-            recons_loss = self.gaussian_pyramid_loss(selected_pred_images, selected_gt_shape_layers)  # logging happens in this function automatically
+            recons_loss = self.gaussian_pyramid_loss(selected_pred_images, selected_gt_shape_layers, log_loss = log_loss)  # logging happens in this function automatically
         else:
             recons_loss = F.mse_loss(selected_pred_images, selected_gt_shape_layers, reduction="none")  # no reduction to log loss images
-            if self.log_loss_images and self.wandb_logging:
+            if log_loss:
                 log_all_images([self.transform_loss_tensor_to_image(recons_loss[0])], log_key="reconstruction loss", caption="Reconstruction Loss MSE")
 
         stop_prediction_loss = F.binary_cross_entropy(selected_stop_signals, selected_gt_stop_signals)

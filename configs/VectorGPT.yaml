@@ -1,7 +1,7 @@
 model_params:
   name: "VectorGPT"  # always keep this "VectorGPT"
   image_encoder_model: "resnet34" # available are 18, 34, 50, 101, 152
-  latent_transformer_dim: 256 # 256
+  latent_transformer_dim: 256 # 256, must be same as vector_decoder_latent_dim
   latent_transformer_heads: 8 # 8
   latent_transformer_depth: 8 # 8
   latent_transformer_layer_dropout: 0.1
@@ -16,7 +16,6 @@ model_params:
   context_length: 15  # must be kept in sync with data_params.context_length
   reconstruction_loss_weight: 0.99  # reconstruction loss must be weighted much more in b/w images as white bg results in much less MSE
   loss_mode: "default"  # supported: [null, "default", "pyramid"]
-  log_loss_images: True
 
 data_params:
   dataset: "causalSVG"  # must be in the DATASETMAP in run.py

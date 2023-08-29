@@ -65,9 +65,10 @@ class VectorGPTExperiment(pl.LightningModule):
             gt_stop_signals=stop_signals,
             stop_signals=stop_preds,
             optimizer_idx=optimizer_idx,
-            batch_idx=batch_idx
+            batch_idx=batch_idx,
+            log_loss = batch_idx % self.train_log_interval == 0 and self.wandb
         )
-        
+
         # always log the first batch and variable amount of timesteps up to 10
         if batch_idx % self.train_log_interval == 0 and self.wandb:
             if predicted_shapes[0].shape[0] > 10:
