@@ -74,7 +74,7 @@ class VectorGPT(nn.Module):
                                                    activation=self.stop_predictor_activation,
                                                    num_classes=self.stop_predictor_num_classes)
 
-    def forward(self, input_images: Tensor, drop_alpha_channel = False, **kwargs):
+    def forward(self, input_images: Tensor, drop_alpha_channel = False, verbose = False,**kwargs):
         """
         Expects images to be in (batch, timesteps, channel, width, height).
         Important: expects separate shape layers as input, not composite images.
@@ -97,7 +97,7 @@ class VectorGPT(nn.Module):
         rasterized_shapes = []
         stop_preds = []
         for t in range(timesteps):
-            rasterized_shape, _, _, _ = self.vector_decoder(transformed_latents[:,t,:])
+            rasterized_shape, _, _, _ = self.vector_decoder.forward(transformed_latents[:,t,:], verbose=verbose)
             rasterized_shapes.append(rasterized_shape)
 
             stop_pred = self.stop_predictor.to(transformed_latents.device).forward(transformed_latents[:,t,:])

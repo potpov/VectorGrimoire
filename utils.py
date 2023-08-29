@@ -5,6 +5,7 @@ import numpy as np
 import torch
 import os
 from torchvision.utils import make_grid
+from torchvision.transforms import Resize
 
 
 def fig2data(fig):
@@ -29,9 +30,13 @@ def log_images(recons, real_imgs, log_key="validation", captions="Captions not s
 
     if get_rank() != 0:
         return
+    
+    common_size = recons.shape[-2:]
+    resizer = Resize(common_size)
+    real_imgs_resized = resizer(real_imgs)
 
     image_result = torch.concat((
-        make_grid(real_imgs, nrow=4),
+        make_grid(real_imgs_resized, nrow=4),
         make_grid(recons, nrow=4)
         ),
         dim=-1

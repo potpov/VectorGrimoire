@@ -124,7 +124,7 @@ class VectorGPTExperiment(pl.LightningModule):
 
         with torch.no_grad():
             # test_input, test_label = batch
-            shape_preds, stop_preds = self.model.forward(test_input, drop_alpha_channel=True)
+            shape_preds, stop_preds = self.model.forward(test_input, drop_alpha_channel=True, verbose=True)
         
         # make sure there are no small negative numbers for rendering
         dummy = torch.nn.ReLU()
