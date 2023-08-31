@@ -239,6 +239,7 @@ class Figr8CausalSVGDataset(Dataset):
 
         # padding images with fewer features than CL
         pad_len = self.context_length - num_features
+        assert pad_len > 0, "context length must be greater than number of features of the dataset, did you set the context length correctly in the config?"
         pad = torch.ones(pad_len, *images.shape[1:])  # 1 -> white -> no features
         shape_layers = torch.concat((images, pad), dim=0)  # Ground truth
 

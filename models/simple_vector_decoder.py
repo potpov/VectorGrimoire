@@ -184,7 +184,7 @@ class SimpleVectorDecoder(nn.Module):
         :param z: (Tensor) [B x D]
         :return: (Tensor) [B x C x H x W]
         """
-        if point_predictor==None:
+        if point_predictor is None:
             point_predictor = self.point_predictor
         self.id = self.id.to(z.device) # [self.curves * 3, 2], I think this is the x-y position p
 
