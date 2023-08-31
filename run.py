@@ -36,7 +36,7 @@ MODELS = {
 
 parser = argparse.ArgumentParser(description='Generic runner for VAE models')
 parser.add_argument('--config',  '-c', dest="filename", metavar='FILE', help='path to the config file', default='configs/vae.yaml')
-parser.add_argument("--wandb", "-w", dest="wandb", action='store_false', help="want to log the run with wandb? (default true)")
+parser.add_argument("--wandb", "-w", dest="wandb", action='store_true', help="want to log the run with wandb? (default false)")
 parser.add_argument('--debug', action='store_true', help='disable wandb logs, set workers to 0. (default false)')
 
 args = parser.parse_args()
@@ -45,6 +45,11 @@ with open(args.filename, 'r') as file:
         config = yaml.safe_load(file)
     except yaml.YAMLError as exc:
         print(exc)
+
+# assertions for the config file
+assert config["model_params"]["context_length"] == config["data_params"]["context_length"], f"context length in model and data params must be the same"
+assert config["data_params"]["dataset"] in DATASETMAP.keys(), f"dataset {config['data_params']['dataset']} not supported, try one of {list(DATASETMAP.keys())}"
+assert config["model_params"]["name"] in MODELS.keys(), f"model {config['model_params']['name']} not supported, try one of {list(MODELS.keys())}"
 
 # disabling multi-threading when debugging
 if args.debug:
@@ -81,7 +86,7 @@ else:
     model = MODELS[config['model_params']['name']](**config['model_params'])
 
 if config['model_params']['name'] == "VectorGPT":
-    experiment = VectorGPTExperiment(model, **config['exp_params'])
+    experiment = VectorGPTExperiment(model, **config['exp_params'], wandb = args.wandb)
 else:    
     experiment = VAEXperiment(model, config['exp_params'])
 

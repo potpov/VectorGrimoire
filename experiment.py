@@ -24,6 +24,7 @@ class VectorGPTExperiment(pl.LightningModule):
                  scheduler_gamma: float = 0.99,
                  train_log_interval: int = 250,
                  manual_seed: int = 42,
+                 wandb: bool = True,
                  **kwargs) -> None:
         super(VectorGPTExperiment, self).__init__()
 
@@ -34,6 +35,7 @@ class VectorGPTExperiment(pl.LightningModule):
         self.train_log_interval = train_log_interval
         self.manual_seed = manual_seed
         self.curr_device = None
+        self.wandb = wandb
 
     def forward(self, input_shape_layers: Tensor, **kwargs) -> Tensor:
         return self.model(input_shape_layers, **kwargs)
@@ -63,11 +65,12 @@ class VectorGPTExperiment(pl.LightningModule):
             gt_stop_signals=stop_signals,
             stop_signals=stop_preds,
             optimizer_idx=optimizer_idx,
-            batch_idx=batch_idx
+            batch_idx=batch_idx,
+            log_loss = batch_idx % self.train_log_interval == 0 and self.wandb
         )
-        
+
         # always log the first batch and variable amount of timesteps up to 10
-        if batch_idx % self.train_log_interval == 0:
+        if batch_idx % self.train_log_interval == 0 and self.wandb:
             if predicted_shapes[0].shape[0] > 10:
                 log_amount = 10
             else:
@@ -109,7 +112,8 @@ class VectorGPTExperiment(pl.LightningModule):
         return val_loss
 
     def on_validation_end(self) -> None:
-        self.sample_images()
+        if(self.wandb):
+            self.sample_images()
         gc.collect()
         torch.cuda.empty_cache()
         return {}
@@ -121,7 +125,7 @@ class VectorGPTExperiment(pl.LightningModule):
 
         with torch.no_grad():
             # test_input, test_label = batch
-            shape_preds, stop_preds = self.model.forward(test_input, drop_alpha_channel=True)
+            shape_preds, stop_preds = self.model.forward(test_input, drop_alpha_channel=True, verbose=True)
         
         # make sure there are no small negative numbers for rendering
         dummy = torch.nn.ReLU()

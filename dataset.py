@@ -211,7 +211,7 @@ class Figr8CausalSVGDataset(Dataset):
     """
     FIGR8 dataset from a root directory for causal svg generation
 
-     Lenght
+     Length
      |
      |---------------------------------------------|
      F{folder_id}_I{svg_id}_P{features}.npy    split.csv
@@ -239,6 +239,7 @@ class Figr8CausalSVGDataset(Dataset):
 
         # padding images with fewer features than CL
         pad_len = self.context_length - num_features
+        assert pad_len > 0, "context length must be greater than number of features of the dataset, did you set the context length correctly in the config?"
         pad = torch.ones(pad_len, *images.shape[1:])  # 1 -> white -> no features
         shape_layers = torch.concat((images, pad), dim=0)  # Ground truth
 
@@ -248,9 +249,12 @@ class Figr8CausalSVGDataset(Dataset):
         # input is all shifted one place to the right and starts with white canvas
         images = torch.concat((torch.ones(1, self.channels, *images.shape[1:]), shape_layers[:-1]))
 
-        # creating binary stop ground truth
+        # creating stop ground truth with 0: no stop, 1: stop, -1: padding
+        stop_pad_len = pad_len - 1  # stop signals require one less padding than images
         stop_signals = torch.zeros(self.context_length)
-        stop_signals[num_features:] = 1.
+        stop_signals[num_features] = 1.
+        if stop_pad_len >= 1:
+            stop_signals[-stop_pad_len:] = -1.
         caption = f"An image of {self.split.iloc[index]['class']}"
         return images, shape_layers, stop_signals, caption
 
