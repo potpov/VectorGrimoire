@@ -6,6 +6,7 @@ from torch import Tensor
 from x_transformers import Decoder
 from models.resnet import ResNet18, ResNet34, ResNet50, ResNet101, ResNet152
 from models.simple_vector_decoder import SimpleVectorDecoder
+from models.mlp_vector_head import MLPVectorHead
 from models.mlp import MultiLayerPerceptron
 import kornia
 from utils import log_all_images
@@ -17,6 +18,7 @@ class VectorGPT(nn.Module):
                     latent_transformer_depth: int = 8,
                     latent_transformer_heads: int = 8,
                     latent_transformer_layer_dropout: float = 0.1,
+                    vector_decoder_model: str = "mlp",
                     vector_decoder_latent_dim: int = 512,
                     vector_decoder_paths: int = 5,
                     vector_decoder_radius: int = 3,
@@ -38,6 +40,7 @@ class VectorGPT(nn.Module):
         self.latent_transformer_depth = latent_transformer_depth
         self.latent_transformer_heads = latent_transformer_heads
         self.latent_transformer_layer_dropout = latent_transformer_layer_dropout
+        self.vector_decoder_model = vector_decoder_model.lower()
         self.vector_decoder_latent_dim = vector_decoder_latent_dim
         self.vector_decoder_paths = vector_decoder_paths
         self.vector_decoder_radius = vector_decoder_radius
@@ -73,15 +76,24 @@ class VectorGPT(nn.Module):
                                                         layer_dropout=self.latent_transformer_layer_dropout), 
                                                 nn.LayerNorm(self.latent_transformer_dim),
                                                 nn.Linear(self.latent_transformer_dim, self.latent_transformer_dim))
-        self.vector_decoder = SimpleVectorDecoder(latent_dim=self.vector_decoder_latent_dim,
-                                                  paths=self.vector_decoder_paths,
-                                                  radius=self.vector_decoder_radius,
-                                                  render_size=self.vector_decoder_render_size,
-                                                  filled=self.vector_decoder_filled)
-        self.stop_predictor = MultiLayerPerceptron(input_dim=self.latent_transformer_dim,
-                                                   dims=self.stop_predictor_dims,
-                                                   activation=self.stop_predictor_activation,
-                                                   num_classes=self.stop_predictor_num_classes)
+        if self.vector_decoder_model == "cnn":
+            self.vector_decoder = SimpleVectorDecoder(latent_dim=self.vector_decoder_latent_dim,
+                                                    paths=self.vector_decoder_paths,
+                                                    radius=self.vector_decoder_radius,
+                                                    render_size=self.vector_decoder_render_size,
+                                                    filled=self.vector_decoder_filled)
+            self.stop_predictor = MultiLayerPerceptron(input_dim=self.latent_transformer_dim,
+                                                    dims=self.stop_predictor_dims,
+                                                    activation=self.stop_predictor_activation,
+                                                    num_classes=self.stop_predictor_num_classes)
+        elif self.vector_decoder_model == "mlp":
+            self.vector_decoder = MLPVectorHead(latent_dim=self.vector_decoder_latent_dim,
+                                                paths=self.vector_decoder_paths,
+                                                render_size=self.vector_decoder_render_size)
+            self.stop_predictor = None  # stop prediction is done in the MLPVectorHead
+        else:
+            raise ValueError("You did not specify a correct Vector Decoder. Expected something like 'cnn' or 'mlp'. Check your config.")
+        
 
     def forward(self, input_images: Tensor, drop_alpha_channel = False, verbose = False,**kwargs):
         """
@@ -106,10 +118,13 @@ class VectorGPT(nn.Module):
         rasterized_shapes = []
         stop_preds = []
         for t in range(timesteps):
-            rasterized_shape, _, _, _ = self.vector_decoder.forward(transformed_latents[:,t,:], verbose=verbose)
+            if self.vector_decoder_model == "cnn":
+                rasterized_shape, _, _, _ = self.vector_decoder.forward(transformed_latents[:,t,:], verbose=verbose)
+                stop_pred = self.stop_predictor.to(transformed_latents.device).forward(transformed_latents[:,t,:])
+            elif self.vector_decoder_model == "mlp":
+                rasterized_shape, stop_pred = self.vector_decoder.forward(transformed_latents[:,t,:], verbose=verbose)
+            
             rasterized_shapes.append(rasterized_shape)
-
-            stop_pred = self.stop_predictor.to(transformed_latents.device).forward(transformed_latents[:,t,:])
             stop_preds.append(stop_pred)
 
         # re-introduce the time dimension
