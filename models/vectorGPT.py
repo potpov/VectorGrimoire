@@ -18,12 +18,13 @@ class VectorGPT(nn.Module):
                     latent_transformer_depth: int = 8,
                     latent_transformer_heads: int = 8,
                     latent_transformer_layer_dropout: float = 0.1,
-                    vector_decoder_model: str = "mlp",
+                    vector_decoder_model: str = "cnn",
                     vector_decoder_latent_dim: int = 512,
                     vector_decoder_paths: int = 5,
                     vector_decoder_radius: int = 3,
                     vector_decoder_render_size: int = 128,
                     vector_decoder_filled: bool = True,
+                    vector_decoder_max_stroke_width: float = 10.0,
                     stop_predictor_dims: list = [768, 512],
                     stop_predictor_activation: str = "relu",
                     stop_predictor_num_classes: int = 1,
@@ -46,6 +47,7 @@ class VectorGPT(nn.Module):
         self.vector_decoder_radius = vector_decoder_radius
         self.vector_decoder_render_size = vector_decoder_render_size
         self.vector_decoder_filled = vector_decoder_filled
+        self.vector_decoder_max_stroke_width = vector_decoder_max_stroke_width
         self.stop_predictor_dims = stop_predictor_dims
         self.stop_predictor_activation = stop_predictor_activation
         self.stop_predictor_num_classes = stop_predictor_num_classes
@@ -88,8 +90,9 @@ class VectorGPT(nn.Module):
                                                     num_classes=self.stop_predictor_num_classes)
         elif self.vector_decoder_model == "mlp":
             self.vector_decoder = MLPVectorHead(latent_dim=self.vector_decoder_latent_dim,
-                                                paths=self.vector_decoder_paths,
-                                                render_size=self.vector_decoder_render_size)
+                                                segments=self.vector_decoder_paths,
+                                                render_size=self.vector_decoder_render_size,
+                                                max_stroke_width=self.vector_decoder_max_stroke_width)
             self.stop_predictor = None  # stop prediction is done in the MLPVectorHead
         else:
             raise ValueError("You did not specify a correct Vector Decoder. Expected something like 'cnn' or 'mlp'. Check your config.")

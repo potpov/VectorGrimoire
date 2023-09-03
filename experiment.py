@@ -58,7 +58,7 @@ class VectorGPTExperiment(pl.LightningModule):
         #                                     batch_idx = batch_idx,
         #                                     log_loss_images = True)
         # else:
-        predicted_shapes, stop_preds = self.forward(input_shape_layers, drop_alpha_channel=True)
+        predicted_shapes, stop_preds = self.forward(input_shape_layers, drop_alpha_channel=False)  # TODO was True
         train_loss, recons_loss, stop_prediction_loss = self.model.loss_function(
             gt_shape_layers=target_shape_layers,
             pred_images=predicted_shapes,
