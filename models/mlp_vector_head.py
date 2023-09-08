@@ -158,3 +158,172 @@ class MLPVectorHead(nn.Module):
         raster_images = self.raster(point_predictions, stroke_widths, alphas, verbose=verbose)
 
         return raster_images, stop_predictions
+    
+class MLPVectorHeadFixed(nn.Module):
+    """
+    For some f reason, I could not get the gradients to flow through the stroke width prediction in MLPVectorHead.
+    So I started remixing: 
+        - https://github.com/BachiLi/diffvg/blob/master/apps/generative_models/models.py#L17
+        - https://github.com/BachiLi/diffvg/blob/master/apps/generative_models/rendering.py
+        - https://github.com/BachiLi/diffvg/blob/master/apps/painterly_rendering.py
+
+    This is the result. It is a bit messier than the original MLPVectorHead, but it works. God knows why.
+    """
+    def __init__(self, latent_dim=128, 
+                 segments: int = 4, 
+                 imsize=32,
+                 color_output=False,
+                 alpha_prediction = False,
+                 max_stroke_width: float = 10.0):
+        super(MLPVectorHeadFixed, self).__init__()
+
+        self.stroke_width = max_stroke_width
+        self.imsize = imsize
+        self.segments = segments
+        self.latent_dim = latent_dim
+
+        # 4 points bezier with n_segments -> 3*n_segments + 1 points
+        self.point_predictor = nn.Sequential(
+            nn.Linear(self.latent_dim, 
+                         2*(self.segments*3 + 1)),
+            nn.Sigmoid()  # bound spatial extent
+        )
+
+        self.stroke_predictor = nn.Sequential(
+            nn.Linear(self.latent_dim, 1, bias=False),
+            nn.Sigmoid()
+        )
+
+        self.alpha_predictor = None
+        if alpha_prediction:
+            self.alpha_predictor = nn.Sequential(
+                nn.Linear(self.latent_dim, 1, bias=False),
+                nn.Sigmoid()
+            )
+
+        self.color_predictor = None
+        if color_output:
+            self.color_predictor = nn.Sequential(
+                nn.Linear(self.latent_dim, 3, bias=False),
+                nn.Sigmoid()
+            )
+
+    def forward(self, z, **kwargs):
+        bs = z.shape[0]
+
+        feats = z
+        all_points = self.point_predictor(feats)
+        all_widths = self.stroke_predictor(feats) * self.stroke_width
+
+        if self.color_predictor:
+            all_colors = self.color_predictor(feats)
+            all_colors = all_colors.view(bs, 1, 3)
+        else:
+            all_colors = None
+        
+        if self.alpha_predictor:
+            all_alphas = self.alpha_predictor(feats)
+        else:
+            all_alphas = torch.ones(all_widths.shape, device=all_widths.device)
+
+        # min_width = self.stroke_width[0]
+        # max_width = self.stroke_width[1]
+        # all_widths = (max_width - min_width) * all_widths + min_width
+
+        all_points = all_points.view(
+            bs, 1, self.segments*3+1, 2)
+
+        output, scenes = self.bezier_render(all_points, all_widths, all_alphas,
+                                         colors=all_colors,
+                                         canvas_size=self.imsize)
+
+        # map to [-1, 1]
+        # output = output*2.0 - 1.0
+
+        return output, scenes
+    def render(self,
+                canvas_width, 
+                canvas_height, 
+                shapes, 
+                shape_groups, 
+                samples=2,
+                seed=42):
+        
+        _render = pydiffvg.RenderFunction.apply
+        scene_args = pydiffvg.RenderFunction.serialize_scene(
+            canvas_width, canvas_height, shapes, shape_groups)
+        img = _render(canvas_width, canvas_height, samples, samples,
+                    seed,   # seed
+                    None,  # background image
+                    *scene_args)
+        return img
+
+    def bezier_render(self, all_points: Tensor, all_widths: Tensor, all_alphas: Tensor,
+                    canvas_size=32, colors=None, white_background=True):
+        device = all_points.device
+
+        # all_points = 0.5*(all_points + 1.0) * canvas_size
+        all_points = all_points * canvas_size
+
+        eps = 1e-4
+        all_points = all_points + eps*torch.randn_like(all_points, device=device)
+
+        bs, num_strokes, num_pts, _ = all_points.shape
+        num_segments = (num_pts - 1) // 3
+        n_out = 4
+        output = torch.zeros(bs, n_out, canvas_size, canvas_size,
+                        device=device)
+
+        scenes = []
+        for batch in range(bs):
+            shapes = []
+            shape_groups = []
+            for p in range(num_strokes):
+                points = all_points[batch, p].contiguous()
+                # bezier
+                num_ctrl_pts = torch.zeros(num_segments, dtype=torch.int32) + 2
+                width = all_widths[batch, p]
+                alpha = all_alphas[batch, p]
+                if colors is not None:
+                    color = colors[batch, p]
+                else:
+                    color = torch.zeros(3, device=device)
+
+                color = torch.cat([color, alpha.view(1,)])
+
+                path = pydiffvg.Path(
+                    num_control_points=num_ctrl_pts, points=points,
+                    stroke_width=width, is_closed=False)
+                shapes.append(path)
+                path_group = pydiffvg.ShapeGroup(
+                    shape_ids=torch.tensor([len(shapes) - 1]),
+                    fill_color=None,
+                    stroke_color=color)
+                shape_groups.append(path_group)
+
+            # Rasterize
+            scenes.append((canvas_size, canvas_size, shapes, shape_groups))
+            raster = self.render(canvas_size, canvas_size, shapes, shape_groups,
+                            samples=2)
+            raster = raster.permute(2, 0, 1).view(4, canvas_size, canvas_size)
+
+            # alpha = raster[3:4]
+            # if colors is not None:  # color output
+            #     image = raster[:3]
+            #     alpha = alpha.repeat(3, 1, 1)
+            # else:
+            #     image = raster[:1]
+
+            # # alpha compositing
+            # image = image*alpha
+            # output[k] = image
+            output[batch] = raster
+
+        output = output.to(device)
+        
+        if white_background:
+            alpha = output[:, 3:4, :, :]
+            output_white_bg = output[:, :3, :, :] * alpha + (1 - alpha)
+            output = torch.cat([output_white_bg, alpha], dim=1)
+
+        return output, scenes

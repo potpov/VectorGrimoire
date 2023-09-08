@@ -6,7 +6,7 @@ from torch import Tensor
 from x_transformers import Decoder
 from models.resnet import ResNet18, ResNet34, ResNet50, ResNet101, ResNet152
 from models.simple_vector_decoder import SimpleVectorDecoder
-from models.mlp_vector_head import MLPVectorHead
+from models.mlp_vector_head import MLPVectorHead, MLPVectorHeadFixed
 from models.mlp import MultiLayerPerceptron
 import kornia
 from utils import log_all_images
@@ -84,18 +84,22 @@ class VectorGPT(nn.Module):
                                                     radius=self.vector_decoder_radius,
                                                     render_size=self.vector_decoder_render_size,
                                                     filled=self.vector_decoder_filled)
-            self.stop_predictor = MultiLayerPerceptron(input_dim=self.latent_transformer_dim,
-                                                    dims=self.stop_predictor_dims,
-                                                    activation=self.stop_predictor_activation,
-                                                    num_classes=self.stop_predictor_num_classes)
         elif self.vector_decoder_model == "mlp":
-            self.vector_decoder = MLPVectorHead(latent_dim=self.vector_decoder_latent_dim,
+            # self.vector_decoder = MLPVectorHead(latent_dim=self.vector_decoder_latent_dim,
+            #                                     segments=self.vector_decoder_paths,
+            #                                     render_size=self.vector_decoder_render_size,
+            #                                     max_stroke_width=self.vector_decoder_max_stroke_width)
+            self.vector_decoder = MLPVectorHeadFixed(latent_dim=self.vector_decoder_latent_dim,
                                                 segments=self.vector_decoder_paths,
-                                                render_size=self.vector_decoder_render_size,
+                                                imsize=self.vector_decoder_render_size,
                                                 max_stroke_width=self.vector_decoder_max_stroke_width)
-            self.stop_predictor = None  # stop prediction is done in the MLPVectorHead
+            # self.stop_predictor = None  # stop prediction is done in the MLPVectorHead
         else:
             raise ValueError("You did not specify a correct Vector Decoder. Expected something like 'cnn' or 'mlp'. Check your config.")
+        self.stop_predictor = MultiLayerPerceptron(input_dim=self.latent_transformer_dim,
+                                                dims=self.stop_predictor_dims,
+                                                activation=self.stop_predictor_activation,
+                                                num_classes=self.stop_predictor_num_classes)
         
 
     def forward(self, input_images: Tensor, drop_alpha_channel = False, verbose = False,**kwargs):
@@ -121,11 +125,13 @@ class VectorGPT(nn.Module):
         rasterized_shapes = []
         stop_preds = []
         for t in range(timesteps):
-            if self.vector_decoder_model == "cnn":
-                rasterized_shape, _, _, _ = self.vector_decoder.forward(transformed_latents[:,t,:], verbose=verbose)
-                stop_pred = self.stop_predictor.to(transformed_latents.device).forward(transformed_latents[:,t,:])
-            elif self.vector_decoder_model == "mlp":
-                rasterized_shape, stop_pred = self.vector_decoder.forward(transformed_latents[:,t,:], verbose=verbose)
+            # if self.vector_decoder_model == "cnn":
+            out = self.vector_decoder.forward(transformed_latents[:,t,:], verbose=verbose)
+            rasterized_shape = out[0]
+            stop_pred = self.stop_predictor.to(transformed_latents.device).forward(transformed_latents[:,t,:])
+            # elif self.vector_decoder_model == "mlp":
+            #     rasterized_shape, stop_pred = self.vector_decoder.forward(transformed_latents[:,t,:], verbose=verbose)
+            #     stop_pred = self.stop_predictor.to(transformed_latents.device).forward(transformed_latents[:,t,:])
             
             rasterized_shapes.append(rasterized_shape)
             stop_preds.append(stop_pred)
