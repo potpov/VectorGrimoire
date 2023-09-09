@@ -85,7 +85,7 @@ def render_scene(shapes, shape_groups, resolution = 128, format = "CHW"):
         output = output
         return output
     else:
-        pass
+        raise ValueError("please provide supported format")
 
 def make_target(resolution, path:str = "/home/mfeuerpfeil/master/thesis/datasets/mnist_png/training/2/10024.png", invert=True):
     """
@@ -276,7 +276,7 @@ def optimize(points_vars,
             group.stroke_color.data.clamp_(0.0, 1.0)
     verbose_scaling = 4.0
     shapes, groups = get_verbose_components(points_vars[0]*verbose_scaling)
-    final_verbose_output = render_scene(shapes, groups, resolution = int(resolution*verbose_scaling), format = "plotting")
+    final_verbose_output = render_scene(shapes, groups, resolution = int(resolution*verbose_scaling))
     return step_images, final_verbose_output, losses, points_grad
 
 def add_loss_to_optimization_process_image(grid:Tensor, losses:List[float]):
@@ -379,7 +379,8 @@ def main(args: argparse.Namespace):
 
     # Load target image based on args
     target_path: str = args.target_image_path
-    target = make_target(resolution, target_path)
+    # TODO add the selection of alpha channel here, also with option for optimizatioin
+    target = make_target(resolution, target_path, invert=False)[:3,:,:]
 
     output_path = args.output_dir
     if not os.path.exists(output_path):
