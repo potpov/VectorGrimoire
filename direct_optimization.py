@@ -19,18 +19,54 @@ from io import BytesIO
 import argparse
 render = pydiffvg.RenderFunction.apply
 
+def get_points(primitive:str, num_segments:int, mode:str):
+    """
+    Gets initial point positions between [0, 1] in a (num_points, 2) float32 tensor
 
-def get_initial_component(grad = False, resolution = 128, mode: str = "middle", num_segments:int = 2, stroke_width:float = 1.0):
-    assert mode in ["middle", "debugging"], "please choose a valid mode"
+    Args:
+        - primitive, str: what svg primitive to use, currently supported "line" and "cubic" for paths
+        - num_segments, int: how many segments for a single path?
+        - mode, str: init mode for the points, currently supported "middle" and "waves"
+
+    Returns:
+        - points in a (num_points, 2) float tensor, [0, 1] range
+    """
+    assert num_segments >= 1
+    assert primitive in ["line", "cubic"]
+    assert mode in ["middle", "waves", "cross"]
+
+    total_points = None
     
+    if primitive == "line":
+        total_points = 1 + num_segments
+    elif primitive == "cubic":
+        total_points = 1 + num_segments*3
+        # TODO add control points
+
+    points = torch.zeros((total_points, 2)).type(torch.float32)
     if mode == "middle":
-        points = (torch.zeros((1+num_segments*3,2)) + 0.5) * resolution
-    elif mode == "debugging":  # TODO deprecate this mode as it has fixed number of segments
-        array = np.array([[0.0, 0.0], [0.5, 0.5], [0.5, 0.5], [1.0, 0.0], [0.5, 0.5], [0.5, 0.5], [1., 1.]]) * resolution
-        points = torch.tensor(array).type(torch.float32)
-    else:
-        array = np.array([[0.0, 0.0], [0.5, 0.5], [0.5, 0.5], [1.0, 0.0]]) * resolution
-        points = torch.tensor(array).type(torch.float32)
+        points = points + 0.5
+        epsilon = torch.randn((total_points, 2)) * 0.0001
+        points = points + epsilon  # required to not run into diffvg length 0 runtime error
+    elif mode == "waves":
+        dist_between_points = 1 / total_points
+        if primitive == "line":
+            for i in range(0, total_points, 2):
+                points[i, 1] = i * dist_between_points
+                if i+1 < len(points):
+                    points[i+1, 0] = 1.
+                    points[i+1, 1] = (i+1) * dist_between_points
+        elif primitive == "cubic":
+            for i in range(0, total_points, 3):
+                points[i, 1] = i * dist_between_points
+                points[i+1 : i+3, 0] = 1.
+                points[i+1 : i+3, 1] = (i+1) * dist_between_points + 0.5 * dist_between_points
+            pass
+    return points
+
+def get_initial_component(primitive = "cubic", resolution = 128, mode: str = "middle", num_segments:int = 2, stroke_width:float = 1.0, grad = True):
+
+    points = get_points(primitive, num_segments, mode) * resolution
     points.requires_grad = grad
     assert points.is_leaf, "points is not leaf node"
 
@@ -42,7 +78,11 @@ def get_initial_component(grad = False, resolution = 128, mode: str = "middle", 
     shape_groups = []
 
     points = points.contiguous()
-    num_ctrl_pts = torch.zeros(num_segments, dtype=torch.int32) + 2
+
+    if primitive == "cubic":
+        num_ctrl_pts = torch.zeros(num_segments, dtype=torch.int32) + 2
+    else:
+        num_ctrl_pts = torch.zeros(num_segments, dtype=torch.int32)
 
     path = pydiffvg.Path(
                 num_control_points=num_ctrl_pts,
@@ -100,11 +140,14 @@ def make_target(resolution, path:str = "/home/mfeuerpfeil/master/thesis/datasets
     target[3,:,:] = 1.
     return target
 
-def get_verbose_components(points:Tensor, end_color:Tensor = torch.tensor([1.0, 0.0, 0.0, 1.]), verbose=False):
+def get_verbose_components(points:Tensor, primitive:str, end_color:Tensor = torch.tensor([1.0, 0.0, 0.0, 1.]), verbose=True):
     """"
     turns already scaled points into verbose shapes and shape groups
     """
-    num_segments = len(points)//3
+    if primitive == "cubic":
+        num_segments = len(points)//3
+    else:
+        num_segments = len(points) - 1
     shapes = []
     shape_groups = []
     points = points.detach()
@@ -119,15 +162,23 @@ def get_verbose_components(points:Tensor, end_color:Tensor = torch.tensor([1.0, 
         color = start_color + color_diff
         color[3] = 0.9
         # color = torch.tensor(color)
-        num_ctrl_pts = torch.zeros(1, dtype=torch.int32) + 2
+        if primitive == "cubic":
+            num_ctrl_pts = torch.zeros(1, dtype=torch.int32) + 2
+        else:
+            num_ctrl_pts = torch.zeros(1, dtype=torch.int32)
 
         # # check circular closed condition
         # if i*3 + 4 > num_segments * 3:
         #     single_path_points = torch.stack([points[i*3], points[i*3+1], points[i*3+2], points[0]])
         # else:
-        if verbose:
-            print(f"Looking at segment from {i*3} to {i*3+4}")
-        single_path_points = points[i*3:i*3 + 4]
+        if primitive == "cubic":
+            if verbose:
+                print(f"Looking at segment from {i*3} to {i*3+4}")
+            single_path_points = points[i*3:i*3 + 4]
+        else:
+            if verbose:
+                print(f"Looking at segment from {i} to {i+1}")
+            single_path_points = points[i:i+1]
 
         path = pydiffvg.Path(
             num_control_points=num_ctrl_pts, points=single_path_points,
@@ -139,6 +190,7 @@ def get_verbose_components(points:Tensor, end_color:Tensor = torch.tensor([1.0, 
         shapes.append(path)
         shape_groups.append(path_group)
 
+    print(f"[INFO] got {len(shapes)} paths.")
     # add the actual points
     for i in range(len(points)):
         try:
@@ -147,20 +199,27 @@ def get_verbose_components(points:Tensor, end_color:Tensor = torch.tensor([1.0, 
             curr_color = torch.tensor([1.,0.,0.,1.])
         indicator_scale = 3
 
-        # first point is always an anchor point
-        if i%3==0:
-            # color = torch.tensor([1.,0.,1.,1.]) #fuchsia
+        if primitive == "cubic":
+            # first point is always an anchor point
+            if i%3==0:
+                # color = torch.tensor([1.,0.,1.,1.]) #fuchsia
+                shape = pydiffvg.Rect(p_min = points[i]-indicator_scale,
+                                        p_max = points[i]+indicator_scale)
+                group = pydiffvg.ShapeGroup(shape_ids=torch.tensor([num_segments+i]),
+                                                    fill_color=curr_color)
+            # all other points are control points
+            else:
+                # color = torch.tensor([0.,0.5,0.,1.]) #green
+                shape = pydiffvg.Circle(radius=torch.tensor(indicator_scale),
+                                            center=points[i])
+                group = pydiffvg.ShapeGroup(shape_ids=torch.tensor([num_segments+i]),
+                                                    fill_color=curr_color)
+        else:
             shape = pydiffvg.Rect(p_min = points[i]-indicator_scale,
                                     p_max = points[i]+indicator_scale)
             group = pydiffvg.ShapeGroup(shape_ids=torch.tensor([num_segments+i]),
-                                                fill_color=curr_color)
-        # all other points are control points
-        else:
-            # color = torch.tensor([0.,0.5,0.,1.]) #green
-            shape = pydiffvg.Circle(radius=torch.tensor(indicator_scale),
-                                        center=points[i])
-            group = pydiffvg.ShapeGroup(shape_ids=torch.tensor([num_segments+i]),
-                                                fill_color=curr_color)
+                                        fill_color=curr_color)
+
         shapes.append(shape)
         shape_groups.append(group)
 
@@ -173,6 +232,7 @@ def optimize(points_vars,
              optimizable_groups, 
              target,
              resolution,
+             primitive:str,
              loss_name = "MSE", # MSE or LPIPS 
              num_iter:int = 200, 
              max_width:float = 10., 
@@ -202,9 +262,10 @@ def optimize(points_vars,
         loss_fn = mix
     else:
         raise ValueError("Please choose a valid loss function")
-
+    if verbose:
+        print("Start optimizing.")
     for t in range(num_iter):
-        if verbose:
+        if verbose and t % 10 == 0:
             print('iteration:', t)
         # print(f"current stroke: {stroke_width.item()}")
         points_optim.zero_grad()
@@ -254,8 +315,8 @@ def optimize(points_vars,
             target = target.unsqueeze(dim=0)
         loss = loss_fn(img, target) * loss_scaling
         losses.append(loss.detach().item())
-        if verbose:
-            print('render loss:', loss.item())
+        if verbose and t % 10 == 0:
+            print('render loss:', np.round(loss.item(), 4))
     
         # Backpropagate the gradients.
         loss.backward()
@@ -267,7 +328,7 @@ def optimize(points_vars,
         if len(stroke_width_vars) > 0:
             width_optim.step()
             # print("BACKWARD width")
-        # color_optim.step()  # TODO currently not optimizing color
+        # color_optim.step()  # TODO currently not optimizing color, add as parameter
         if len(stroke_width_vars) > 0:
             for path in optimizable_shapes:
                 path.stroke_width.data.clamp_(1.0, max_width)
@@ -275,7 +336,7 @@ def optimize(points_vars,
         for group in optimizable_groups:
             group.stroke_color.data.clamp_(0.0, 1.0)
     verbose_scaling = 4.0
-    shapes, groups = get_verbose_components(points_vars[0]*verbose_scaling)
+    shapes, groups = get_verbose_components(points_vars[0]*verbose_scaling, primitive)
     final_verbose_output = render_scene(shapes, groups, resolution = int(resolution*verbose_scaling))
     return step_images, final_verbose_output, losses, points_grad
 
@@ -324,7 +385,7 @@ def save_optimization_process_image(step_images:Tensor, final_verbose_output:Ten
     final_verbose_output = final_verbose_output.cpu()
     target = target.cpu()
     step_grid = make_grid(step_images, nrow=int(len(step_images)**0.5))  # C x H x W
-    resizer = transforms.Resize(step_grid.shape[1:])
+    resizer = transforms.Resize(step_grid.shape[1:], antialias=True)
     resized_target = resizer(target)
     resized_final_verbose_output = resizer(final_verbose_output)[:3,:,:]
     final_grid = make_grid([step_grid, resized_target,resized_final_verbose_output], nrow=3)
@@ -394,58 +455,85 @@ def main(args: argparse.Namespace):
     grid_stroke_widths: List[float] = args.stroke_widths
     grid_losses: List[str] = args.losses
     grid_modes: List[str] = args.modes
+    grid_primitives: List[str] = args.primitives
 
     verbose: bool = args.verbose
+    override: bool = args.override
 
     total_steps = len(grid_segments) * len(grid_loss_scales) * len(grid_stroke_widths) * len(grid_losses) * len(grid_modes)
     curr_step = 0
 
-    for mode in grid_modes:
-        for num_segments in grid_segments:
-            for loss_scale in grid_loss_scales:
-                for initial_stroke_width in grid_stroke_widths:
-                    for lossfn in grid_losses:
-                        points, num_ctrl_pts, color, fill_color, stroke_width, shapes, shape_groups = get_initial_component(grad = True,
-                                                                                                                            resolution=resolution,
-                                                                                                                            num_segments = num_segments,
-                                                                                                                            mode=mode,
-                                                                                                                            stroke_width=initial_stroke_width)
+    for primitive in grid_primitives:
+        for mode in grid_modes:
+            for num_segments in grid_segments:
+                for loss_scale in grid_loss_scales:
+                    for initial_stroke_width in grid_stroke_widths:
+                        for lossfn in grid_losses:
+                            if verbose:
+                                print(f"{primitive}, {mode}, {num_segments}, {lossfn}")
+                            
+                            optimization_process_grid_path = os.path.join(output_path, f"optimization_process_{primitive}_{mode}_{lossfn.upper()}_{num_segments}_segments_{num_iter}_iters_{loss_scale}_loss_scale_{initial_stroke_width}_stroke.png")
+                            optimization_gif_path = os.path.join(output_path, f"optimization_GIF_{primitive}_{mode}_{num_segments}_segments_{lossfn.upper()}_{num_iter}_iterations_{loss_scale}_loss_scale_{initial_stroke_width}_stroke.gif")
+                            
+                            if os.path.exists(optimization_process_grid_path) and os.path.exists(optimization_gif_path):
+                                if override:
+                                    pass
+                                else:
+                                    if verbose:
+                                        print("Skipping because already exists. Use --override to override.")
+                                    curr_step = curr_step+1  # TODO this can be better placed tbh
+                                    continue
 
-                        points_vars = [points]
-                        stroke_width_vars = [stroke_width]
-                        color_vars = [color]
+                            points, num_ctrl_pts, color, fill_color, stroke_width, shapes, shape_groups = get_initial_component(primitive=primitive,
+                                                                                                                                grad = True,
+                                                                                                                                resolution=resolution,
+                                                                                                                                num_segments = num_segments,
+                                                                                                                                mode=mode,
+                                                                                                                                stroke_width=initial_stroke_width)
 
-                        # Optimize
-                        step_images, final_verbose_output, losses, points_grad = optimize(points_vars,
-                                                                                        stroke_width_vars,
-                                                                                        color_vars,
-                                                                                        shapes,
-                                                                                        shape_groups,
-                                                                                        target.to(points_vars[0].device),
-                                                                                        resolution,
-                                                                                        num_iter = num_iter,
-                                                                                        max_width = max_width,
-                                                                                        loss_scaling=loss_scale,
-                                                                                        loss_name = lossfn,
-                                                                                        verbose = verbose)
-                        grid = save_optimization_process_image(step_images, 
-                                                                final_verbose_output,
-                                                                target,
-                                                                os.path.join(output_path, f"optimization_process_{mode}_{lossfn.upper()}_{num_segments}_segments_{num_iter}_iters_{loss_scale}_loss_scale_{initial_stroke_width}_stroke.png"),
-                                                                title = f"{lossfn.upper()}, Segments: {num_segments}, Iters: {num_iter}, Loss Scale: {loss_scale}, Mode: {mode}",
-                                                                losses = losses)
-                        step_images_to_gif(step_images, 
-                                        os.path.join(output_path, f"optimization_GIF_{mode}_{num_segments}_segments_{lossfn.upper()}_{num_iter}_iterations_{loss_scale}_loss_scale_{initial_stroke_width}_stroke.gif"), 
-                                        title = f"{lossfn.upper()}, {num_segments} segments, {mode} init",
-                                        fps = int(len(step_images) / 20))  # this ensures that the gif is 20 seconds long no matter the number of steps
-                        all_grids.append(grid)
-                        all_losses.append(losses[-1])
-                        curr_step = curr_step+1
-                        print(f"{np.round(curr_step/total_steps * 100, 2)}% done")
+                            points_vars = [points]
+                            stroke_width_vars = [stroke_width]
+                            color_vars = [color]
 
-    plt.imsave(os.path.join(output_path, f"all_grids_{num_iter}_iters_{mode}_init_{loss_scale}_loss_scale.png"),
-               make_grid(all_grids, nrow=1).permute(1, 2, 0).numpy(),
-               dpi=len(all_grids)*300)
+                            # Optimize
+                            step_images, final_verbose_output, losses, points_grad = optimize(points_vars,
+                                                                                            stroke_width_vars,
+                                                                                            color_vars,
+                                                                                            shapes,
+                                                                                            shape_groups,
+                                                                                            target.to(points_vars[0].device),
+                                                                                            resolution,
+                                                                                            primitive,
+                                                                                            num_iter = num_iter,
+                                                                                            max_width = max_width,
+                                                                                            loss_scaling=loss_scale,
+                                                                                            loss_name = lossfn,
+                                                                                            verbose = verbose)
+                            grid = save_optimization_process_image(step_images, 
+                                                                    final_verbose_output,
+                                                                    target,
+                                                                    optimization_process_grid_path,
+                                                                    title = f"{lossfn.upper()}, {num_segments} {primitive}s, Iters: {num_iter}, Loss Scale: {loss_scale}, Mode: {mode}",
+                                                                    losses = losses)
+                            # TODO something is not working with the FPS
+                            fps = int(len(step_images) / 10)  # this should ensure that the gif is 10 seconds long no matter the number of steps
+                            if verbose:
+                                print(f"Saving in {fps} fps")
+                            step_images_to_gif(step_images, 
+                                            optimization_gif_path, 
+                                            title = f"{lossfn.upper()}, {num_segments} {primitive}, {mode} init",
+                                            fps = fps)  
+                            all_grids.append(grid)
+                            all_losses.append(losses[-1])
+                            curr_step = curr_step+1
+                            print(f"{np.round(curr_step/total_steps * 100, 2)}% done")
+
+    if len(all_grids) <= 10:
+        plt.imsave(os.path.join(output_path, f"all_grids_{num_iter}_iters.png"),
+                make_grid(all_grids, nrow=1).permute(1, 2, 0).numpy(),
+                dpi=len(all_grids)*300)
+    else:
+        print(f"[INFO] Grids were saved together because there were too many. {len(all_grids)} > 10")
 
 
 if __name__ == "__main__":
@@ -459,86 +547,11 @@ if __name__ == "__main__":
     parser.add_argument("--stroke_widths", nargs='+', type=float, default=[1.0], help="Initial stroke widths")
     parser.add_argument("--losses", nargs='+', type=str, default=["mse", "lpips", "mix"], help="Losses to try, currently supported: mse, lpips, mix")
     parser.add_argument("--modes", nargs='+', type=str, default=["middle"], help="Modes of initialization, currently supported: middle")
+    parser.add_argument("--primitives", nargs='+', type=str, default=["cubic"], help="Primitives to optimize, currently supported: cubic, line")
     parser.add_argument("--output_dir", type=str, default="/home/mfeuerpfeil/master/thesis/images/optimization", help="Path to the directory to save the output images to")
     parser.add_argument("--verbose", action="store_true", help="Print more info like render loss etc.")
+    parser.add_argument("--override", action="store_true", help="True: override already existing images, False: skip existing, default: False")
 
 
     args = parser.parse_args()
     main(args)
-
-
-
-    # resolution = 128
-    # grad = True
-    # num_iter = 1000
-    # max_width = 10.
-    # end_color = torch.tensor([1.0, 0.0, 0.0, 1.0])
-    
-
-    # # load single large mnist digit
-    # # target = make_target()[:3,:,:]
-
-    # # create a target with all mnist digits in a single image (mnist++)
-    # # target = load_npy_timeseries_image("/scratch2/moritz_data/CausalMNISTpp_5/I1001_P4.npy").min(dim=0).values
-    
-    # # create target with a single mnist digit of the mnist++ dataset (e.g. only the 0 on the left)
-    # target = load_npy_timeseries_image("/scratch2/moritz_data/CausalMNISTpp_5/I1001_P4.npy")[0]
-
-    # all_grids = []
-    # all_losses = []
-
-    # # defining the grid of combinations to try
-    # grid_segments = [2]
-    # grid_loss_scales = [1.]
-    # grid_stroke_widths = [1.]
-    # grid_losses = ["mse", "lpips", "mix"]
-    # grid_modes = ["middle"]
-
-    # total_steps = len(grid_segments) * len(grid_loss_scales) * len(grid_stroke_widths) * len(grid_losses) * len(grid_modes)
-    # curr_step = 0
-    
-    # for mode in grid_modes:
-    #     for num_segments in grid_segments:
-    #         for loss_scale in grid_loss_scales:
-    #             for initial_stroke_width in grid_stroke_widths:
-    #                 for lossfn in grid_losses:
-    #                     points, num_ctrl_pts, color, fill_color, stroke_width, shapes, shape_groups = get_initial_component(grad = grad, 
-    #                                                                                                                         resolution=resolution, 
-    #                                                                                                                         num_segments = num_segments, 
-    #                                                                                                                         mode=mode,
-    #                                                                                                                         stroke_width=initial_stroke_width)
-    #                     output = render_scene(shapes, shape_groups, resolution = resolution)
-
-    #                     points_vars = [points]
-    #                     stroke_width_vars = [stroke_width]
-    #                     color_vars = [color]
-
-    #                     # Optimize
-    #                     step_images, final_verbose_output, losses, points_grad = optimize(points_vars, 
-    #                                                                                     stroke_width_vars, 
-    #                                                                                     color_vars, 
-    #                                                                                     shapes,
-    #                                                                                     shape_groups,
-    #                                                                                     target.to(points_vars[0].device), 
-    #                                                                                     num_iter = num_iter, 
-    #                                                                                     max_width = max_width, 
-    #                                                                                     loss_scaling=loss_scale,
-    #                                                                                     loss_name = lossfn,
-    #                                                                                     verbose = False)
-    #                     grid = save_optimization_process_image(step_images, 
-    #                                                             final_verbose_output,
-    #                                                             target,
-    #                                                             f"images/debug_optimization_process_{num_segments}_segments_{lossfn.upper()}_{num_iter}_iterations_{loss_scale}_loss_scale_{initial_stroke_width}_stroke.png",
-    #                                                             title = f"{lossfn.upper()}, Segments: {num_segments}, Iters: {num_iter}, Loss Scale: {loss_scale}, Stroke: {initial_stroke_width}",
-    #                                                             losses = losses)
-    #                     step_images_to_gif(step_images, 
-    #                                     f"images/debug_optimization_process_{num_segments}_segments_{lossfn.upper()}_{num_iter}_iterations_{loss_scale}_loss_scale_{initial_stroke_width}_stroke.gif", 
-    #                                     title = f"{lossfn.upper()}, {num_segments} segments")
-    #                     all_grids.append(grid)
-    #                     all_losses.append(losses[-1])
-    #                     curr_step = curr_step+1
-    #                     print(f"Step {np.round(curr_step/total_steps * 100, 2)}% done")
-                    
-    # plt.imsave(f"images/debug_all_grids_{num_iter}_iters_{mode}_init_{loss_scale}_loss_scale.png", 
-    #            make_grid(all_grids, nrow=1).permute(1, 2, 0).numpy(), 
-    #            dpi=300)

@@ -1,1 +1,1 @@
-python direct_optimization.py --resolution 128 --num_iter 50 --max_width 10.0 --target_image_path images/inputs/circle.png --segments 2 10 --loss_scales 1.0 --stroke_widths 1.0 --losses mse lpips mix --modes middle --output_dir images/optimization/circle
+python direct_optimization.py --override --verbose --primitives line --resolution 128 --num_iter 500 --max_width 10.0 --target_image_path images/inputs/circle.png --segments 10 --loss_scales 1.0 --stroke_widths 1.0 --losses mix mse --modes middle waves --output_dir images/optimization/circle
