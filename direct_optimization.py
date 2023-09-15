@@ -19,6 +19,21 @@ from io import BytesIO
 import argparse
 render = pydiffvg.RenderFunction.apply
 
+def sample_circle(num_points: int, radius: float = 1.,):
+    """
+    Args:
+        - num_points, int: how many points to sample
+        - radius, float: radius of the circle, default: 1.0
+    """
+    pos = []
+    angles = torch.arange(0, 2*torch.pi, 2*torch.pi / num_points)
+    for i in range(1, 2):
+        x = ((torch.cos(angles*(1/i)) * radius) + radius) / 2
+        y = ((torch.sin(angles*(1/i)) * radius) + radius) / 2
+        pos.append(x)
+        pos.append(y)
+    return torch.stack(pos, dim=-1)
+
 def get_points(primitive:str, num_segments:int, mode:str):
     """
     Gets initial point positions between [0, 1] in a (num_points, 2) float32 tensor
@@ -26,14 +41,14 @@ def get_points(primitive:str, num_segments:int, mode:str):
     Args:
         - primitive, str: what svg primitive to use, currently supported "line" and "cubic" for paths
         - num_segments, int: how many segments for a single path?
-        - mode, str: init mode for the points, currently supported "middle" and "waves"
+        - mode, str: init mode for the points, currently supported "middle", "waves", "circle"
 
     Returns:
         - points in a (num_points, 2) float tensor, [0, 1] range
     """
     assert num_segments >= 1
     assert primitive in ["line", "cubic"]
-    assert mode in ["middle", "waves", "cross"]
+    assert mode in ["middle", "waves", "circle"]
 
     total_points = None
     
@@ -41,9 +56,10 @@ def get_points(primitive:str, num_segments:int, mode:str):
         total_points = 1 + num_segments
     elif primitive == "cubic":
         total_points = 1 + num_segments*3
-        # TODO add control points
 
     points = torch.zeros((total_points, 2)).type(torch.float32)
+    left_right_padding = 0.2
+
     if mode == "middle":
         points = points + 0.5
         epsilon = torch.randn((total_points, 2)) * 0.0001
@@ -52,30 +68,52 @@ def get_points(primitive:str, num_segments:int, mode:str):
         dist_between_points = 1 / total_points
         if primitive == "line":
             for i in range(0, total_points, 2):
+                points[i, 0] = left_right_padding
                 points[i, 1] = i * dist_between_points
                 if i+1 < len(points):
-                    points[i+1, 0] = 1.
+                    points[i+1, 0] = 1.0 - left_right_padding
                     points[i+1, 1] = (i+1) * dist_between_points
         elif primitive == "cubic":
             for i in range(0, total_points, 3):
+                points[i, 0] = left_right_padding
                 points[i, 1] = i * dist_between_points
-                points[i+1 : i+3, 0] = 1.
+                points[i+1 : i+3, 0] = 1.0 - left_right_padding
                 points[i+1 : i+3, 1] = (i+1) * dist_between_points + 0.5 * dist_between_points
-            pass
+    elif mode == "circle":
+        # TODO this is currently not quite correct as the padding is not applied to half of the borders (still starts at 0.0;0.0)
+        points = sample_circle(total_points, radius=1. - left_right_padding)
+
     return points
 
-def get_initial_component(primitive = "cubic", resolution = 128, mode: str = "middle", num_segments:int = 2, stroke_width:float = 1.0, grad = True):
+def get_initial_component(primitive = "cubic", 
+                          resolution = 128, 
+                          mode: str = "middle", 
+                          num_segments:int = 2, 
+                          filled:bool = False, 
+                          stroke_width:float = 1.0, 
+                          grad = True, 
+                          shapes: list = None,  # this will be extended if not None, used for multiple paths
+                          shape_groups: list = None):  # this will be extended, too
 
     points = get_points(primitive, num_segments, mode) * resolution
     points.requires_grad = grad
     assert points.is_leaf, "points is not leaf node"
 
     color = torch.tensor([0.0, 0.0, 0.0, 1.0], requires_grad=grad)
-    fill_color = torch.tensor([0.0, 0.0, 0.0, .8], requires_grad=grad)
+    if filled:
+        fill_color = torch.tensor([0.0, 0.0, 0.0, 1.], requires_grad=grad)
+    else:
+        fill_color = None
     stroke_width = torch.tensor(stroke_width, dtype=torch.float32, requires_grad=grad)
 
-    shapes = []
-    shape_groups = []
+    if shapes is None:
+        shapes = []
+    else:
+        shapes = shapes
+    if shape_groups is None:
+        shape_groups = []
+    else:
+        shape_groups = shape_groups
 
     points = points.contiguous()
 
@@ -95,7 +133,8 @@ def get_initial_component(primitive = "cubic", resolution = 128, mode: str = "mi
 
     path_group = pydiffvg.ShapeGroup(
                     shape_ids=torch.tensor([len(shapes) - 1]),
-                    fill_color=None,
+                    # fill_color=fill_color, TODO ohfa
+                    fill_color=color,
                     stroke_color=color,
                 )
 
@@ -110,8 +149,8 @@ def render_scene(shapes, shape_groups, resolution = 128, format = "CHW"):
 
     out = render(   resolution,  # width
                     resolution,  # height
-                    3,  # num_samples_x
-                    3,  # num_samples_y
+                    5,  # num_samples_x for monte carlo sampling
+                    5,  # num_samples_y for monte carlo sampling
                     102,  # seed
                     None,
                     *scene_args
@@ -186,13 +225,14 @@ def get_verbose_components(points:Tensor, primitive:str, end_color:Tensor = torc
         path_group = pydiffvg.ShapeGroup(
             shape_ids=torch.tensor([i]),
             fill_color=None,
-            stroke_color=color)
+            stroke_color=torch.tensor([0.0, 0.0, 0.0, 1.]))
+            # stroke_color=color)
         shapes.append(path)
         shape_groups.append(path_group)
 
-    print(f"[INFO] got {len(shapes)} paths.")
+    # print(f"[INFO] got {len(shapes)} paths.")
     # add the actual points
-    for i in range(len(points)):
+    for i, point in enumerate(points):
         try:
             curr_color = torch.cat([torch.tensor(all_colors[i]), torch.tensor([1.])])
         except Exception as e:
@@ -203,20 +243,20 @@ def get_verbose_components(points:Tensor, primitive:str, end_color:Tensor = torc
             # first point is always an anchor point
             if i%3==0:
                 # color = torch.tensor([1.,0.,1.,1.]) #fuchsia
-                shape = pydiffvg.Rect(p_min = points[i]-indicator_scale,
-                                        p_max = points[i]+indicator_scale)
+                shape = pydiffvg.Rect(p_min = point-indicator_scale,
+                                        p_max = point+indicator_scale)
                 group = pydiffvg.ShapeGroup(shape_ids=torch.tensor([num_segments+i]),
                                                     fill_color=curr_color)
             # all other points are control points
             else:
                 # color = torch.tensor([0.,0.5,0.,1.]) #green
                 shape = pydiffvg.Circle(radius=torch.tensor(indicator_scale),
-                                            center=points[i])
+                                            center=point)
                 group = pydiffvg.ShapeGroup(shape_ids=torch.tensor([num_segments+i]),
                                                     fill_color=curr_color)
         else:
-            shape = pydiffvg.Rect(p_min = points[i]-indicator_scale,
-                                    p_max = points[i]+indicator_scale)
+            shape = pydiffvg.Rect(p_min = point-indicator_scale,
+                                    p_max = point+indicator_scale)
             group = pydiffvg.ShapeGroup(shape_ids=torch.tensor([num_segments+i]),
                                         fill_color=curr_color)
 
@@ -225,18 +265,18 @@ def get_verbose_components(points:Tensor, primitive:str, end_color:Tensor = torc
 
     return shapes, shape_groups
 
-def optimize(points_vars, 
-             stroke_width_vars, 
-             color_vars, 
-             optimizable_shapes, 
-             optimizable_groups, 
+def optimize(points_vars,
+             stroke_width_vars,
+             color_vars,
+             optimizable_shapes,
+             optimizable_groups,
              target,
              resolution,
              primitive:str,
-             loss_name = "MSE", # MSE or LPIPS 
-             num_iter:int = 200, 
-             max_width:float = 10., 
-             loss_scaling:float = 1., 
+             loss_name = "MSE", # MSE or LPIPS
+             num_iter:int = 200,
+             max_width:float = 10.,
+             loss_scaling:float = 1.,
              verbose = True):
     step_images = None
     points_grad = []
@@ -245,6 +285,9 @@ def optimize(points_vars,
     points_optim = torch.optim.Adam(points_vars, lr=1.0)
     width_optim = torch.optim.Adam(stroke_width_vars, lr=0.1)
     color_optim = torch.optim.Adam(color_vars, lr=0.01)
+    # points_optim = torch.optim.SGD(points_vars, lr=1.0)
+    # width_optim = torch.optim.SGD(stroke_width_vars, lr=0.1)
+    # color_optim = torch.optim.SGD(color_vars, lr=0.01)
 
     loss_fn = None
     lpips = None
@@ -317,7 +360,7 @@ def optimize(points_vars,
         losses.append(loss.detach().item())
         if verbose and t % 10 == 0:
             print('render loss:', np.round(loss.item(), 4))
-    
+
         # Backpropagate the gradients.
         loss.backward()
 
@@ -328,7 +371,7 @@ def optimize(points_vars,
         if len(stroke_width_vars) > 0:
             width_optim.step()
             # print("BACKWARD width")
-        # color_optim.step()  # TODO currently not optimizing color, add as parameter
+        color_optim.step()  # TODO currently not optimizing color, add as parameter
         if len(stroke_width_vars) > 0:
             for path in optimizable_shapes:
                 path.stroke_width.data.clamp_(1.0, max_width)
@@ -450,6 +493,7 @@ def main(args: argparse.Namespace):
     all_grids = []
     all_losses = []
 
+    grid_num_paths: List[int] = args.num_paths
     grid_segments: List[int] = args.segments
     grid_loss_scales: List[float] = args.loss_scales
     grid_stroke_widths: List[float] = args.stroke_widths
@@ -459,81 +503,94 @@ def main(args: argparse.Namespace):
 
     verbose: bool = args.verbose
     override: bool = args.override
+    filled: bool = args.filled
 
-    total_steps = len(grid_segments) * len(grid_loss_scales) * len(grid_stroke_widths) * len(grid_losses) * len(grid_modes)
+    total_steps = len(grid_num_paths) * len(grid_segments) * len(grid_loss_scales) * len(grid_stroke_widths) * len(grid_losses) * len(grid_modes) * len(grid_primitives)
     curr_step = 0
+    for num_paths in grid_num_paths:
+        for primitive in grid_primitives:
+            for mode in grid_modes:
+                for num_segments in grid_segments:
+                    for loss_scale in grid_loss_scales:
+                        for initial_stroke_width in grid_stroke_widths:
+                            for lossfn in grid_losses:
+                                if verbose:
+                                    print(f"{primitive}, {mode}, {num_segments}, {lossfn}")
+                                
+                                optimization_process_grid_path = os.path.join(output_path, f"optimization_process_{'filled' if filled else 'unfilled'}_{num_paths}_{primitive}s_{mode}_{lossfn.upper()}_{num_segments}_segments_{num_iter}_iters_{loss_scale}_loss_scale_{initial_stroke_width}_stroke.png")
+                                optimization_gif_path = os.path.join(output_path, f"optimization_GIF_{'filled' if filled else 'unfilled'}_{num_paths}_{primitive}s_{mode}_{num_segments}_segments_{lossfn.upper()}_{num_iter}_iterations_{loss_scale}_loss_scale_{initial_stroke_width}_stroke.gif")
+                                plot_title = f"{lossfn.upper()}, {num_segments} {primitive}s, Iters: {num_iter}, Mode: {mode}, {'filled' if filled else 'unfilled'}"
 
-    for primitive in grid_primitives:
-        for mode in grid_modes:
-            for num_segments in grid_segments:
-                for loss_scale in grid_loss_scales:
-                    for initial_stroke_width in grid_stroke_widths:
-                        for lossfn in grid_losses:
-                            if verbose:
-                                print(f"{primitive}, {mode}, {num_segments}, {lossfn}")
-                            
-                            optimization_process_grid_path = os.path.join(output_path, f"optimization_process_{primitive}_{mode}_{lossfn.upper()}_{num_segments}_segments_{num_iter}_iters_{loss_scale}_loss_scale_{initial_stroke_width}_stroke.png")
-                            optimization_gif_path = os.path.join(output_path, f"optimization_GIF_{primitive}_{mode}_{num_segments}_segments_{lossfn.upper()}_{num_iter}_iterations_{loss_scale}_loss_scale_{initial_stroke_width}_stroke.gif")
-                            
-                            if os.path.exists(optimization_process_grid_path) and os.path.exists(optimization_gif_path):
-                                if override:
-                                    pass
-                                else:
-                                    if verbose:
-                                        print("Skipping because already exists. Use --override to override.")
-                                    curr_step = curr_step+1  # TODO this can be better placed tbh
-                                    continue
+                                if os.path.exists(optimization_process_grid_path) and os.path.exists(optimization_gif_path):
+                                    if override:
+                                        pass
+                                    else:
+                                        print("Skipping because already exists, all_grids will probably be incomplete. Use --override to override existing plots.")
+                                        curr_step = curr_step+1  # TODO this can be better placed tbh
+                                        continue
+                                points_vars = []
+                                stroke_width_vars = []
+                                color_vars = []
 
-                            points, num_ctrl_pts, color, fill_color, stroke_width, shapes, shape_groups = get_initial_component(primitive=primitive,
-                                                                                                                                grad = True,
-                                                                                                                                resolution=resolution,
-                                                                                                                                num_segments = num_segments,
-                                                                                                                                mode=mode,
-                                                                                                                                stroke_width=initial_stroke_width)
+                                shapes = []
+                                shape_groups = []
 
-                            points_vars = [points]
-                            stroke_width_vars = [stroke_width]
-                            color_vars = [color]
+                                for i in range(num_paths):
+                                    points, num_ctrl_pts, color, fill_color, stroke_width, shapes, shape_groups = get_initial_component(primitive=primitive,
+                                                                                                                                        grad = True,
+                                                                                                                                        resolution=resolution,
+                                                                                                                                        num_segments = num_segments,
+                                                                                                                                        filled = filled,
+                                                                                                                                        mode=mode,
+                                                                                                                                        stroke_width=initial_stroke_width,
+                                                                                                                                        shapes = shapes,
+                                                                                                                                        shape_groups = shape_groups)
+                                    points_vars.append(points)
+                                    stroke_width_vars.append(stroke_width)
+                                    color_vars.append(color)
 
-                            # Optimize
-                            step_images, final_verbose_output, losses, points_grad = optimize(points_vars,
-                                                                                            stroke_width_vars,
-                                                                                            color_vars,
-                                                                                            shapes,
-                                                                                            shape_groups,
-                                                                                            target.to(points_vars[0].device),
-                                                                                            resolution,
-                                                                                            primitive,
-                                                                                            num_iter = num_iter,
-                                                                                            max_width = max_width,
-                                                                                            loss_scaling=loss_scale,
-                                                                                            loss_name = lossfn,
-                                                                                            verbose = verbose)
-                            grid = save_optimization_process_image(step_images, 
-                                                                    final_verbose_output,
-                                                                    target,
-                                                                    optimization_process_grid_path,
-                                                                    title = f"{lossfn.upper()}, {num_segments} {primitive}s, Iters: {num_iter}, Loss Scale: {loss_scale}, Mode: {mode}",
-                                                                    losses = losses)
-                            # TODO something is not working with the FPS
-                            fps = int(len(step_images) / 10)  # this should ensure that the gif is 10 seconds long no matter the number of steps
-                            if verbose:
-                                print(f"Saving in {fps} fps")
-                            step_images_to_gif(step_images, 
-                                            optimization_gif_path, 
-                                            title = f"{lossfn.upper()}, {num_segments} {primitive}, {mode} init",
-                                            fps = fps)  
-                            all_grids.append(grid)
-                            all_losses.append(losses[-1])
-                            curr_step = curr_step+1
-                            print(f"{np.round(curr_step/total_steps * 100, 2)}% done")
 
-    if len(all_grids) <= 10:
+                                # Optimize
+                                step_images, final_verbose_output, losses, points_grad = optimize(points_vars,
+                                                                                                stroke_width_vars,
+                                                                                                color_vars,
+                                                                                                shapes,
+                                                                                                shape_groups,
+                                                                                                target.to(points_vars[0].device),
+                                                                                                resolution,
+                                                                                                primitive,
+                                                                                                num_iter = num_iter,
+                                                                                                max_width = max_width,
+                                                                                                loss_scaling=loss_scale,
+                                                                                                loss_name = lossfn,
+                                                                                                verbose = verbose)
+                                grid = save_optimization_process_image(step_images,
+                                                                        final_verbose_output,
+                                                                        target,
+                                                                        optimization_process_grid_path,
+                                                                        title = plot_title,
+                                                                        losses = losses)
+                                final_output = step_images[-1]
+                                save_image(final_output, optimization_process_grid_path.replace(".png", "_final_output.png"))
+                                # TODO something is not working with the FPS
+                                fps = int(len(step_images) / 10)  # this should ensure that the gif is 10 seconds long no matter the number of steps
+                                if verbose:
+                                    print(f"Saving in {fps} fps")
+                                step_images_to_gif(step_images, 
+                                                optimization_gif_path, 
+                                                title = f"{lossfn.upper()}, {num_segments} {primitive}, {mode} init",
+                                                fps = fps)  
+                                all_grids.append(grid)
+                                all_losses.append(losses[-1])
+                                curr_step = curr_step+1
+                                print(f"{np.round(curr_step/total_steps * 100, 2)}% done")
+
+    if len(all_grids) <= 25:
         plt.imsave(os.path.join(output_path, f"all_grids_{num_iter}_iters.png"),
                 make_grid(all_grids, nrow=1).permute(1, 2, 0).numpy(),
                 dpi=len(all_grids)*300)
     else:
-        print(f"[INFO] Grids were saved together because there were too many. {len(all_grids)} > 10")
+        print(f"[INFO] Grids were NOT saved together because there were too many. {len(all_grids)} > 25")
 
 
 if __name__ == "__main__":
@@ -542,12 +599,14 @@ if __name__ == "__main__":
     parser.add_argument("--num_iter", type=int, default=500, help="Number of iterations for each option")
     parser.add_argument("--max_width", type=float, default=10.0, help="Max width")
     parser.add_argument("--target_image_path", type=str, default="/home/mfeuerpfeil/master/thesis/datasets/mnist_png/training/2/10024.png", help="Path to target image to optimize towards")
+    parser.add_argument("--num_paths", nargs='+', type=int, default=[1], help="How many separate paths in the image")
     parser.add_argument("--segments", nargs='+', type=int, default=[2], help="Amount of segments that make a path")
     parser.add_argument("--loss_scales", nargs='+', type=float, default=[1.0], help="Scale factors for the losses")
     parser.add_argument("--stroke_widths", nargs='+', type=float, default=[1.0], help="Initial stroke widths")
     parser.add_argument("--losses", nargs='+', type=str, default=["mse", "lpips", "mix"], help="Losses to try, currently supported: mse, lpips, mix")
     parser.add_argument("--modes", nargs='+', type=str, default=["middle"], help="Modes of initialization, currently supported: middle")
-    parser.add_argument("--primitives", nargs='+', type=str, default=["cubic"], help="Primitives to optimize, currently supported: cubic, line")
+    parser.add_argument("--filled", action="store_true", help="Should the path be filled (black)? Default: False")
+    parser.add_argument("--primitives", nargs='+', type=str, default=["line", "cubic"], help="Primitives to optimize, currently supported: cubic, line")
     parser.add_argument("--output_dir", type=str, default="/home/mfeuerpfeil/master/thesis/images/optimization", help="Path to the directory to save the output images to")
     parser.add_argument("--verbose", action="store_true", help="Print more info like render loss etc.")
     parser.add_argument("--override", action="store_true", help="True: override already existing images, False: skip existing, default: False")
