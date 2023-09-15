@@ -82,6 +82,8 @@ def get_points(primitive:str, num_segments:int, mode:str):
     elif mode == "circle":
         # TODO this is currently not quite correct as the padding is not applied to half of the borders (still starts at 0.0;0.0)
         points = sample_circle(total_points, radius=1. - left_right_padding)
+    elif mode == "random":
+        points = torch.rand((total_points, 2))
 
     return points
 
@@ -340,9 +342,9 @@ def optimize(points_vars,
         img = img.unsqueeze(0)
         img = img.permute(0, 3, 1, 2) # NHWC -> NCHW
         if step_images is None:
-            step_images = img.detach().clone()
+            step_images = img.detach().clone().cpu()
         else:
-            step_images = torch.cat((step_images, img.detach().clone()), dim=0)
+            step_images = torch.cat((step_images, img.detach().clone().cpu()), dim=0)
 
         if target.size(0) == 4:
             target = target[:3, :, :]
@@ -450,11 +452,11 @@ def load_npy_timeseries_image(path: str = "/scratch2/moritz_data/CausalMNISTpp/I
     stacked_images = raw_data.unsqueeze(1).repeat(1,3,1,1)
     return stacked_images
 
-def step_images_to_gif(step_images:Tensor, output_path:str = "output.gif", title:str="", fps:int = 24):
+def step_images_to_mp4(step_images:Tensor, output_path:str = "output.mp4", title:str="", fps:int = 24):
     """
     Input:
         step_images: Tensor of shape T x C x W x H
-        output_path: path to save the gif to
+        output_path: path to save the mp4 to
         title: title to be displayed on each frame
         fps: frames per second
     
@@ -474,7 +476,7 @@ def step_images_to_gif(step_images:Tensor, output_path:str = "output.gif", title
         draw.text((10, 5), title, fill=(0, 0, 0), font=font)
         draw.text((10, 20), f"Step {i}", fill=(0, 0, 0), font=font)
         frames.append(image)
-    imageio.mimsave(output_path, frames, duration=1/fps)
+    imageio.mimsave(output_path, frames, fps=fps)
 
 def main(args: argparse.Namespace):
     resolution: int = args.resolution
@@ -518,10 +520,10 @@ def main(args: argparse.Namespace):
                                     print(f"{primitive}, {mode}, {num_segments}, {lossfn}")
                                 
                                 optimization_process_grid_path = os.path.join(output_path, f"optimization_process_{'filled' if filled else 'unfilled'}_{num_paths}_{primitive}s_{mode}_{lossfn.upper()}_{num_segments}_segments_{num_iter}_iters_{loss_scale}_loss_scale_{initial_stroke_width}_stroke.png")
-                                optimization_gif_path = os.path.join(output_path, f"optimization_GIF_{'filled' if filled else 'unfilled'}_{num_paths}_{primitive}s_{mode}_{num_segments}_segments_{lossfn.upper()}_{num_iter}_iterations_{loss_scale}_loss_scale_{initial_stroke_width}_stroke.gif")
+                                optimization_video_path = os.path.join(output_path, f"optimization_video_{'filled' if filled else 'unfilled'}_{num_paths}_{primitive}s_{mode}_{num_segments}_segments_{lossfn.upper()}_{num_iter}_iterations_{loss_scale}_loss_scale_{initial_stroke_width}_stroke.mp4")
                                 plot_title = f"{lossfn.upper()}, {num_segments} {primitive}s, Iters: {num_iter}, Mode: {mode}, {'filled' if filled else 'unfilled'}"
 
-                                if os.path.exists(optimization_process_grid_path) and os.path.exists(optimization_gif_path):
+                                if os.path.exists(optimization_process_grid_path) and os.path.exists(optimization_video_path):
                                     if override:
                                         pass
                                     else:
@@ -572,12 +574,11 @@ def main(args: argparse.Namespace):
                                                                         losses = losses)
                                 final_output = step_images[-1]
                                 save_image(final_output, optimization_process_grid_path.replace(".png", "_final_output.png"))
-                                # TODO something is not working with the FPS
-                                fps = int(len(step_images) / 10)  # this should ensure that the gif is 10 seconds long no matter the number of steps
+                                fps = int(len(step_images) / 20)  # this should ensure that the video is 20 seconds long no matter the number of steps
                                 if verbose:
                                     print(f"Saving in {fps} fps")
-                                step_images_to_gif(step_images, 
-                                                optimization_gif_path, 
+                                step_images_to_mp4(step_images, 
+                                                optimization_video_path, 
                                                 title = f"{lossfn.upper()}, {num_segments} {primitive}, {mode} init",
                                                 fps = fps)  
                                 all_grids.append(grid)
