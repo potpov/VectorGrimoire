@@ -48,7 +48,7 @@ def get_points(primitive:str, num_segments:int, mode:str):
     """
     assert num_segments >= 1
     assert primitive in ["line", "cubic"]
-    assert mode in ["middle", "waves", "circle"]
+    assert mode in ["middle", "waves", "circle", "random"]
 
     total_points = None
     
@@ -344,6 +344,7 @@ def optimize(points_vars,
         if step_images is None:
             step_images = img.detach().clone().cpu()
         else:
+            # TODO this is not efficient copying the tensor every iteration
             step_images = torch.cat((step_images, img.detach().clone().cpu()), dim=0)
 
         if target.size(0) == 4:
