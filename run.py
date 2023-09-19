@@ -106,7 +106,8 @@ runner = Trainer(
                         monitor= "val_loss",
                         save_last= True),
     ],
-    #  overfit_batches=1,
+    #  overfit_batches=20,
+     log_every_n_steps=max(int(config['exp_params']["train_log_interval"] / 10), 5),
     **config['trainer_params']
 )
 
