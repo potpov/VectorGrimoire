@@ -22,8 +22,6 @@ class SimpleVectorDecoder(nn.Module):
         self.number_of_points = self.curves * 3
         self.filled = filled
 
-        self.loss_fn = F.mse_loss
-
         self.circle_rad = radius
         self.render_size = render_size
 

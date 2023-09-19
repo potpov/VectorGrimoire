@@ -1,4 +1,5 @@
 # custom
+.vscode/*
 datasets/*/*
 datasets/*.ipynb
 *.pkl

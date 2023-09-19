@@ -21,8 +21,9 @@ from glob import glob
 import argparse
 
 
-FIGR8_PATH = "/scratch4/mcipriano/SVG/FIGR-8-SVG/Data"
-OUT_DIR = "/scratch2/mcipriano/SVG/incremental_FIGR-8/"
+# FIGR8_PATH = "/scratch4/mcipriano/SVG/FIGR-8-SVG/Data"
+FIGR8_PATH = "/scratch2/moritz_data/openmoji_black_svg"
+OUT_DIR = "/scratch2/moritz_data/causal_openmoji_black_fixed"
 OUT_W = 128
 OUT_H = 128
 DEBUG = False
@@ -39,7 +40,8 @@ def raster(svg_file: Drawing):
         output_width=OUT_W,
         output_height=OUT_H)
     img = Image.open(io.BytesIO(svg_png_image))
-    img = np.flip(img, axis=0)  # images are rastered upside down -> wtf?
+    # img = np.flip(img, axis=0)  # images are rastered upside down -> wtf?
+    img = np.array(img)
     img = 255 - img[:, :, 3]  # RGBA -> grey-scale
     return img.astype(np.uint8)
 
@@ -56,7 +58,7 @@ def update_split(group):
     return group
 
 
-def export_dataset(policy: str, context_length: int = 25, patience: int = 5, resume: bool = False):
+def export_dataset(policy: str, context_length: int = 25, patience: int = 5, resume: bool = False, skip_simplify: bool = False):
     """
     For each SVG entry of the dataset create a raster versions of each path which is part of that entry.
     the policy specify how to sort and group each path. Lines which are part of a Path can also be considered
@@ -108,11 +110,12 @@ def export_dataset(policy: str, context_length: int = 25, patience: int = 5, res
                 plt.imshow(raster(disvg(paths, paths2Drawing=True)))
                 plt.show()
 
-            # using path as they are results in a loss of very important features
-            # taking all the lines as paths and then grouping connected lines is the best option
-            # also: a closed path must be formed by 1 or more connected lines anyway!
-            paths = [item for sublist in paths for item in sublist]  # flatten paths
-            paths = Path(*paths).continuous_subpaths()  # grouping connected lines
+            if not skip_simplify:
+                # using path as they are results in a loss of very important features
+                # taking all the lines as paths and then grouping connected lines is the best option
+                # also: a closed path must be formed by 1 or more connected lines anyway!
+                paths = [item for sublist in paths for item in sublist]  # flatten paths
+                paths = Path(*paths).continuous_subpaths()  # grouping connected lines
 
             if policy == "closed":
                 paths = [p for p in paths if p.isclosed()]
@@ -134,9 +137,12 @@ def export_dataset(policy: str, context_length: int = 25, patience: int = 5, res
             # using index of enumerate as second sorting params if two occurrences are the same
             paths = [p for _, p in sorted(enumerate(paths), key=lambda x: (sort_attrib[x[0]], x[0]), reverse=True)]
             paths = paths[:context_length]  # do not exceed CL
-
-            # merging all the paths but hiding each of them
-            svg = disvg(paths, paths2Drawing=True)  # merging all the paths
+            if skip_simplify:
+                # merging all the paths but hiding each of them
+                svg = disvg(paths, paths2Drawing=True, attributes = attributes)  # merging all the paths
+            else:
+                # merging all the paths but hiding each of them
+                svg = disvg(paths, paths2Drawing=True)  # merging all the paths
             for i in range(1, len(paths) + 1):  # element 0 is Def
                 svg.elements[i].attribs["visibility"] = "hidden"
 
@@ -195,6 +201,34 @@ def compute_stats():
         plt.ylabel('Frequency')
         plt.show()
 
+def compute_openmoji_stats():
+    """
+    show the distribution of the number of path and the number of lines foreach path in the dataset.
+    @return: None
+    """
+    path_count = []
+    line_count = []
+    sample_num = 4082
+    max_value = 60
+    folders = list(os.listdir(FIGR8_PATH))
+    random.shuffle(folders)
+    # folders = folders[:sample_num]
+    for folder in tqdm(folders, total=len(folders)):
+        dir_list = os.listdir(os.path.join(FIGR8_PATH, folder))
+        for i in range(sample_num):
+            img_name = dir_list[i]
+            paths, attributes = svg2paths(os.path.join(FIGR8_PATH, folder, img_name))
+            path_count.append(min(max_value, len(paths)))
+            for path in paths:
+                line_count.append(min(max_value, len(path)))
+
+    for target, value in {"Path": path_count, "Line": line_count}.items():
+        plt.hist(value, bins=60, edgecolor='black')
+        plt.title(f'{target} distribution ({sample_num} random samples)')
+        plt.xlabel('Values')
+        plt.ylabel('Frequency')
+        plt.show()
+
 
 if __name__ == '__main__':
 
@@ -206,6 +240,7 @@ if __name__ == '__main__':
 
     # num_svg * num_image_per_svg (UB 10) * H * W * 8 bit -> convert to gigabyte
     num_files = sum([len(os.listdir(os.path.join(FIGR8_PATH, p))) for p in os.listdir(FIGR8_PATH)])
+    # num_files = len(glob(FIGR8_PATH, recursive=True))
     print(f"The number of unique images in this dataset is: {num_files}.")
     print(f"Maximum output size with current configuration is: "
           f"{round(num_files * int(args.context_len) * OUT_H * OUT_W  * 8 * 1.25e-10, 2)} gigabyte")
@@ -213,7 +248,7 @@ if __name__ == '__main__':
     if args.policy == "position":
         print("Warning. position policy is still in beta.")
     LinuxPath(os.path.join(OUT_DIR, args.policy)).mkdir(parents=True, exist_ok=True)
-    export_dataset(policy=args.policy, context_length=int(args.context_len), resume=args.resume)
+    export_dataset(policy=args.policy, context_length=int(args.context_len), resume=args.resume, skip_simplify=True)
 
 
 
