@@ -226,7 +226,7 @@ class VectorGPT(nn.Module):
         selected_pred_images = torch.masked_select(pred_images, mask).view(-1, c, w, h)
 
         if self.loss_mode == "pyramid":
-            recons_loss = self.gaussian_pyramid_loss(selected_pred_images, selected_gt_shape_layers, log_loss = log_loss)  # logging happens in this function automatically
+            recons_loss = self.gaussian_pyramid_loss(selected_pred_images, selected_gt_shape_layers, log_loss = log_loss, down_sample_steps=4)  # logging happens in this function automatically
         else:
             recons_loss = F.mse_loss(selected_pred_images, selected_gt_shape_layers, reduction="none")  # no reduction to log loss images
             if log_loss:
