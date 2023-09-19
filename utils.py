@@ -44,9 +44,9 @@ def log_all_images(images: List[Tensor], log_key="validation", caption="Captions
     common_size = images[0].shape[-2:]
     resizer = Resize(common_size)
 
-    image_result = make_grid(images[0], nrow=4)
+    image_result = make_grid(images[0], nrow=4, padding=5, pad_value=0.2)
     for image in images[1:]:
-        image_result = torch.concat((image_result, make_grid(resizer(image), nrow=4)), dim=-1)
+        image_result = torch.concat((image_result, make_grid(resizer(image), nrow=4, padding=5, pad_value=0.2)), dim=-1)
 
     wandb.log({log_key: wandb.Image(image_result, caption=caption)})
 
@@ -70,8 +70,8 @@ def log_images(recons: Tensor, real_imgs: Tensor, log_key="validation", captions
         recons = torch.cat((recons, torch.ones((bs, 1, w, h), device=recons.device)), dim=1)
 
     image_result = torch.concat((
-        make_grid(real_imgs_resized, nrow=4),
-        make_grid(recons, nrow=4)
+        make_grid(real_imgs_resized, nrow=4, padding=5, pad_value=0.2),
+        make_grid(recons, nrow=4, padding=5, pad_value=0.2)
         ),
         dim=-1
     )
