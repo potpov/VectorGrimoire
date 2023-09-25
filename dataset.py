@@ -246,8 +246,15 @@ class Figr8CausalSVGDataset(Dataset):
         # adding channel (Dataset is gray-scale, if you use 3 channels those are replicated)
         shape_layers = shape_layers[:, None].repeat((1, self.channels, 1, 1))
 
+        # merges layers for full-image supervision
+        merged_layers = shape_layers[0].unsqueeze(dim=0)
+        for t in range(1 + 1, shape_layers.shape[0] + 1):
+            merged_layers_t = torch.min(shape_layers[:t], dim = 0).values
+            merged_layers = torch.cat((merged_layers, merged_layers_t.unsqueeze(dim=0)), dim=0)
+
         # input is all shifted one place to the right and starts with white canvas
         images = torch.concat((torch.ones(1, self.channels, *images.shape[1:]), shape_layers[:-1]))
+        merged_images = torch.concat((torch.ones(1, self.channels, *images.shape[-2:]), merged_layers[:-1]))
 
         # creating stop ground truth with 0: no stop, 1: stop, -1: padding
         stop_pad_len = pad_len - 1  # stop signals require one less padding than images
@@ -256,7 +263,7 @@ class Figr8CausalSVGDataset(Dataset):
         if stop_pad_len >= 1:
             stop_signals[-stop_pad_len:] = -1.
         caption = f"An image of {self.split.iloc[index]['class']}"
-        return images, shape_layers, stop_signals, caption
+        return images, shape_layers, stop_signals, caption, merged_layers, merged_images
 
     def __len__(self):
         return len(self.split)

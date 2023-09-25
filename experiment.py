@@ -19,6 +19,7 @@ from torchmetrics.multimodal.clip_score import CLIPScore
 class VectorGPTExperiment(pl.LightningModule):
     def __init__(self,
                  vector_gpt_model: VectorGPT,
+                 input_mode: str = "layer",
                  lr: float = 0.0003,
                  weight_decay: float = 0.0,
                  scheduler_gamma: float = 0.99,
@@ -28,7 +29,9 @@ class VectorGPTExperiment(pl.LightningModule):
                  **kwargs) -> None:
         super(VectorGPTExperiment, self).__init__()
 
+        assert input_mode in ["layer", "merged"], "please choose valid input mode in the experiment settings"
         self.model = vector_gpt_model
+        self.input_mode = input_mode
         self.lr = lr
         self.weight_decay = weight_decay
         self.scheduler_gamma = scheduler_gamma
@@ -41,8 +44,9 @@ class VectorGPTExperiment(pl.LightningModule):
         return self.model(input_shape_layers, **kwargs)
     
     def training_step(self, batch, batch_idx, optimizer_idx=0):
-        input_shape_layers, target_shape_layers, stop_signals, captions = batch
+        input_shape_layers, target_shape_layers, stop_signals, captions, merged_target, merged_input = batch
         self.curr_device = input_shape_layers.device
+        bs = input_shape_layers.shape[0]
 
         # regularely log training reconstructions
         # if(batch_idx % self.train_log_interval == 0):
@@ -58,12 +62,18 @@ class VectorGPTExperiment(pl.LightningModule):
         #                                     batch_idx = batch_idx,
         #                                     log_loss_images = True)
         # else:
-        predicted_shapes, stop_preds = self.forward(input_shape_layers, drop_alpha_channel=False)  # TODO was True
+        if self.input_mode == "layer":
+            predicted_shapes, stop_preds, merged_preds = self.forward(input_shape_layers, drop_alpha_channel=False)  # TODO was True
+        elif self.input_mode == "merged":
+            predicted_shapes, stop_preds, merged_preds = self.forward(merged_input, drop_alpha_channel=False)  # TODO was True
+
         train_loss, recons_loss, stop_prediction_loss = self.model.loss_function(
             gt_shape_layers=target_shape_layers,
             pred_images=predicted_shapes,
             gt_stop_signals=stop_signals,
             stop_signals=stop_preds,
+            gt_merged_targets = merged_target,
+            merged_preds = merged_preds,
             optimizer_idx=optimizer_idx,
             batch_idx=batch_idx,
             log_loss = batch_idx % self.train_log_interval == 0 and self.wandb
@@ -81,10 +91,18 @@ class VectorGPTExperiment(pl.LightningModule):
                 log_key="training predctions",
                 captions=captions[0]
             )
+            if merged_preds is not None:
+                log_images(
+                    merged_preds[0][:log_amount],
+                    merged_target[0][:log_amount],
+                    log_key="training merged predctions",
+                    captions=captions[0]
+                )
 
         self.log_dict({"train_loss": train_loss, 
                        "train_recons_loss": recons_loss,
-                       "train_stop_prediction_loss": stop_prediction_loss}, sync_dist=True, prog_bar=True)
+                       "train_stop_prediction_loss": stop_prediction_loss}, sync_dist=True, prog_bar=True,
+                       batch_size=bs)
 
         return train_loss
     
@@ -94,15 +112,21 @@ class VectorGPTExperiment(pl.LightningModule):
         return {}
 
     def validation_step(self, batch, batch_idx, optimizer_idx=0):
-        full_images, shape_layers, stop_signals, captions = batch
-        self.curr_device = full_images.device
+        input_shape_layers, gt_shape_layers, stop_signals, captions, merged_target, merged_input = batch
+        self.curr_device = input_shape_layers.device
 
-        predicted_shapes, stop_preds = self.forward(full_images)
+        if self.input_mode == "layer":
+            predicted_shapes, stop_preds, merged_preds = self.forward(input_shape_layers)
+        elif self.input_mode == "merged":
+            predicted_shapes, stop_preds, merged_preds = self.forward(merged_input)
+
         val_loss, _, _ = self.model.loss_function(
-            gt_shape_layers=shape_layers,
+            gt_shape_layers=gt_shape_layers,
             pred_images=predicted_shapes,
             gt_stop_signals=stop_signals,
             stop_signals=stop_preds,
+            gt_merged_targets = merged_target,
+            merged_preds = merged_preds,
             optimizer_idx=optimizer_idx,
             batch_idx=batch_idx
         )
@@ -112,21 +136,24 @@ class VectorGPTExperiment(pl.LightningModule):
         return val_loss
 
     def on_validation_end(self) -> None:
-        if(self.wandb):
+        if self.wandb:
             self.sample_images()
         gc.collect()
         torch.cuda.empty_cache()
         return {}
     
     def sample_images(self, num_of_samples=10):
-        full_images, shape_layers, stop_signals, captions = next(iter(self.trainer.datamodule.val_dataloader()))
+        full_images, shape_layers, stop_signals, captions, merged_target, merged_input = next(iter(self.trainer.datamodule.val_dataloader()))
         test_input = full_images[:num_of_samples].to(self.curr_device)
         test_targets = shape_layers[:num_of_samples].to(self.curr_device)[:, :, :3, :, :]
+        merged_input = merged_input[:num_of_samples].to(self.curr_device)[:, :, :3, :, :]
 
         with torch.no_grad():
             # test_input, test_label = batch
-            shape_preds, stop_preds = self.model.forward(test_input, drop_alpha_channel=True, verbose=True)
-        
+            if self.input_mode == "layer":
+                shape_preds, stop_preds, merged_preds = self.model.forward(test_input, drop_alpha_channel=True, verbose=True)
+            elif self.input_mode == "merged":
+                shape_preds, stop_preds, merged_preds = self.model.forward(merged_input, drop_alpha_channel=True, verbose=True)
         # make sure there are no small negative numbers for rendering
         dummy = torch.nn.ReLU()
         shape_preds = dummy(shape_preds)

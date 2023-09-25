@@ -5,6 +5,7 @@ model_params:
   latent_transformer_heads: 8 # 8
   latent_transformer_depth: 8 # 8
   latent_transformer_layer_dropout: 0.1
+  vector_decoder_model: "mlp"  # "mlp" or "cnn"
   vector_decoder_latent_dim: 256 # 256
   vector_decoder_paths: 5  # number of cubic bezier paths that make a single circle/shape
   vector_decoder_radius: 3  # controls the initial size of the shapes, 3 is good value
@@ -15,7 +16,8 @@ model_params:
   stop_predictor_num_classes: 1  # always 1 for now
   context_length: 15  # must be kept in sync with data_params.context_length
   reconstruction_loss_weight: 0.99  # reconstruction loss must be weighted much more in b/w images as white bg results in much less MSE
-  loss_mode: "default"  # supported: [null, "default", "pyramid"]
+  loss_mode: "default"  # supported: [null, "default", "pyramid", "merged", "pyramid+merged"]
+  down_sample_steps: 3  # number of downsampling steps for weighted pyramid loss, default: 3
 
 data_params:
   dataset: "causalSVG"  # must be in the DATASETMAP in run.py
@@ -31,6 +33,7 @@ data_params:
   num_workers: 4
 
 exp_params:
+  input_mode: "layer"  # "layer" or "merged", decides which input the model receives at each timestep
   lr: 0.0003  # was 0.0005 originally
   weight_decay: 0.0  # specify positive float to enable, start experimenting with 1.e-4/1.e-3
   scheduler_gamma: 0.95  # 0.95 is a good starting value
