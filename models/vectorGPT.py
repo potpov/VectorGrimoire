@@ -190,7 +190,10 @@ class VectorGPT(nn.Module):
 
         # re-introduce the time dimension
         rasterized_shapes = torch.stack(rasterized_shapes, dim=1) # (b, t, c, w, h)
-        merged_preds = torch.stack(merged_preds, dim=1) # (b, t, c, w, h), always 3 channels atm
+        if len(merged_preds) > 0:
+            merged_preds = torch.stack(merged_preds, dim=1) # (b, t, c, w, h), always 3 channels atm
+        else:
+            merged_preds = None
         if drop_alpha_channel:
             rasterized_shapes = rasterized_shapes[:, :, :3, :, :]
 
