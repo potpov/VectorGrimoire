@@ -184,12 +184,18 @@ class MLPVectorHeadFixed(nn.Module):
 
         # 4 points bezier with n_segments -> 3*n_segments + 1 points
         self.point_predictor = nn.Sequential(
+            nn.Linear(self.latent_dim, self.latent_dim),
+            nn.SELU(),
+            nn.Linear(self.latent_dim, self.latent_dim),
+            nn.SELU(),
             nn.Linear(self.latent_dim, 
                          2*(self.segments*3 + 1)),
             nn.Sigmoid()  # bound spatial extent
         )
 
         self.stroke_predictor = nn.Sequential(
+            nn.Linear(self.latent_dim, self.latent_dim),
+            nn.SELU(),
             nn.Linear(self.latent_dim, 1, bias=False),
             nn.Sigmoid()
         )
