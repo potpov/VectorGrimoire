@@ -136,7 +136,7 @@ def get_initial_component(primitive = "cubic",
     path_group = pydiffvg.ShapeGroup(
                     shape_ids=torch.tensor([len(shapes) - 1]),
                     # fill_color=fill_color, TODO ohfa
-                    fill_color=color,
+                    fill_color=fill_color,
                     stroke_color=color,
                 )
 
@@ -175,7 +175,7 @@ def make_target(resolution, path:str = "/home/mfeuerpfeil/master/thesis/datasets
     target = Image.open(path).convert("RGB")
     if invert:
         target = transforms.RandomInvert(p=1.)(target)
-    target = transforms.Resize(resolution)(target)
+    target = transforms.Resize((resolution, resolution), antialias=True)(target)
     target = target.convert("RGBA")
     target = transforms.ToTensor()(target)
     target[3,:,:] = 1.
@@ -325,8 +325,8 @@ def optimize(points_vars,
         
         img = render(resolution, # width
                 resolution, # height
-                2,   # num_samples_x
-                2,   # num_samples_y
+                5,   # num_samples_x
+                5,   # num_samples_y
                 0,   # seed
                 None,
                 *scene_args)
@@ -554,6 +554,7 @@ def main(args: argparse.Namespace):
 
 
                                 # Optimize
+                                # TODO also export point total positions, then add the gradients to them and add as points to the step images
                                 step_images, final_verbose_output, losses, points_grad = optimize(points_vars,
                                                                                                 stroke_width_vars,
                                                                                                 color_vars,
@@ -587,12 +588,13 @@ def main(args: argparse.Namespace):
                                 curr_step = curr_step+1
                                 print(f"{np.round(curr_step/total_steps * 100, 2)}% done")
 
-    if len(all_grids) <= 25:
+    if len(all_grids) <= 25 and False:
         plt.imsave(os.path.join(output_path, f"all_grids_{num_iter}_iters.png"),
                 make_grid(all_grids, nrow=1).permute(1, 2, 0).numpy(),
                 dpi=len(all_grids)*300)
     else:
-        print(f"[INFO] Grids were NOT saved together because there were too many. {len(all_grids)} > 25")
+        # print(f"[INFO] Grids were NOT saved together because there were too many. {len(all_grids)} > 25")
+        print(f"[INFO] Grids were NOT saved because its disabled in the code right now")
 
 
 if __name__ == "__main__":
@@ -600,16 +602,16 @@ if __name__ == "__main__":
     parser.add_argument("--resolution", type=int, default=128, help="Resolution")
     parser.add_argument("--num_iter", type=int, default=500, help="Number of iterations for each option")
     parser.add_argument("--max_width", type=float, default=10.0, help="Max width")
-    parser.add_argument("--target_image_path", type=str, default="/home/mfeuerpfeil/master/thesis/datasets/mnist_png/training/2/10024.png", help="Path to target image to optimize towards")
+    parser.add_argument("--target_image_path", type=str, default="/home/mfeuerpfeil/master/thesis/datasets/openmoji_overfit_png/smile_0.png", help="Path to target image to optimize towards")
     parser.add_argument("--num_paths", nargs='+', type=int, default=[1], help="How many separate paths in the image")
-    parser.add_argument("--segments", nargs='+', type=int, default=[2], help="Amount of segments that make a path")
+    parser.add_argument("--segments", nargs='+', type=int, default=[1], help="Amount of segments that make a path")
     parser.add_argument("--loss_scales", nargs='+', type=float, default=[1.0], help="Scale factors for the losses")
     parser.add_argument("--stroke_widths", nargs='+', type=float, default=[1.0], help="Initial stroke widths")
     parser.add_argument("--losses", nargs='+', type=str, default=["mse", "lpips", "mix"], help="Losses to try, currently supported: mse, lpips, mix")
     parser.add_argument("--modes", nargs='+', type=str, default=["middle"], help="Modes of initialization, currently supported: middle")
     parser.add_argument("--filled", action="store_true", help="Should the path be filled (black)? Default: False")
-    parser.add_argument("--primitives", nargs='+', type=str, default=["line", "cubic"], help="Primitives to optimize, currently supported: cubic, line")
-    parser.add_argument("--output_dir", type=str, default="/home/mfeuerpfeil/master/thesis/images/optimization", help="Path to the directory to save the output images to")
+    parser.add_argument("--primitives", nargs='+', type=str, default=["line"], help="Primitives to optimize, currently supported: cubic, line")
+    parser.add_argument("--output_dir", type=str, default="/home/mfeuerpfeil/master/thesis/images/optimization/default", help="Path to the directory to save the output images to")
     parser.add_argument("--verbose", action="store_true", help="Print more info like render loss etc.")
     parser.add_argument("--override", action="store_true", help="True: override already existing images, False: skip existing, default: False")
 
