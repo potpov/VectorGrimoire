@@ -9,17 +9,39 @@ from torch.utils.data import DataLoader
 import torch.nn.functional as F
 import glob
 import csv
+import re
 
 from thesis.models.autoencoder import AutoEncoder
 from thesis.dataset import EmojiDataset, CausalSVGDataModule
 
-OUTPUT_DIR = "/scratch2/moritz_logs/AE_cnn_res34"
+OUTPUT_DIR = "/scratch2/moritz_logs/AE_fc_res18"
+CONTINUE_TRAINING = True
+ENCODER_STRING = "resnet18"
+USE_FULLY_CONNECTED_DECODER = True
+
+continue_epoch = None
 
 if not os.path.exists(OUTPUT_DIR):
+    if CONTINUE_TRAINING:
+        print(f"[WARNING] Cannot resume training, >> {OUTPUT_DIR} << is not a dir.")
+    print("Creating new output directory... ")
     os.mkdir(OUTPUT_DIR)
+    continue_epoch = 0
 else:
-    print("Removing old files...")
-    [os.remove(f) for f in glob.glob(os.path.join(OUTPUT_DIR, "*"))]
+    checkpoints = glob.glob(os.path.join(OUTPUT_DIR, "*.pth"))
+    if CONTINUE_TRAINING and len(checkpoints) > 0:
+        checkpoints.sort(key=os.path.getmtime)
+        latest_checkpoint = checkpoints[-1]
+        print(f"Resuming training from checkpoint {latest_checkpoint}")
+        model = AutoEncoder(ENCODER_STRING, use_fc = False).cuda()
+        model.load_state_dict(torch.load(latest_checkpoint))
+        pattern = r".*(\d+).*\.pth"
+        match = re.search(pattern, latest_checkpoint)
+        continue_epoch = match.group(1)
+    else:
+        continue_epoch = 0
+        print("Removing old files...")
+        [os.remove(f) for f in glob.glob(os.path.join(OUTPUT_DIR, "*"))]
 
 # Create a CSV file for logging
 csv_file = open(os.path.join(OUTPUT_DIR, 'loss_log.csv'), 'w', newline='')
@@ -46,11 +68,13 @@ dataset = CausalSVGDataModule("/scratch2/moritz_data/causal_openmoji_black_fixed
 dataset.setup()
 dataloader = dataset.train_dataloader()
 
-model = AutoEncoder("resnet34", use_fc = False).cuda()
+model = AutoEncoder(ENCODER_STRING, use_fc = USE_FULLY_CONNECTED_DECODER).cuda()
 criterion = nn.MSELoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
 for epoch in range(num_epochs):
+    if continue_epoch > 0 and epoch <= int(continue_epoch):
+        continue
     total_loss = 0
     for i, data in enumerate(dataloader):
         images, shape_layers, stop_signals, caption, merged_layers, merged_images = data
