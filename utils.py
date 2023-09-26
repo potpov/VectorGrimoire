@@ -42,7 +42,7 @@ def log_all_images(images: List[Tensor], log_key="validation", caption="Captions
     assert len(images) > 0, "No images to log"
 
     common_size = images[0].shape[-2:]
-    resizer = Resize(common_size)
+    resizer = Resize(common_size, antialias=True)
 
     image_result = make_grid(images[0], nrow=4, padding=5, pad_value=0.2)
     for image in images[1:]:
@@ -57,7 +57,7 @@ def log_images(recons: Tensor, real_imgs: Tensor, log_key="validation", captions
 
     if recons.shape[-2:] != real_imgs.shape[-2:]:
         common_size = recons.shape[-2:]
-        resizer = Resize(common_size)
+        resizer = Resize(common_size, antialias=True)
         real_imgs_resized = resizer(real_imgs)
     else:
         real_imgs_resized = real_imgs

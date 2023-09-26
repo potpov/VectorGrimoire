@@ -47,7 +47,8 @@ with open(args.filename, 'r') as file:
         print(exc)
 
 # assertions for the config file
-assert config["model_params"]["context_length"] == config["data_params"]["context_length"], f"context length in model and data params must be the same"
+if "context_length" in config["model_params"]:
+    assert config["model_params"]["context_length"] == config["data_params"]["context_length"], f"context length in model and data params must be the same"
 assert config["data_params"]["dataset"] in DATASETMAP.keys(), f"dataset {config['data_params']['dataset']} not supported, try one of {list(DATASETMAP.keys())}"
 assert config["model_params"]["name"] in MODELS.keys(), f"model {config['model_params']['name']} not supported, try one of {list(MODELS.keys())}"
 
@@ -95,7 +96,7 @@ data = DATASETMAP[config["data_params"]["dataset"]](**config["data_params"], pin
 data.setup()
 runner = Trainer(
     logger=wandb_logger,
-    strategy='ddp_find_unused_parameters_true',
+    # strategy='ddp_find_unused_parameters_true',
     callbacks=[
         LearningRateMonitor(logging_interval="epoch", log_momentum=True),
         #  LearningRateFinder(early_stop_threshold=None, num_training_steps=200),

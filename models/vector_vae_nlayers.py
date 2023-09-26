@@ -208,8 +208,8 @@ class VectorVAEnLayers(VectorVAE):
         outputs = outputs[:, :, :self.latent_dim] + outputs[:, :, self.latent_dim:] # aggregate outputs of both RNNs
         z_layers = []
         for i in range(n):
-            shape_output = self.divide_shape(outputs[:, i, :]) # [bs, latent_size]
-            shape_latent = self.final_shape_latent(shape_output) # [bs, latent_size]
+            shape_output = self.divide_shape(outputs[:, i, :]) # [bs, latent_size] - just a RELU
+            shape_latent = self.final_shape_latent(shape_output) # [bs, latent_size] - actual MLP
             all_points = self.decode(shape_latent)#, point_predictor=self.point_predictor[i])
             if("log_path_length" in kwargs.keys() and self.wandb_logging):
                 if(kwargs["log_path_length"]):

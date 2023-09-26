@@ -37,7 +37,7 @@ def _load_dataset_into_tensor(images_path:str, img_size:int=64)->Tensor:
     tensors=[]
     transforms_ = transforms.Compose(
         transforms=[
-            transforms.Resize(img_size),
+            transforms.Resize(img_size, antialias=True),
             transforms.Grayscale(3),
             transforms.ToTensor()
         ]

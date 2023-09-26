@@ -22,8 +22,10 @@ import argparse
 
 
 # FIGR8_PATH = "/scratch4/mcipriano/SVG/FIGR-8-SVG/Data"
-FIGR8_PATH = "/scratch2/moritz_data/openmoji_black_svg"
-OUT_DIR = "/scratch2/moritz_data/causal_openmoji_black_fixed"
+# FIGR8_PATH = "/scratch2/moritz_data/openmoji_black_svg"
+# FIGR8_PATH = "/scratch2/moritz_data/openmoji_black_svg"
+FIGR8_PATH = "/home/mfeuerpfeil/master/thesis/datasets/openmoji_overfit_svg"
+OUT_DIR = "/scratch2/moritz_data/causal_openmoji_black_overfit"
 OUT_W = 128
 OUT_H = 128
 DEBUG = False
@@ -101,6 +103,8 @@ def export_dataset(policy: str, context_length: int = 25, patience: int = 5, res
         )
         for image_id, img_name in enumerate(os.listdir(os.path.join(FIGR8_PATH, folder))):
             file_path = os.path.join(FIGR8_PATH, folder, img_name)
+            # if img_name.replace(".svg", "") not in ['1F642']:
+            #     continue
             paths, attributes = svg2paths(file_path)
 
             if len(paths) == 0:  # empty SVG
@@ -136,7 +140,21 @@ def export_dataset(policy: str, context_length: int = 25, patience: int = 5, res
             # paths = [p for _, p in sorted(zip(sort_attrib, paths), reverse=True)]
             # using index of enumerate as second sorting params if two occurrences are the same
             paths = [p for _, p in sorted(enumerate(paths), key=lambda x: (sort_attrib[x[0]], x[0]), reverse=True)]
+            attributes = [attributes[i] for i, p in sorted(enumerate(paths), key=lambda x: (sort_attrib[x[0]], x[0]), reverse=True)]
             paths = paths[:context_length]  # do not exceed CL
+            attributes = attributes[:context_length]  # do not exceed CL
+
+            # this caused issues where the default fill was true
+            for i, attr in enumerate(attributes):
+                # this solves a weird issue that if just "d" is part of the attributes, the defaults are desired
+                if len(attr.keys()) == 1:
+                    print("only: ",attr.keys())
+                    continue
+                # if more than just "d" is part of the attributes, we have to make sure the defaults are disabled
+                if "fill" not in attr:
+                    attributes[i]["fill"] = "none"
+                if "stroke" not in attr:
+                    attributes[i]["stroke"] = "#000"
             if skip_simplify:
                 # merging all the paths but hiding each of them
                 svg = disvg(paths, paths2Drawing=True, attributes = attributes)  # merging all the paths
