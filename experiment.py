@@ -85,19 +85,40 @@ class VectorGPTExperiment(pl.LightningModule):
                 log_amount = 10
             else:
                 log_amount = predicted_shapes[0].shape[0]
-            log_images(
-                predicted_shapes[0][:log_amount],
-                target_shape_layers[0][:log_amount],
-                log_key="training predctions",
-                captions=captions[0]
-            )
-            if merged_preds is not None:
+
+            # Log input against prediction
+            if self.input_mode == "layer":
+                log_images(
+                    predicted_shapes[0][:log_amount],
+                    input_shape_layers[0][:log_amount],
+                    log_key="input (left) vs. prediction (right)",
+                    captions=captions[0]
+                )
+            elif self.input_mode == "merged":
+                log_images(
+                    predicted_shapes[0][:log_amount],
+                    merged_input[0][:log_amount],
+                    log_key="input (left) vs. prediction (right)",
+                    captions=captions[0]
+                )
+
+            # log shape prediction against target
+            if merged_preds is not None:  # merged_preds is not None if loss mode is "merged"
                 log_images(
                     merged_preds[0][:log_amount],
                     merged_target[0][:log_amount],
-                    log_key="training merged predctions",
+                    log_key="training merged predictions",
                     captions=captions[0]
                 )
+            
+            # always log the pred shapes and target shapes
+            log_images(
+                predicted_shapes[0][:log_amount],
+                target_shape_layers[0][:log_amount],
+                log_key="training predictions",
+                captions=captions[0]
+            )
+
 
         self.log_dict({"train_loss": train_loss, 
                        "train_recons_loss": recons_loss,
@@ -105,7 +126,7 @@ class VectorGPTExperiment(pl.LightningModule):
                        batch_size=bs)
 
         return train_loss
-    
+
     def on_train_epoch_end(self):
         gc.collect()
         torch.cuda.empty_cache()
