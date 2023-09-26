@@ -15,7 +15,7 @@ from thesis.models.autoencoder import AutoEncoder
 from thesis.dataset import EmojiDataset, CausalSVGDataModule
 
 OUTPUT_DIR = "/scratch2/moritz_logs/AE_fc_res18"
-CONTINUE_TRAINING = True
+CONTINUE_TRAINING = False
 ENCODER_STRING = "resnet18"
 USE_FULLY_CONNECTED_DECODER = True
 
@@ -39,6 +39,7 @@ else:
         match = re.search(pattern, latest_checkpoint)
         continue_epoch = match.group(1)
     else:
+        input(f"Confirm to delete all old files and checkpoints in {OUTPUT_DIR}...")
         continue_epoch = 0
         print("Removing old files...")
         [os.remove(f) for f in glob.glob(os.path.join(OUTPUT_DIR, "*"))]
@@ -71,6 +72,8 @@ dataloader = dataset.train_dataloader()
 model = AutoEncoder(ENCODER_STRING, use_fc = USE_FULLY_CONNECTED_DECODER).cuda()
 criterion = nn.MSELoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+
+model.train()
 
 for epoch in range(num_epochs):
     if continue_epoch > 0 and epoch <= int(continue_epoch):

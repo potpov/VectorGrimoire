@@ -70,9 +70,9 @@ class AutoEncoder(nn.Module):
             nn.ReLU(),
             nn.Linear(1024, 2048),
             nn.ReLU(),
-            nn.Linear(2048, 2048+2048),
+            nn.Linear(2048, 4096),
             nn.ReLU(),
-            nn.Linear(2048+2048, 4096*2),
+            nn.Linear(4096, 4096*2),
             nn.ReLU(),
             nn.Linear(4096*2, 1 * 128 * 128),
             nn.Sigmoid()
