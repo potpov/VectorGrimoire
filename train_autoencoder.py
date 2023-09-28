@@ -15,7 +15,7 @@ from thesis.models.autoencoder import AutoEncoder
 from thesis.dataset import EmojiDataset, CausalSVGDataModule
 
 OUTPUT_DIR = "/scratch2/moritz_logs/AE_fc_res18"
-CONTINUE_TRAINING = False
+CONTINUE_TRAINING = True
 ENCODER_STRING = "resnet18"
 USE_FULLY_CONNECTED_DECODER = True
 
@@ -33,11 +33,14 @@ else:
         checkpoints.sort(key=os.path.getmtime)
         latest_checkpoint = checkpoints[-1]
         print(f"Resuming training from checkpoint {latest_checkpoint}")
-        model = AutoEncoder(ENCODER_STRING, use_fc = False).cuda()
+        model = AutoEncoder(ENCODER_STRING, use_fc = USE_FULLY_CONNECTED_DECODER).cuda()
         model.load_state_dict(torch.load(latest_checkpoint))
-        pattern = r".*(\d+).*\.pth"
+        print("Loading model checkpoint...")
+        pattern = r".*\D(\d+).*\.pth"
         match = re.search(pattern, latest_checkpoint)
-        continue_epoch = match.group(1)
+        continue_epoch = int(match.group(1))
+        print(f"Resuming training from epoch {continue_epoch}")
+        input(f"Confirm to resume training...")
     else:
         input(f"Confirm to delete all old files and checkpoints in {OUTPUT_DIR}...")
         continue_epoch = 0
@@ -51,7 +54,7 @@ csv_writer.writerow(['Epoch', 'Batch', 'Loss'])  # Write header row
 
 num_epochs = 350
 batch_size = 1  # batch size of 1 is fine as we also have the time dimension
-learning_rate = 3e-4
+learning_rate = 2e-5
 
 # dataset = EmojiDataset("/home/mfeuerpfeil/master/thesis/datasets/openmoji_faces",
 #                           train_batch_size=batch_size,
@@ -69,14 +72,15 @@ dataset = CausalSVGDataModule("/scratch2/moritz_data/causal_openmoji_black_fixed
 dataset.setup()
 dataloader = dataset.train_dataloader()
 
-model = AutoEncoder(ENCODER_STRING, use_fc = USE_FULLY_CONNECTED_DECODER).cuda()
+if not CONTINUE_TRAINING:
+    model = AutoEncoder(ENCODER_STRING, use_fc = USE_FULLY_CONNECTED_DECODER).cuda()
 criterion = nn.MSELoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
 model.train()
 
 for epoch in range(num_epochs):
-    if continue_epoch > 0 and epoch <= int(continue_epoch):
+    if continue_epoch > 0 and epoch <= continue_epoch:
         continue
     total_loss = 0
     for i, data in enumerate(dataloader):
