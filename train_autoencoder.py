@@ -54,7 +54,7 @@ csv_writer.writerow(['Epoch', 'Batch', 'Loss'])  # Write header row
 
 num_epochs = 350
 batch_size = 1  # batch size of 1 is fine as we also have the time dimension
-learning_rate = 2e-5
+learning_rate = 3e-4
 
 # dataset = EmojiDataset("/home/mfeuerpfeil/master/thesis/datasets/openmoji_faces",
 #                           train_batch_size=batch_size,

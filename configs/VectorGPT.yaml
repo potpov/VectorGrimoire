@@ -1,6 +1,9 @@
 model_params:
   name: "VectorGPT"  # always keep this "VectorGPT"
   image_encoder_model: "resnet34" # available are 18, 34, 50, 101, 152
+  image_encoder_ckpt_path: null  # specify path to checkpoint if you want to load a pretrained model
+  learnable_positional_encoding: False  # whether to use learnable positional embedding or sinusoidal encoding
+  skip_transformer: False  # whether to skip the latent transformer or not
   latent_transformer_dim: 256 # 256, must be same as vector_decoder_latent_dim
   latent_transformer_heads: 8 # 8
   latent_transformer_depth: 8 # 8
