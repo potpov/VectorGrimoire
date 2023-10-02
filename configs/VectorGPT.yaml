@@ -38,6 +38,7 @@ data_params:
 exp_params:
   input_mode: "layer"  # "layer" or "merged", decides which input the model receives at each timestep
   lr: 0.0003  # was 0.0005 originally
+  stroke_lr: 1.0e-5  # separate learning rate for stroke parameters
   weight_decay: 0.0  # specify positive float to enable, start experimenting with 1.e-4/1.e-3
   scheduler_gamma: 0.95  # 0.95 is a good starting value
   train_log_interval: 50 # len(dataset) / train_batch_size / desired_logging_frequency
