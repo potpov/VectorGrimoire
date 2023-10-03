@@ -49,6 +49,7 @@ class VectorGPT(nn.Module):
     def __init__(self,
                     image_encoder_model: str = "resnet18",
                     image_encoder_ckpt_path: str = None,
+                    image_encoder_latent_dim: int = 128,
                     skip_transformer: str = False,
                     learnable_positional_encoding: bool = False,
                     latent_transformer_dim: int = 512,
@@ -76,6 +77,7 @@ class VectorGPT(nn.Module):
 
         self.image_encoder_model = image_encoder_model
         self.image_encoder_ckpt_path = image_encoder_ckpt_path
+        self.image_encoder_latent_dim = image_encoder_latent_dim
         self.skip_transformer = skip_transformer
         self.learnable_positional_encoding = learnable_positional_encoding
         self.latent_transformer_dim = latent_transformer_dim
@@ -101,15 +103,15 @@ class VectorGPT(nn.Module):
         assert self.loss_mode in [None, "default", "pyramid", "merged", "pyramid+merged"], f"Loss mode {self.loss_mode} not supported."
 
         if self.image_encoder_model == "resnet18":
-            self.resnet = ResNet18(self.latent_transformer_dim)
+            self.resnet = ResNet18(self.image_encoder_latent_dim)
         elif self.image_encoder_model == "resnet34":
-            self.resnet = ResNet34(self.latent_transformer_dim)
+            self.resnet = ResNet34(self.image_encoder_latent_dim)
         elif self.image_encoder_model == "resnet50":
-            self.resnet = ResNet50(self.latent_transformer_dim)
+            self.resnet = ResNet50(self.image_encoder_latent_dim)
         elif self.image_encoder_model == "resnet101":
-            self.resnet = ResNet101(self.latent_transformer_dim)
+            self.resnet = ResNet101(self.image_encoder_latent_dim)
         elif self.image_encoder_model == "resnet152":
-            self.resnet = ResNet152(self.latent_transformer_dim)
+            self.resnet = ResNet152(self.image_encoder_latent_dim)
         else:
             raise ValueError(f"[ERROR] You did not specify a correct Image Encoder. Expected something like 'resnet18', got {self.image_encoder_model}.")
 
@@ -125,7 +127,7 @@ class VectorGPT(nn.Module):
             self.positional_embedding = PositionalEncoding(self.latent_transformer_dim,
                                                            dropout=self.latent_transformer_layer_dropout,
                                                            max_len=self.context_length)
-            
+        self.image_latent_to_transformer_latent = nn.Linear(self.image_encoder_latent_dim, self.latent_transformer_dim)
         self.latent_transformer = nn.Sequential(Decoder(dim=self.latent_transformer_dim,
                                                         depth=self.latent_transformer_depth,
                                                         heads=self.latent_transformer_heads,
@@ -140,6 +142,7 @@ class VectorGPT(nn.Module):
             nn.ReLU(),  # bound spatial extent
             nn.Linear(self.latent_transformer_dim, 1),
         )
+        self.transformer_latent_to_vector_decoder_input = nn.Linear(self.latent_transformer_dim, self.vector_decoder_latent_dim)
 
         if self.vector_decoder_model == "cnn":
             self.vector_decoder = SimpleVectorDecoder(latent_dim=self.vector_decoder_latent_dim,
@@ -210,6 +213,9 @@ class VectorGPT(nn.Module):
         intermediate = [self.resnet(input_images[:,t,:,:,:]) for t in range(timesteps)]
         encoded_images = torch.stack(intermediate, dim=1) # (b, t, z)
 
+        # map the latent dimensions
+        encoded_images = self.image_latent_to_transformer_latent(encoded_images)
+        
         if self.learnable_positional_encoding:
             pos_embeddings = self.positional_embedding(torch.arange(timesteps).to(encoded_images.device)) # (t, z)
             encoded_images = encoded_images + pos_embeddings # (b, t, z) broadcast should work here
@@ -221,6 +227,9 @@ class VectorGPT(nn.Module):
             transformed_latents = encoded_images
         else:
             transformed_latents = self.latent_transformer(encoded_images)
+
+        # map the latent dimensions
+        transformed_latents = self.transformer_latent_to_vector_decoder_input(transformed_latents)
 
         # then we decode each t iteratively
         rasterized_shapes = []
