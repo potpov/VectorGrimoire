@@ -59,8 +59,9 @@ def load_default_config():
             print(exc)
     return config
 
-def get_sweep_config():
+def get_sweep_config(name = ""):
     sweep_config = {
+        'name': name,
         'method': 'random',
         "metric": {
             'name': 'loss',
@@ -119,7 +120,7 @@ def get_sweep_config():
 
 
 default_config = load_default_config()
-sweep_config = get_sweep_config()
+sweep_config = get_sweep_config("VectorGPT_transformer_enabled_sweep")
 sweep_id = wandb.sweep(sweep_config, project="test")
 
 # train wrapper for sweep agents
@@ -129,7 +130,7 @@ def train(config = None):
         # update config with selected sweep values
         name_of_run = "VectorGPT_OpenMoji_"
         for key in config.keys():
-            if key in ["method", "metric", "parameters"]:
+            if key in ["method", "metric", "parameters", "name"]:
                 continue
             if key not in ["input_mode", "lr", "scheduler_gamma"]:
                 default_config["model_params"][key] = config[key]
@@ -138,6 +139,7 @@ def train(config = None):
             name_of_run += f"{key}={config[key]}_"
 
         default_config["logging_params"]["name"] = name_of_run
+        default_config["logging_params"]["save_dir"] = default_config["logging_params"]["save_dir"] + config["name"]
 
     config = default_config
     if config["exp_params"]["scheduler_gamma"] is None:
@@ -170,7 +172,7 @@ def train(config = None):
 
     if config['model_params']['name'] == "VectorGPT":
         experiment = VectorGPTExperiment(model, **config['exp_params'], wandb = True)
-    else:    
+    else:
         experiment = VAEXperiment(model, config['exp_params'])
 
     data = DATASETMAP[config["data_params"]["dataset"]](**config["data_params"], pin_memory=True)
