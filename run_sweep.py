@@ -14,6 +14,7 @@ from models import VAEctorGen, VectorGPT, VanillaVAE, VectorVAEnLayers
 import wandb
 from utils import get_rank
 import torch
+import hashlib
 
 torch.set_float32_matmul_precision('high')
 
@@ -64,7 +65,7 @@ def get_sweep_config(name = ""):
         'name': name,
         'method': 'random',
         "metric": {
-            'name': 'loss',
+            'name': 'train_loss',
             'goal': 'minimize'   
         },
         'parameters': {
@@ -72,9 +73,9 @@ def get_sweep_config(name = ""):
             'learnable_positional_encoding': {
                 'values': [True, False]
             },
-            'skip_transformer': {
-                'values': [True, False]
-            },
+            # 'skip_transformer': {
+            #     'values': [True]
+            # },
             'latent_transformer_dim': {
                 'values': [32, 64, 128, 256]
             },
@@ -120,8 +121,22 @@ def get_sweep_config(name = ""):
 
 
 default_config = load_default_config()
-sweep_config = get_sweep_config("VectorGPT_transformer_enabled_sweep")
+default_save_dir = default_config["logging_params"]["save_dir"]
+#FIXME
+sweep_config = get_sweep_config("VectorGPT_overfit_centered_skip_transformer")
 sweep_id = wandb.sweep(sweep_config, project="test")
+
+def hash_string(input: str):
+    # Create a SHA-256 hash object
+    hash_object = hashlib.md5()
+
+    # Update the hash object with the bytes representation of the string
+    hash_object.update(input.encode('utf-8'))
+
+    # Get the hexadecimal representation of the hash
+    hashed_string = hash_object.hexdigest()
+
+    return hashed_string
 
 # train wrapper for sweep agents
 def train(config = None):
@@ -132,18 +147,20 @@ def train(config = None):
         for key in config.keys():
             if key in ["method", "metric", "parameters", "name"]:
                 continue
-            if key not in ["input_mode", "lr", "scheduler_gamma"]:
+            elif key not in ["input_mode", "lr", "scheduler_gamma"]:
                 default_config["model_params"][key] = config[key]
             else:
                 default_config["exp_params"][key] = config[key]
             name_of_run += f"{key}={config[key]}_"
 
+        name_of_run = hash_string(name_of_run)
         default_config["logging_params"]["name"] = name_of_run
-        default_config["logging_params"]["save_dir"] = default_config["logging_params"]["save_dir"] + config["name"]
+        default_config["logging_params"]["save_dir"] = os.path.join(default_save_dir,name_of_run)
 
     config = default_config
     if config["exp_params"]["scheduler_gamma"] is None:
         config["exp_params"]["weight_decay"] = 0.0
+
     config["model_params"]["vector_decoder_latent_dim"] =  config["model_params"]["latent_transformer_dim"]
     # print(config)
 
@@ -202,4 +219,5 @@ def train(config = None):
 # ----------------------
 
 if __name__ == "__main__":
-    wandb.agent(sweep_id, train, count=25)
+    # TODO have you set the name???
+    wandb.agent(sweep_id, train, count=30)
