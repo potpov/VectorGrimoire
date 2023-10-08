@@ -21,12 +21,12 @@ model_params:
   stop_predictor_num_classes: 1  # always 1 for now
   context_length: 8  # must be kept in sync with data_params.context_length
   reconstruction_loss_weight: 0.98  # reconstruction loss must be weighted much more in b/w images as white bg results in much less MSE
-  loss_mode: "default"  # supported: [null, "default", "pyramid", "merged", "pyramid+merged"]
+  loss_mode: "pyramid"  # supported: [null, "default", "pyramid", "merged", "pyramid+merged"]
   down_sample_steps: 3  # number of downsampling steps for weighted pyramid loss, default: 3
 
 data_params:
   dataset: "causalSVG"  # must be in the DATASETMAP in run.py
-  data_path: "/scratch2/moritz_data/causal_openmoji_black_overfit/length"  # root path for CausalSVGDataModule in dataset.py
+  data_path: "/scratch2/moritz_data/causal_openmoji_black_overfit_centered/length"  # root path for CausalSVGDataModule in dataset.py
   channels: 3  # use 3
   # subset:  # use null or comment for using the whole dataset, otherwise list subset items
   #   - user
@@ -53,6 +53,6 @@ trainer_params:
 logging_params:
   project: "test"  # your wandb project name
   save_dir: "/scratch2/moritz_logs/"
-  name: "VectorGPT_FIGR8"  # name of the run in wandb
+  name: "VectorGPT_centered_T_"  # name of the run in wandb
   version: 0
   author: "Moritz"  # will be a tag in wandb

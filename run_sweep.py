@@ -71,13 +71,13 @@ def get_sweep_config(name = ""):
         'parameters': {
             # model_params
             'learnable_positional_encoding': {
-                'values': [True, False]
+                'values': [False]#[True, False]
             },
             # 'skip_transformer': {
             #     'values': [True]
             # },
             'latent_transformer_dim': {
-                'values': [32, 64, 128, 256]
+                'values': [32, 64, 128]#, 256]
             },
             'latent_transformer_heads': {
                 'values': [4, 8, 16]
@@ -92,28 +92,28 @@ def get_sweep_config(name = ""):
                 'values': [1, 2, 4]
             },
             'vector_decoder_filled': {
-                'values': [True, False]
+                'values': [False]#[True, False]
             },
             'vector_decoder_max_stroke_width': {
-                'values': [10.0, 15.0]
+                'values': [15.0]#[10.0, 15.0]
             },
             "loss_mode" : {
-                "values": ["pyramid", "merged", "pyramid+merged"]
+                "values": ["pyramid"]#["pyramid", "merged", "pyramid+merged"]
             },
             "down_sample_steps": {
-                "values": [3, 4, 5]
+                "values": [4]#[3, 4, 5]
             },
             # exp_params
             'input_mode': {
-                'values': ['layer', 'merged']
+                'values': ["layer"]#['layer', 'merged']
             },
             'lr': {
                 'distribution': 'uniform',
-                'min': 1.0e-5,
+                'min': 5.0e-4,
                 'max': 5.0e-3
             },
             'scheduler_gamma': {
-                'values': [None, 0.95, 0.99]
+                'values': [None, 0.96, 0.98, 0.99]
             }
         }
     }
@@ -123,7 +123,7 @@ def get_sweep_config(name = ""):
 default_config = load_default_config()
 default_save_dir = default_config["logging_params"]["save_dir"]
 #FIXME
-sweep_config = get_sweep_config("VectorGPT_overfit_centered_skip_transformer")
+sweep_config = get_sweep_config("VectorGPT_overfit_centered_with_transformer")
 sweep_id = wandb.sweep(sweep_config, project="test")
 
 def hash_string(input: str):
