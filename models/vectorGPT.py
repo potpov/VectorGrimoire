@@ -3,18 +3,55 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
+import math
 import wandb
 from x_transformers import Decoder
 from models.resnet import ResNet18, ResNet34, ResNet50, ResNet101, ResNet152
 from models.simple_vector_decoder import SimpleVectorDecoder
-from models.mlp_vector_head import MLPVectorHead, MLPVectorHeadFixed
+from models.mlp_vector_head import MLPVectorHeadFixed, MLPRasterHead
 from models.mlp import MultiLayerPerceptron
 import kornia
 from utils import log_all_images
 
+class PositionalEncoding(nn.Module):
+    """
+    Non-learnable positional encoding for Transformer. Taken from: https://pytorch.org/tutorials/beginner/transformer_tutorial.html
+
+    Args:
+        - d_model (int): Dimensionality of the model
+        - dropout (float): Dropout rate
+        - max_len (int): Maximum length of the input sequence (context length)
+    """
+
+    def __init__(self, d_model: int, dropout: float = 0.1, max_len: int = 5000):
+        super().__init__()
+        self.dropout = nn.Dropout(p=dropout)
+
+        position = torch.arange(max_len).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model))
+        pe = torch.zeros(1, max_len, d_model)
+        pe[0, :, 0::2] = torch.sin(position * div_term)
+        pe[0, :, 1::2] = torch.cos(position * div_term)
+        self.register_buffer('pe', pe)
+
+    def forward(self, x: Tensor) -> Tensor:
+        """
+        Arguments:
+            x: Tensor, shape ``[batch_size, seq_len, embedding_dim]``
+        """
+        x = x + self.pe[:x.size(1)]
+        return self.dropout(x)
+
 class VectorGPT(nn.Module):
+    """
+    weights of image_encoder_ckpt_path must have keys in the form of "conv1.weight", "bn1.weight", "bn1.bias", "bn1.running_mean", "bn1.running_var"
+    """
     def __init__(self,
                     image_encoder_model: str = "resnet18",
+                    image_encoder_ckpt_path: str = None,
+                    image_encoder_latent_dim: int = 128,
+                    skip_transformer: str = False,
+                    learnable_positional_encoding: bool = False,
                     latent_transformer_dim: int = 512,
                     latent_transformer_depth: int = 8,
                     latent_transformer_heads: int = 8,
@@ -39,6 +76,10 @@ class VectorGPT(nn.Module):
         super(VectorGPT, self).__init__()
 
         self.image_encoder_model = image_encoder_model
+        self.image_encoder_ckpt_path = image_encoder_ckpt_path
+        self.image_encoder_latent_dim = image_encoder_latent_dim
+        self.skip_transformer = skip_transformer
+        self.learnable_positional_encoding = learnable_positional_encoding
         self.latent_transformer_dim = latent_transformer_dim
         self.latent_transformer_depth = latent_transformer_depth
         self.latent_transformer_heads = latent_transformer_heads
@@ -62,19 +103,31 @@ class VectorGPT(nn.Module):
         assert self.loss_mode in [None, "default", "pyramid", "merged", "pyramid+merged"], f"Loss mode {self.loss_mode} not supported."
 
         if self.image_encoder_model == "resnet18":
-            self.resnet = ResNet18(self.latent_transformer_dim)
+            self.resnet = ResNet18(self.image_encoder_latent_dim)
         elif self.image_encoder_model == "resnet34":
-            self.resnet = ResNet34(self.latent_transformer_dim)
+            self.resnet = ResNet34(self.image_encoder_latent_dim)
         elif self.image_encoder_model == "resnet50":
-            self.resnet = ResNet50(self.latent_transformer_dim)
+            self.resnet = ResNet50(self.image_encoder_latent_dim)
         elif self.image_encoder_model == "resnet101":
-            self.resnet = ResNet101(self.latent_transformer_dim)
+            self.resnet = ResNet101(self.image_encoder_latent_dim)
         elif self.image_encoder_model == "resnet152":
-            self.resnet = ResNet152(self.latent_transformer_dim)
+            self.resnet = ResNet152(self.image_encoder_latent_dim)
         else:
             raise ValueError(f"[ERROR] You did not specify a correct Image Encoder. Expected something like 'resnet18', got {self.image_encoder_model}.")
 
-        self.positional_embedding = nn.Embedding(self.context_length, self.latent_transformer_dim)
+        if self.image_encoder_ckpt_path is not None:
+            missing, unexpexted =  self.resnet.load_state_dict(torch.load(self.image_encoder_ckpt_path), strict=False)
+            print(f"[INFO] Successfully loaded weights from {self.image_encoder_ckpt_path}")
+            print(f"[INFO] {len(missing)} missing keys.")
+            print(f"[INFO] {len(unexpexted)} unexpected keys.")
+
+        if self.learnable_positional_encoding:
+            self.positional_embedding = nn.Embedding(self.context_length, self.latent_transformer_dim)
+        else:
+            self.positional_embedding = PositionalEncoding(self.latent_transformer_dim,
+                                                           dropout=self.latent_transformer_layer_dropout,
+                                                           max_len=self.context_length)
+        self.image_latent_to_transformer_latent = nn.Linear(self.image_encoder_latent_dim, self.latent_transformer_dim)
         self.latent_transformer = nn.Sequential(Decoder(dim=self.latent_transformer_dim,
                                                         depth=self.latent_transformer_depth,
                                                         heads=self.latent_transformer_heads,
@@ -89,6 +142,7 @@ class VectorGPT(nn.Module):
             nn.ReLU(),  # bound spatial extent
             nn.Linear(self.latent_transformer_dim, 1),
         )
+        self.transformer_latent_to_vector_decoder_input = nn.Linear(self.latent_transformer_dim, self.vector_decoder_latent_dim)
 
         if self.vector_decoder_model == "cnn":
             self.vector_decoder = SimpleVectorDecoder(latent_dim=self.vector_decoder_latent_dim,
@@ -97,15 +151,13 @@ class VectorGPT(nn.Module):
                                                     render_size=self.vector_decoder_render_size,
                                                     filled=self.vector_decoder_filled)
         elif self.vector_decoder_model == "mlp":
-            # self.vector_decoder = MLPVectorHead(latent_dim=self.vector_decoder_latent_dim,
-            #                                     segments=self.vector_decoder_paths,
-            #                                     render_size=self.vector_decoder_render_size,
-            #                                     max_stroke_width=self.vector_decoder_max_stroke_width)
             self.vector_decoder = MLPVectorHeadFixed(latent_dim=self.vector_decoder_latent_dim,
                                                 segments=self.vector_decoder_paths,
                                                 imsize=self.vector_decoder_render_size,
                                                 max_stroke_width=self.vector_decoder_max_stroke_width)
-            # self.stop_predictor = None  # stop prediction is done in the MLPVectorHead
+        elif self.vector_decoder_model == "raster_mlp":
+            self.vector_decoder = MLPRasterHead(latent_dim=self.vector_decoder_latent_dim,
+                                                render_size=self.vector_decoder_render_size)
         else:
             raise ValueError("You did not specify a correct Vector Decoder. Expected something like 'cnn' or 'mlp'. Check your config.")
         self.stop_predictor = MultiLayerPerceptron(input_dim=self.latent_transformer_dim,
@@ -158,22 +210,33 @@ class VectorGPT(nn.Module):
         merged_preds = None
 
         # first we encode. (b, t, c, w, h) -> (b, t, z)
-        intermediate = [self.resnet(input_images[:,t,:,:]) for t in range(timesteps)]
+        intermediate = [self.resnet(input_images[:,t,:,:,:]) for t in range(timesteps)]
         encoded_images = torch.stack(intermediate, dim=1) # (b, t, z)
 
-        pos_embeddings = self.positional_embedding(torch.arange(timesteps).to(encoded_images.device)) # (t, z)
-        encoded_images = encoded_images + pos_embeddings # (b, t, z)
+        # map the latent dimensions
+        encoded_images = self.image_latent_to_transformer_latent(encoded_images)
+        
+        if self.learnable_positional_encoding:
+            pos_embeddings = self.positional_embedding(torch.arange(timesteps).to(encoded_images.device)) # (t, z)
+            encoded_images = encoded_images + pos_embeddings # (b, t, z) broadcast should work here
+        else:
+            encoded_images = self.positional_embedding(encoded_images)  # addition happens in the module
 
         # then we transform (b, t, z) -> (b, t, z')
-        transformed_latents = self.latent_transformer(encoded_images)
+        if self.skip_transformer:
+            transformed_latents = encoded_images
+        else:
+            transformed_latents = self.latent_transformer(encoded_images)
 
-        # then we decode each t iteratively, TODO find out if it can be batchified
+        # map the latent dimensions
+        transformed_latents = self.transformer_latent_to_vector_decoder_input(transformed_latents)
+
+        # then we decode each t iteratively
         rasterized_shapes = []
         stop_preds = []
         z_layers = []
         merged_preds = []
         for t in range(timesteps):
-            # if self.vector_decoder_model == "cnn":
             out = self.vector_decoder.forward(transformed_latents[:,t,:], verbose=verbose)
             rasterized_shape = out[0]
             stop_pred = self.stop_predictor.to(transformed_latents.device).forward(transformed_latents[:,t,:])
@@ -183,10 +246,6 @@ class VectorGPT(nn.Module):
                 z_pred = self.z_order.to(transformed_latents.device).forward(transformed_latents[:,t,:])
                 z_layers.append(torch.exp(z_pred[:, :, None, None]))
                 merged_preds.append(self.soft_composite(rasterized_shapes, z_layers))
-
-        # if "merged" in self.loss_mode:
-        #     # merge shape layers for full-image loss calculation
-        #     merged_preds = self.soft_composite(rasterized_shapes, z_layers)
 
         # re-introduce the time dimension
         rasterized_shapes = torch.stack(rasterized_shapes, dim=1) # (b, t, c, w, h)
@@ -291,14 +350,6 @@ class VectorGPT(nn.Module):
             selected_gt_merged_targets = torch.masked_select(gt_merged_targets, mask).view(-1, c, w, h)
             selected_merged_preds = torch.masked_select(merged_preds, mask).view(-1, c, w, h)
 
-
-        # iterate over the batches and select the correct layers with the mask TODO this will be incorporated into the dataloader itself
-        # for batch in range(bs):
-        #     shape = gt_shape_layers[batch].shape
-        #     batch_mask = mask[batch].repeat(1,shape[1], shape[2], shape[3])
-        #     batch_gt_shape_layers = gt_shape_layers[batch][batch_mask].view(-1, c, w, h)
-        #     merged_batch_gt = batch_gt_shape_layers.min(dim=0).values
-
         if self.loss_mode == "pyramid":
             recons_loss = self.gaussian_pyramid_loss(selected_pred_images, selected_gt_shape_layers, log_loss = log_loss, down_sample_steps=self.down_sample_steps)  # logging happens in this function automatically
         elif self.loss_mode == "merged":
@@ -310,7 +361,7 @@ class VectorGPT(nn.Module):
         else:
             recons_loss = F.mse_loss(selected_pred_images, selected_gt_shape_layers, reduction="none")  # no reduction to log loss images
             if log_loss:
-                log_all_images([self.transform_loss_tensor_to_image(recons_loss[0])], log_key="reconstruction loss", caption="Reconstruction Loss MSE")
+                log_all_images([self.transform_loss_tensor_to_image(recons_loss)], log_key="reconstruction loss", caption="Reconstruction Loss MSE")
 
         stop_prediction_loss = F.binary_cross_entropy(selected_stop_signals, selected_gt_stop_signals)
         recons_loss = recons_loss.mean()

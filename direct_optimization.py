@@ -17,7 +17,10 @@ from PIL import Image, ImageDraw, ImageFont
 import imageio
 from io import BytesIO
 import argparse
+import kornia
+
 render = pydiffvg.RenderFunction.apply
+dsample = kornia.geometry.transform.pyramid.PyrDown()
 
 def sample_circle(num_points: int, radius: float = 1.,):
     """
@@ -275,11 +278,12 @@ def optimize(points_vars,
              target,
              resolution,
              primitive:str,
-             loss_name = "MSE", # MSE or LPIPS
+             loss_name = "MSE", # MSE, LPIPS or MIX - new: pyramid_low, pyramid_mid, pyramid_full
              num_iter:int = 200,
              max_width:float = 10.,
              loss_scaling:float = 1.,
-             verbose = True):
+             verbose = True,
+             resolution_target: int = 8):  # resolution target for the dsample pyramid
     step_images = None
     points_grad = []
     losses = []
@@ -305,6 +309,46 @@ def optimize(points_vars,
             loss = lpips.forward(img1, img2) + F.mse_loss(img1, img2)
             return loss
         loss_fn = mix
+    elif loss_name.lower() == "pyramid_low":  # TODO optimize this for a single step
+        def pyramid_low(img1, img2):
+            factor = float(resolution/resolution_target) ** 0.5
+            ssdsample = kornia.geometry.transform.pyramid.PyrDown(factor = factor)
+            img1 = ssdsample(img1)
+            img2 = ssdsample(img2)
+            save_image(img1, "test.png")
+            save_image(img2, "test_target.png")
+            return F.mse_loss(img1, img2)
+        loss_fn = pyramid_low
+    elif loss_name.lower() == "pyramid_full":
+        def pyramid_full(img1, img2):
+            total_loss = 0.0
+            factor = float(resolution/resolution_target) ** 0.5
+            for i in range(1, int(factor)):
+                img1 = dsample(img1)
+                img2 = dsample(img2)
+                total_loss += F.mse_loss(img1, img2)
+            return total_loss
+        loss_fn = pyramid_full
+    elif loss_name.lower() == "pyramid_weighted_top_down":
+        def pyramid_weighted_top_down(img1, img2):
+            total_loss = 0.0
+            factor = float(resolution/resolution_target) ** 0.5
+            for i in range(1, int(factor)):
+                img1 = dsample(img1)
+                img2 = dsample(img2)
+                total_loss += F.mse_loss(img1, img2) / i
+            return total_loss
+        loss_fn = pyramid_weighted_top_down
+    elif loss_name.lower() == "pyramid_weighted_bottom_up":
+        def pyramid_weighted_bottom_up(img1, img2):
+            total_loss = 0.0
+            steps_to_final_res = int(resolution/resolution_target) ** 0.5
+            for i in range(1, int(steps_to_final_res)):
+                img1 = dsample(img1)
+                img2 = dsample(img2)
+                total_loss += F.mse_loss(img1, img2) / (steps_to_final_res - i)
+            return total_loss
+        loss_fn = pyramid_weighted_bottom_up
     else:
         raise ValueError("Please choose a valid loss function")
     if verbose:
@@ -359,6 +403,11 @@ def optimize(points_vars,
         # loss = (img - target).pow(2).mean() * loss_scaling
         if lpips is not None and target.dim() < 4:
             target = target.unsqueeze(dim=0)
+        if "pyramid" in loss_name.lower():
+            if img.dim() < 4:
+                img = img.unsqueeze(dim=0)
+            if target.dim() < 4:
+                target = target.unsqueeze(dim=0)
         loss = loss_fn(img, target) * loss_scaling
         losses.append(loss.detach().item())
         if verbose and t % 10 == 0:
@@ -503,6 +552,7 @@ def main(args: argparse.Namespace):
     grid_losses: List[str] = args.losses
     grid_modes: List[str] = args.modes
     grid_primitives: List[str] = args.primitives
+    # grid_resolution_targets: List[int] = args.resolution_targets
 
     verbose: bool = args.verbose
     override: bool = args.override
@@ -510,6 +560,7 @@ def main(args: argparse.Namespace):
 
     total_steps = len(grid_num_paths) * len(grid_segments) * len(grid_loss_scales) * len(grid_stroke_widths) * len(grid_losses) * len(grid_modes) * len(grid_primitives)
     curr_step = 0
+    # for resolution_target in grid_resolution_targets:
     for num_paths in grid_num_paths:
         for primitive in grid_primitives:
             for mode in grid_modes:
@@ -517,6 +568,8 @@ def main(args: argparse.Namespace):
                     for loss_scale in grid_loss_scales:
                         for initial_stroke_width in grid_stroke_widths:
                             for lossfn in grid_losses:
+                                # if "pyramid" not in lossfn.lower():
+                                #     continue
                                 if verbose:
                                     print(f"{primitive}, {mode}, {num_segments}, {lossfn}")
                                 

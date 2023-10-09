@@ -21,6 +21,7 @@ class VectorGPTExperiment(pl.LightningModule):
                  vector_gpt_model: VectorGPT,
                  input_mode: str = "layer",
                  lr: float = 0.0003,
+                 stroke_lr: float = None,
                  weight_decay: float = 0.0,
                  scheduler_gamma: float = 0.99,
                  train_log_interval: int = 250,
@@ -33,6 +34,7 @@ class VectorGPTExperiment(pl.LightningModule):
         self.model = vector_gpt_model
         self.input_mode = input_mode
         self.lr = lr
+        self.stroke_lr = stroke_lr
         self.weight_decay = weight_decay
         self.scheduler_gamma = scheduler_gamma
         self.train_log_interval = train_log_interval
@@ -48,20 +50,6 @@ class VectorGPTExperiment(pl.LightningModule):
         self.curr_device = input_shape_layers.device
         bs = input_shape_layers.shape[0]
 
-        # regularely log training reconstructions
-        # if(batch_idx % self.train_log_interval == 0):
-        #     predicted_shapes, stop_preds = self.forward(full_images)
-        #     # if(results[0].shape[0] > 10):
-        #     #     log_amount = 10
-        #     # else:
-        #     #     log_amount = results[0].shape[0]
-        #     # log_images(results[0][:log_amount], real_img[:log_amount], log_key="training")
-        #     train_loss = self.model.loss_function(*results,
-        #                                     M_N = self.params['kld_weight'],
-        #                                     optimizer_idx=optimizer_idx,
-        #                                     batch_idx = batch_idx,
-        #                                     log_loss_images = True)
-        # else:
         if self.input_mode == "layer":
             predicted_shapes, stop_preds, merged_preds = self.forward(input_shape_layers, drop_alpha_channel=False)  # TODO was True
         elif self.input_mode == "merged":
@@ -128,11 +116,12 @@ class VectorGPTExperiment(pl.LightningModule):
         return train_loss
 
     def on_train_epoch_end(self):
-        gc.collect()
-        torch.cuda.empty_cache()
+        # gc.collect()
+        # torch.cuda.empty_cache()
         return {}
 
     def validation_step(self, batch, batch_idx, optimizer_idx=0):
+
         input_shape_layers, gt_shape_layers, stop_signals, captions, merged_target, merged_input = batch
         self.curr_device = input_shape_layers.device
 
@@ -152,15 +141,15 @@ class VectorGPTExperiment(pl.LightningModule):
             batch_idx=batch_idx
         )
 
-        self.log_dict({"val_loss": val_loss}, sync_dist=True, prog_bar=True)
 
+        self.log_dict({"val_loss": val_loss}, sync_dist=True, prog_bar=True)
         return val_loss
 
     def on_validation_end(self) -> None:
         if self.wandb:
             self.sample_images()
-        gc.collect()
-        torch.cuda.empty_cache()
+        # gc.collect()
+        # torch.cuda.empty_cache()
         return {}
     
     def sample_images(self, num_of_samples=10):
@@ -188,8 +177,25 @@ class VectorGPTExperiment(pl.LightningModule):
 
         param_groups = []
 
-        param_group_1 = {'params': self.model.parameters(), 'lr': self.lr}
-        param_groups = [param_group_1]
+        if self.stroke_lr is not None:
+            print(f"[INFO] using separate stroke LR of {self.stroke_lr} instead of {self.lr}")
+            stroke_params = []
+            other_params = []
+            # Separate parameters for the 'stroke_predictor' and other model parameters
+            for name, param in self.model.named_parameters():
+                if("stroke_predictor" in name):
+                    stroke_params.append(param)
+                else:
+                    other_params.append(param)
+
+            # Set different learning rates for different parameter groups
+            param_group_1 = {'params': other_params, 'lr': self.lr}
+            param_group_2 = {'params': stroke_params, 'lr': self.stroke_lr}
+
+            param_groups = [param_group_1, param_group_2]
+        else:
+            param_group_1 = {'params': self.model.parameters(), 'lr': self.lr}
+            param_groups = [param_group_1]
 
         if not self.weight_decay:
             optimizer = optim.AdamW(
@@ -198,7 +204,8 @@ class VectorGPTExperiment(pl.LightningModule):
                 weight_decay=self.weight_decay
             )
         else:
-            optimizer = optim.Adam(param_groups, lr=self.lr)
+            # learning rates should be explicitly specified in the param_groups
+            optimizer = optim.Adam(param_groups)
         optims.append(optimizer)
         
         try:

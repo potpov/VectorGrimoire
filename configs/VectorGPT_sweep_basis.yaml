@@ -2,6 +2,7 @@ model_params:
   name: "VectorGPT"  # always keep this "VectorGPT"
   image_encoder_model: "resnet18" # available are 18, 34, 50, 101, 152
   image_encoder_ckpt_path: "/scratch2/moritz_logs/checkpoints/ae_fc_res18_epoch165_mapped.pth"  # specify path to checkpoint if you want to load a pretrained model
+  image_encoder_latent_dim : 128
   learnable_positional_encoding: False  # whether to use learnable positional embedding or sinusoidal encoding
   skip_transformer: False  # whether to skip the latent transformer or not
   latent_transformer_dim: 256 # 256, must be same as vector_decoder_latent_dim
@@ -18,31 +19,31 @@ model_params:
   stop_predictor_dims: [768, 512] #[768, 512]
   stop_predictor_activation: "relu"
   stop_predictor_num_classes: 1  # always 1 for now
-  context_length: 15  # must be kept in sync with data_params.context_length
-  reconstruction_loss_weight: 0.99  # reconstruction loss must be weighted much more in b/w images as white bg results in much less MSE
-  loss_mode: "default"  # supported: [null, "default", "pyramid", "merged", "pyramid+merged"]
+  context_length: 8  # must be kept in sync with data_params.context_length
+  reconstruction_loss_weight: 0.98  # reconstruction loss must be weighted much more in b/w images as white bg results in much less MSE
+  loss_mode: "pyramid"  # supported: [null, "default", "pyramid", "merged", "pyramid+merged"]
   down_sample_steps: 3  # number of downsampling steps for weighted pyramid loss, default: 3
 
 data_params:
   dataset: "causalSVG"  # must be in the DATASETMAP in run.py
-  data_path: "/scratch2/mcipriano/SVG/incremental_FIGR-8/length"  # root path for CausalSVGDataModule in dataset.py
+  data_path: "/scratch2/moritz_data/causal_openmoji_black_overfit_centered/length"  # root path for CausalSVGDataModule in dataset.py
   channels: 3  # use 3
-  subset:  # use null or comment for using the whole dataset, otherwise list subset items
-    - user
+  # subset:  # use null or comment for using the whole dataset, otherwise list subset items
+  #   - user
   width: 128  # KEEP THIS SYNC WITH make_causal_svg_dateset
-  context_length: 15  # KEEP THIS SYNC WITH make_causal_svg_dateset and model_params.context_length
-  train_batch_size: 8
-  val_batch_size:  8
+  context_length: 8  # KEEP THIS SYNC WITH make_causal_svg_dateset and model_params.context_length
+  train_batch_size: 4
+  val_batch_size:  4
   patch_size: 128  # image resolution, has to be 128 for ResNet to work
   num_workers: 4
 
 exp_params:
   input_mode: "layer"  # "layer" or "merged", decides which input the model receives at each timestep
   lr: 0.0003  # was 0.0005 originally
-  stroke_lr: 1.0e-5  # separate learning rate for stroke parameters
+  # stroke_lr: 1.0e-5  # separate learning rate for stroke parameters
   weight_decay: 1.e-4  # specify positive float to enable, start experimenting with 1.e-4/1.e-3
   scheduler_gamma: 0.95  # 0.95 is a good starting value
-  train_log_interval: 5 # len(dataset) / train_batch_size / desired_logging_frequency
+  train_log_interval: 10 # len(dataset) / train_batch_size / desired_logging_frequency
   manual_seed: 1265
 
 trainer_params:
@@ -51,7 +52,7 @@ trainer_params:
 
 logging_params:
   project: "test"  # your wandb project name
-  save_dir: "/scratch2/mcipriano/SVG/results"
-  name: "VectorGPT_FIGR8"  # name of the run in wandb
+  save_dir: "/scratch2/moritz_logs/"
+  name: "VectorGPT_centered_T_"  # name of the run in wandb
   version: 0
   author: "Moritz"  # will be a tag in wandb
