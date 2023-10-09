@@ -311,15 +311,19 @@ def optimize(points_vars,
         loss_fn = mix
     elif loss_name.lower() == "pyramid_low":  # TODO optimize this for a single step
         def pyramid_low(img1, img2):
-            for i in range(1, int(resolution/resolution_target)):
-                img1 = dsample(img1)
-                img2 = dsample(img2)
+            factor = float(resolution/resolution_target) ** 0.5
+            ssdsample = kornia.geometry.transform.pyramid.PyrDown(factor = factor)
+            img1 = ssdsample(img1)
+            img2 = ssdsample(img2)
+            save_image(img1, "test.png")
+            save_image(img2, "test_target.png")
             return F.mse_loss(img1, img2)
         loss_fn = pyramid_low
     elif loss_name.lower() == "pyramid_full":
         def pyramid_full(img1, img2):
             total_loss = 0.0
-            for i in range(1, int(resolution/resolution_target)):
+            factor = float(resolution/resolution_target) ** 0.5
+            for i in range(1, int(factor)):
                 img1 = dsample(img1)
                 img2 = dsample(img2)
                 total_loss += F.mse_loss(img1, img2)
@@ -328,7 +332,8 @@ def optimize(points_vars,
     elif loss_name.lower() == "pyramid_weighted_top_down":
         def pyramid_weighted_top_down(img1, img2):
             total_loss = 0.0
-            for i in range(1, int(resolution/resolution_target)):
+            factor = float(resolution/resolution_target) ** 0.5
+            for i in range(1, int(factor)):
                 img1 = dsample(img1)
                 img2 = dsample(img2)
                 total_loss += F.mse_loss(img1, img2) / i
@@ -337,8 +342,8 @@ def optimize(points_vars,
     elif loss_name.lower() == "pyramid_weighted_bottom_up":
         def pyramid_weighted_bottom_up(img1, img2):
             total_loss = 0.0
-            steps_to_final_res = int(resolution/resolution_target)
-            for i in range(1, steps_to_final_res):
+            steps_to_final_res = int(resolution/resolution_target) ** 0.5
+            for i in range(1, int(steps_to_final_res)):
                 img1 = dsample(img1)
                 img2 = dsample(img2)
                 total_loss += F.mse_loss(img1, img2) / (steps_to_final_res - i)
@@ -398,6 +403,11 @@ def optimize(points_vars,
         # loss = (img - target).pow(2).mean() * loss_scaling
         if lpips is not None and target.dim() < 4:
             target = target.unsqueeze(dim=0)
+        if "pyramid" in loss_name.lower():
+            if img.dim() < 4:
+                img = img.unsqueeze(dim=0)
+            if target.dim() < 4:
+                target = target.unsqueeze(dim=0)
         loss = loss_fn(img, target) * loss_scaling
         losses.append(loss.detach().item())
         if verbose and t % 10 == 0:

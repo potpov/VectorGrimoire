@@ -121,34 +121,32 @@ class VectorGPTExperiment(pl.LightningModule):
         return {}
 
     def validation_step(self, batch, batch_idx, optimizer_idx=0):
-        if False:
-            input_shape_layers, gt_shape_layers, stop_signals, captions, merged_target, merged_input = batch
-            self.curr_device = input_shape_layers.device
 
-            if self.input_mode == "layer":
-                predicted_shapes, stop_preds, merged_preds = self.forward(input_shape_layers)
-            elif self.input_mode == "merged":
-                predicted_shapes, stop_preds, merged_preds = self.forward(merged_input)
+        input_shape_layers, gt_shape_layers, stop_signals, captions, merged_target, merged_input = batch
+        self.curr_device = input_shape_layers.device
 
-            val_loss, _, _ = self.model.loss_function(
-                gt_shape_layers=gt_shape_layers,
-                pred_images=predicted_shapes,
-                gt_stop_signals=stop_signals,
-                stop_signals=stop_preds,
-                gt_merged_targets = merged_target,
-                merged_preds = merged_preds,
-                optimizer_idx=optimizer_idx,
-                batch_idx=batch_idx
-            )
+        if self.input_mode == "layer":
+            predicted_shapes, stop_preds, merged_preds = self.forward(input_shape_layers)
+        elif self.input_mode == "merged":
+            predicted_shapes, stop_preds, merged_preds = self.forward(merged_input)
 
-        else:
-            val_loss = torch.tensor([0.0])
+        val_loss, _, _ = self.model.loss_function(
+            gt_shape_layers=gt_shape_layers,
+            pred_images=predicted_shapes,
+            gt_stop_signals=stop_signals,
+            stop_signals=stop_preds,
+            gt_merged_targets = merged_target,
+            merged_preds = merged_preds,
+            optimizer_idx=optimizer_idx,
+            batch_idx=batch_idx
+        )
+
 
         self.log_dict({"val_loss": val_loss}, sync_dist=True, prog_bar=True)
         return val_loss
 
     def on_validation_end(self) -> None:
-        if self.wandb and False: # TODO FIXME re-enable
+        if self.wandb:
             self.sample_images()
         # gc.collect()
         # torch.cuda.empty_cache()
