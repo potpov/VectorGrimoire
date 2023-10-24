@@ -3,14 +3,14 @@ import yaml
 import argparse
 import numpy as np
 from pathlib import Path
-from experiment import VAEXperiment, VectorGPTExperiment
+from experiment import VAEXperiment, VectorGPTExperiment, VectorGPTExperimentv2
 import torch.backends.cudnn as cudnn
 from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import WandbLogger, TensorBoardLogger
 from pytorch_lightning import seed_everything
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, LearningRateFinder, EarlyStopping
-from dataset import MNISTDataset, MNISTppDataset, NounProjectDataset, EmojiDataset, MNISTDatasetCSVG, CausalSVGDataModule
-from models import VAEctorGen, VectorGPT, VanillaVAE, VectorVAEnLayers
+from dataset import MNISTDataset, MNISTppDataset, NounProjectDataset, EmojiDataset, MNISTDatasetCSVG, CausalSVGDataModule, NewCausalSVGDataModule
+from models import VAEctorGen, VectorGPT, VanillaVAE, VectorVAEnLayers, VectorGPTv2
 import wandb
 from utils import get_rank
 import torch
@@ -19,11 +19,12 @@ torch.set_float32_matmul_precision('high')
 
 DATASETMAP = {
     "causalSVG": CausalSVGDataModule,
+    "causalSVGv2": NewCausalSVGDataModule,
     "emoji": EmojiDataset,
     "nounproject": NounProjectDataset,
     "mnistpp": MNISTppDataset,
     "mnist": MNISTDataset,
-    "mnistCSVG": MNISTDatasetCSVG
+    "mnistCSVG": MNISTDatasetCSVG,
 }
 
 MODELS = {
@@ -31,6 +32,7 @@ MODELS = {
     "VAEctorGen": VAEctorGen,
     "VectorVAEnLayers": VectorVAEnLayers,
     "VectorGPT": VectorGPT,
+    "VectorGPTv2": VectorGPTv2,
   }
 
 
@@ -88,6 +90,8 @@ else:
 
 if config['model_params']['name'] == "VectorGPT":
     experiment = VectorGPTExperiment(model, **config['exp_params'], wandb = args.wandb)
+elif config['model_params']['name'] == "VectorGPTv2":
+    experiment = VectorGPTExperimentv2(model, **config['exp_params'], wandb = args.wandb)
 else:    
     experiment = VAEXperiment(model, config['exp_params'])
 

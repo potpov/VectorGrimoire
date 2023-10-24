@@ -10,6 +10,175 @@ import glob
 import pandas as pd
 import numpy as np
 
+class NewCausalSVGDataset(Dataset):
+    """
+    New FIGR8 dataset from a root directory for causal svg generation.
+    Has:
+        - centered images for prediction and visual MSE loss
+        - absolute images for merged input
+        - absolute and relative start/end points
+        - stop signal vector
+
+
+     ClassName
+     |
+     |
+     |---I{svg_id}_{num_segments}_Segments_images_absolute.npy 
+     |---I{svg_id}_{num_segments}_Segments_images_centered.npy 
+     |---I{svg_id}_{num_segments}_Segments_positions.npy  
+     |---split.csv
+    """
+
+    def __init__(self, root_path: str, context_length: int, channels: int, width: int, subset: List[str], **kwargs):
+        super(NewCausalSVGDataset, self)
+        self.context_length = context_length
+        self.channels = channels
+        self.width = width  # TODO: can we remove this?
+        self.root_path = root_path
+        self.subset = subset
+        self.split = pd.read_csv(os.path.join(self.root_path, "split.csv"))
+        before = len(self.split)
+        self.split = self.split[self.split["segments"] < context_length]
+        after = len(self.split)
+        print(f"Removed {np.round((before - after) / before * 100, decimals=2)}% of samples because they have more segments than the context length.")
+        if self.subset and len(self.subset) > 0:
+            self.split = self.split[self.split['class'].isin(self.subset)]
+        self.split = self.split[self.split["split"] == ("train" if kwargs["train"] else "test")]
+
+    def __getitem__(self, index) -> tuple:
+        centered_filename = self.split.iloc[index]["raster_filename_centered"]
+        absolute_filename = self.split.iloc[index]["raster_filename_absolute"]
+        positions_filename = self.split.iloc[index]["position_filename"]
+        curr_class = self.split.iloc[index]["class"]
+
+        centered_images = torch.from_numpy(np.load(os.path.join(self.root_path, curr_class, centered_filename)))
+        absolute_images = torch.from_numpy(np.load(os.path.join(self.root_path, curr_class, absolute_filename)))
+        positions = torch.from_numpy(np.load(os.path.join(self.root_path, curr_class, positions_filename))).to(torch.float32)
+        positions = torch.flatten(positions[:, :, 1:3], start_dim=-2) # (t, 4, 2) -> (t, 4)
+
+        num_timesteps = centered_images.shape[0]
+        if centered_images.max() > 1:
+            centered_images = centered_images / 255  # shift to [0-1] (imgs stored as uint8)
+        if absolute_images.max() > 1:
+            absolute_images = absolute_images / 255  # shift to [0-1] (imgs stored as uint8)
+
+        # padding images with fewer features than CL
+        pad_len = self.context_length - num_timesteps
+        assert pad_len > 0, "context length must be greater than number of features of the dataset, did you set the context length correctly in the config?"
+        pad = torch.ones(pad_len, *centered_images.shape[1:])  # 1 -> white -> no features
+        
+        centered_shape_layers = torch.concat((centered_images, pad), dim=0)  # Ground truth
+        absolute_shape_layers = torch.concat((absolute_images, pad), dim=0)  # Ground truth
+        
+        position_pad = torch.ones(pad_len, *positions.shape[1:])
+        positions = torch.concat((positions, position_pad), dim=0)
+
+        # adding channel (Dataset is gray-scale, if you use 3 channels those are replicated)
+        centered_shape_layers = centered_shape_layers[:, None].repeat((1, self.channels, 1, 1))
+        absolute_shape_layers = absolute_shape_layers[:, None].repeat((1, self.channels, 1, 1))
+
+        # merges absolute layers for full-image input
+        merged_layers = absolute_shape_layers[0].unsqueeze(dim=0)
+        for t in range(1 + 1, absolute_shape_layers.shape[0] + 1):
+            merged_layers_t = torch.min(absolute_shape_layers[:t], dim = 0).values
+            merged_layers = torch.cat((merged_layers, merged_layers_t.unsqueeze(dim=0)), dim=0)
+
+        # input is all shifted one place to the right and starts with white canvas
+        input_absolute_shape_layers = torch.concat((torch.ones(1, self.channels, *absolute_shape_layers.shape[-2:]), absolute_shape_layers[:-1]))
+        input_centered_shape_layers = torch.concat((torch.ones(1, self.channels, *centered_shape_layers.shape[-2:]), centered_shape_layers[:-1]))
+        input_merged_images = torch.concat((torch.ones(1, self.channels, *merged_layers.shape[-2:]), merged_layers[:-1]))
+        
+        # input is all shifted one place to the right and starts with pos (0, 0, 0, 0)
+        input_positions = torch.concat((torch.zeros((1, 4)), positions[:-1]))
+
+        # creating stop ground truth with 0: no stop, 1: stop, -1: padding
+        stop_pad_len = pad_len - 1  # stop signals require one less padding than images
+        stop_signals = torch.zeros(self.context_length)
+        stop_signals[num_timesteps] = 1.
+        if stop_pad_len >= 1:
+            stop_signals[-stop_pad_len:] = -1.
+        caption = f"black and white icon of a {self.split.iloc[index]['class']}"
+        return input_absolute_shape_layers, input_centered_shape_layers, input_merged_images, stop_signals, caption, centered_shape_layers, input_positions
+
+    def __len__(self):
+        return len(self.split)
+
+class NewCausalSVGDataModule(LightningDataModule):
+    def __init__(
+        self,
+        data_path: str,
+        train_batch_size: int,
+        val_batch_size: int,
+        context_length: int,
+        channels: int,
+        width: int,
+        num_workers: int = 0,
+        subset: List = None,
+        **kwargs,
+    ):
+        super().__init__()
+
+        self.train_batch_size = train_batch_size
+        self.val_batch_size = val_batch_size
+        self.num_workers = num_workers
+        self.root_path = data_path
+        self.context_length = context_length
+        self.channels = channels
+        self.width = width
+        self.num_workers = num_workers
+        self.subset = subset
+        if subset:
+            print(f"Using subset of original dataset: {self.subset}")
+        else:
+            print("Executing on the whole dataset!")
+
+    def setup(self, stage: Optional[str] = None) -> None:
+        self.train_dataset = NewCausalSVGDataset(
+            self.root_path,
+            self.context_length,
+            self.channels,
+            self.width,
+            subset=self.subset,
+            train=True,
+        )
+
+        self.val_dataset = NewCausalSVGDataset(
+            self.root_path,
+            self.context_length,
+            self.channels,
+            self.width,
+            subset=self.subset,
+            train=False,
+        )
+
+    #       ===============================================================
+
+    def train_dataloader(self) -> DataLoader:
+        return DataLoader(
+            self.train_dataset,
+            batch_size=self.train_batch_size,
+            num_workers=self.num_workers,
+            shuffle=True,
+            pin_memory=False,
+        )
+
+    def val_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
+        return DataLoader(
+            self.val_dataset,
+            batch_size=self.val_batch_size,
+            num_workers=self.num_workers,
+            shuffle=False,
+            pin_memory=False,
+        )
+
+    def test_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
+        return DataLoader(
+            self.val_dataset,
+            batch_size=64,
+            num_workers=self.num_workers,
+            shuffle=False,
+            pin_memory=False,
+        )
 
 # Add your custom dataset class here
 class MyDataset(Dataset):
