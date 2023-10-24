@@ -20,6 +20,7 @@ import math
 OUT_W = 128
 OUT_H = 128
 
+import math
 def raster(svg_file: Drawing):
     """
     This function simply resizes and rasters a series of Paths
@@ -51,7 +52,7 @@ def plot_segments(rasterized_segments, title:str="A disassembled tree"):
         axs[0][ncols//2].set_title(title)
 
 def plot_merged_segments(rasterized_segments, title=None):
-    plt.imshow(np.array(rasterized_segments).min(axis=0), cmap="gray")
+    plt.imshow(np.array(rasterized_segments).min(axis=0), cmap="gray", title = title)
 
 def get_flattened_paths(paths):
     flattened_paths = [segment for path in paths for segment in path._segments]
@@ -65,14 +66,59 @@ def get_single_paths(paths, filter_zero_length = True):
         
     return single_paths
 
-def get_rasterized_segments(single_paths:list, stroke_width:float, svg_attributes, centered = False):
+def calc_max_diff(single_paths):
+    total_max_diff = 0
+    for idx in range(len(single_paths)):
+        abs_start = single_paths[idx].start #- single_paths[0].end
+        abs_end = single_paths[idx].end #- single_paths[0].end
+        top_left = complex(min(abs_start.real, abs_end.real), min(abs_start.imag, abs_end.imag))
+        bottom_right = complex(max(abs_start.real, abs_end.real), max(abs_start.imag, abs_end.imag))
+        diff = bottom_right - top_left
+        max_diff = max(diff.real, diff.imag)
+        if max_diff > total_max_diff:
+            total_max_diff = max_diff
+    return total_max_diff
+
+def all_paths_to_max_diff(all_paths, index:int = 1):
+    """
+    index is the idx of the max_diff you want to get. idx=0 is largest, idx=1 is second largest, etc.
+    """
+    all_max_diffs = []
+    for path in all_paths:
+        paths, _, _ = svg2paths2(path)
+        single_paths = get_single_paths(paths)
+        all_max_diffs.append(calc_max_diff(single_paths))
+    all_max_diffs = np.array(all_max_diffs)
+    total_max_diff = all_max_diffs[np.argsort(-all_max_diffs)[:index+1]][index]
+    return total_max_diff
+
+def all_paths_to_max_diffs(all_paths):
+    all_max_diffs = []
+    for path in all_paths:
+        paths, _, _ = svg2paths2(path)
+        single_paths = get_single_paths(paths)
+        all_max_diffs.append(calc_max_diff(single_paths))
+    return all_max_diffs
+
+def get_viewbox(single_path, total_max_diff, offset: float = 1.0):
+    abs_start = single_path.start
+    abs_end = single_path.end
+    top_left = complex(min(abs_start.real, abs_end.real), min(abs_start.imag, abs_end.imag))
+    bottom_right = complex(max(abs_start.real, abs_end.real), max(abs_start.imag, abs_end.imag))
+    diff = bottom_right - top_left
+    center = top_left + diff / 2
+    new_top_left = center - complex(total_max_diff / 2, total_max_diff / 2)
+    viewbox = f"{new_top_left.real - offset} {new_top_left.imag - offset} {total_max_diff + offset*2} {total_max_diff + offset*2}"
+    return viewbox
+
+def get_rasterized_segments(single_paths:list, stroke_width:float, total_max_diff: float, svg_attributes, centered = False):
     if centered:
-        viewbox = None
+        return np.array([raster(disvg(my_path, paths2Drawing=True, stroke_widths=[stroke_width] * len(my_path), viewbox=get_viewbox(my_path, total_max_diff))) for my_path in single_paths if my_path.length() > 0.])
     else:
         viewbox=svg_attributes["viewBox"]
-    return np.array([raster(disvg(my_path, paths2Drawing=True, stroke_widths=[stroke_width] * len(my_path), viewbox=viewbox)) for my_path in single_paths if my_path.length() > 0.])
+        return np.array([raster(disvg(my_path, paths2Drawing=True, stroke_widths=[stroke_width] * len(my_path), viewbox=viewbox)) for my_path in single_paths if my_path.length() > 0.])
 
-def svg_path_to_segment_image_arrays(svg_path):
+def svg_path_to_segment_image_arrays(svg_path, total_max_diff: float):
     """
     This function takes a path to an SVG file and returns two numpy arrays of the rasterized path segments.
 
@@ -87,10 +133,10 @@ def svg_path_to_segment_image_arrays(svg_path):
     single_paths = get_single_paths(paths)
 
     # everything placed in the middle
-    rasterized_segments_centered = get_rasterized_segments(single_paths, stroke_width = 0.5, svg_attributes=svg_attributes, centered=True)
+    rasterized_segments_centered = get_rasterized_segments(single_paths, stroke_width = 0.5, total_max_diff=total_max_diff, svg_attributes=svg_attributes, centered=True)
 
     # everything placed where it belongs
-    rasterized_segments = get_rasterized_segments(single_paths, stroke_width = 2.0, svg_attributes=svg_attributes, centered=False)
+    rasterized_segments = get_rasterized_segments(single_paths, stroke_width = 2.0, total_max_diff=total_max_diff, svg_attributes=svg_attributes, centered=False)
 
     return rasterized_segments_centered, rasterized_segments
 
@@ -119,30 +165,37 @@ def get_positional_array_from_paths(single_paths, svg_attributes):
     return stacked_points 
 
 if __name__ == "__main__":
-    SEGMENT_THRESHOLD = 100  # equivalent to context length
+    SEGMENT_THRESHOLD = 512  # equivalent to context length
+    OUT_DIR = "/scratch2/moritz_data/causal_figr8_trees"
     CLASS = "tree"
-    FIGR8_PATH = "/scratch2/moritz_data/figr8_trees_processed/"
-    OUT_DIR = f"/scratch2/moritz_data/causal_figr8_trees_T{SEGMENT_THRESHOLD}"
     OVERRIDE = True
+    OUT_W = 128
+    OUT_H = 128
 
     if OVERRIDE:
         if os.path.exists(OUT_DIR):
-            input("You are about to override the output directory. Press any key to continue...")
+            input("you are about to delete the existing output directory. press enter to continue")
             os.system(f"rm -rf {OUT_DIR}")
 
     if not os.path.exists(OUT_DIR):
         os.makedirs(os.path.join(OUT_DIR, CLASS))
 
-    df = pd.DataFrame(columns=['filename', 'class', 'split'])
-    statistic_df = pd.read_csv("/scratch2/moritz_data/figr8_trees_statistics.csv")
+    start_id = 0
+    df = pd.DataFrame(columns=["segments", 'raster_filename_absolute', "raster_filename_centered", "position_filename", 'class', 'split'])
+
+    statistic_df = pd.read_csv("/home/mfeuerpfeil/master/thesis/datasets/figr8_trees_statistics.csv")
+
     all_paths = statistic_df[statistic_df["num_segments"] < SEGMENT_THRESHOLD].file.values
+    print("finding total max diff...")
+    total_max_diff = all_paths_to_max_diff(all_paths, index=4)
+    print(f"found total max diff: {total_max_diff}\n")
 
     for i, path in enumerate(tqdm(all_paths)):
         paths, attributes, svg_attributes = svg2paths2(path)
         single_paths = get_single_paths(paths)
 
-        rasterized_segments_centered = get_rasterized_segments(single_paths, stroke_width = 0.5, svg_attributes=svg_attributes, centered=True)
-        rasterized_segments = get_rasterized_segments(single_paths, stroke_width = 2.0, svg_attributes=svg_attributes, centered=False)
+        rasterized_segments_centered = get_rasterized_segments(single_paths, stroke_width = 0.5, total_max_diff=total_max_diff, svg_attributes=svg_attributes, centered=True)
+        rasterized_segments = get_rasterized_segments(single_paths, stroke_width = 2.0, total_max_diff=total_max_diff, svg_attributes=svg_attributes, centered=False)
 
         position_information = get_positional_array_from_paths(single_paths, svg_attributes)
 
@@ -157,6 +210,7 @@ if __name__ == "__main__":
         np.save(os.path.join(OUT_DIR, CLASS, position_filename), position_information)
         
         new_row = {
+            "segments" : len(rasterized_segments),
             "raster_filename_absolute": raster_filename_absolute,
             "raster_filename_centered": raster_filename_centered,
             "position_filename": position_filename,
@@ -165,4 +219,4 @@ if __name__ == "__main__":
         }
         df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
 
-    df.to_csv(os.path.join(OUT_DIR, CLASS, 'split.csv'), index=False)
+    df.to_csv(os.path.join(OUT_DIR, 'split.csv'), index=False)
