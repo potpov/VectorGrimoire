@@ -93,7 +93,7 @@ class VectorGPTExperimentv2(pl.LightningModule):
                     log_key="input (left) vs. prediction (right)",
                     captions=captions[0] + f" from T={start_idx} to T={start_idx+log_amount}"
                 )
-            elif self.input_mode == "merged":
+            elif self.input_mode == "absolute_merged":
                 log_images(
                     predicted_shapes[0][start_idx:start_idx+log_amount],
                     input_merged_images[0][start_idx:start_idx+log_amount],
