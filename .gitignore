@@ -12,6 +12,7 @@ wandb/*
 !inference.ipynb
 configs/*.yaml
 !VectorGPT.yaml
+!VectorGPTv2.yaml
 !VectorGPT_sweep_basis.yaml
 images/*
 
