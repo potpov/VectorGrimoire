@@ -39,6 +39,7 @@ class NewCausalSVGDataset(Dataset):
         self.split = pd.read_csv(os.path.join(self.root_path, "split.csv"))
         before = len(self.split)
         self.split = self.split[self.split["segments"] < context_length]
+        self.split = self.split[self.split["segments"] > 15]
         after = len(self.split)
         print(f"Removed {np.round((before - after) / before * 100, decimals=2)}% of samples because they have more segments than the context length.")
         if self.subset and len(self.subset) > 0:
