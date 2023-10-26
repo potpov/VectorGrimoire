@@ -57,6 +57,7 @@ class VectorGPTv2(nn.Module):
                     latent_transformer_heads: int = 8,
                     latent_transformer_layer_dropout: float = 0.1,
                     vector_decoder_model: str = "cnn",
+                    vector_decoder_primitive: str = "cubic",
                     vector_decoder_latent_dim: int = 512,
                     vector_decoder_paths: int = 5,
                     vector_decoder_radius: int = 3,
@@ -85,6 +86,7 @@ class VectorGPTv2(nn.Module):
         self.latent_transformer_heads = latent_transformer_heads
         self.latent_transformer_layer_dropout = latent_transformer_layer_dropout
         self.vector_decoder_model = vector_decoder_model.lower()
+        self.vector_decoder_primitive = vector_decoder_primitive.lower()
         self.vector_decoder_latent_dim = vector_decoder_latent_dim
         self.vector_decoder_paths = vector_decoder_paths
         self.vector_decoder_radius = vector_decoder_radius
@@ -101,6 +103,7 @@ class VectorGPTv2(nn.Module):
         self.wandb_logging = wandb_logging
 
         assert self.loss_mode in [None, "default", "pyramid"], f"Loss mode {self.loss_mode} not supported. Merged was deprecated in v2."
+        assert self.vector_decoder_primitive in ["cubic", "linear"], f"Vector decoder primitive {self.vector_decoder_primitive} not supported. Expected 'cubic', 'quadratic' or 'linear'."
 
         if self.image_encoder_model == "resnet18":
             self.resnet = ResNet18(self.image_encoder_latent_dim)
@@ -243,7 +246,10 @@ class VectorGPTv2(nn.Module):
         z_layers = []
         merged_preds = []
         for t in range(timesteps):
-            out = self.vector_decoder.forward(transformed_latents[:,t,:], verbose=verbose)
+            if self.vector_decoder_model == "mlp":
+                out = self.vector_decoder.forward(transformed_latents[:,t,:], primitive = self.vector_decoder_primitive, verbose=verbose)
+            else:
+                out = self.vector_decoder.forward(transformed_latents[:,t,:], verbose=verbose)
             rasterized_shape = out[0]
             stop_pred = self.stop_predictor.to(transformed_latents.device).forward(transformed_latents[:,t,:])
             rasterized_shapes.append(rasterized_shape)

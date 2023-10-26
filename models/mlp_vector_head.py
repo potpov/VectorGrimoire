@@ -214,7 +214,7 @@ class MLPVectorHeadFixed(nn.Module):
                 nn.Sigmoid()
             )
 
-    def forward(self, z, **kwargs):
+    def forward(self, z, primitive: str = "cubic", **kwargs):
         bs = z.shape[0]
 
         feats = z
@@ -241,7 +241,8 @@ class MLPVectorHeadFixed(nn.Module):
 
         output, scenes = self.bezier_render(all_points, all_widths, all_alphas,
                                          colors=all_colors,
-                                         canvas_size=self.imsize)
+                                         canvas_size=self.imsize,
+                                         primitive = primitive)
 
         # map to [-1, 1]
         # output = output*2.0 - 1.0
@@ -265,7 +266,7 @@ class MLPVectorHeadFixed(nn.Module):
         return img
 
     def bezier_render(self, all_points: Tensor, all_widths: Tensor, all_alphas: Tensor,
-                    canvas_size=32, colors=None, white_background=True):
+                    canvas_size=32, primitive: str = "cubic", colors=None, white_background=True):
         device = all_points.device
 
         # all_points = 0.5*(all_points + 1.0) * canvas_size
@@ -285,9 +286,16 @@ class MLPVectorHeadFixed(nn.Module):
             shapes = []
             shape_groups = []
             for p in range(num_strokes):
-                points = all_points[batch, p].contiguous()
-                # bezier
-                num_ctrl_pts = torch.zeros(num_segments, dtype=torch.int32) + 2
+                points = all_points[batch, p].contiguous()  # (num_pts, 2)
+                if primitive == "cubic":
+                    num_ctrl_pts = torch.zeros(num_segments, dtype=torch.int32) + 2
+                elif primitive == "linear":
+                    if num_segments > 1:
+                        raise NotImplementedError("Linear primitive only supports 1 segment atm")
+                    num_ctrl_pts = torch.zeros(num_segments, dtype=torch.int32)
+                    points = points[[0, 3]]
+                else:
+                    raise NotImplementedError(f"Primitive {primitive} not implemented")
                 width = all_widths[batch, p]
                 alpha = all_alphas[batch, p]
                 if colors is not None:
