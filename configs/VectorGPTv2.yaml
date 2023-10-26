@@ -9,7 +9,7 @@ model_params:
   latent_transformer_depth: 8 # 8
   latent_transformer_layer_dropout: 0.1
   vector_decoder_model: "mlp"  # "mlp" or "cnn"
-  vector_decoder_primitive: "cubic"  # cubic or line
+  vector_decoder_primitive: "cubic"  # cubic or linear
   vector_decoder_latent_dim: 256 # 256
   vector_decoder_paths: 1  # number of cubic bezier paths that make a single circle/shape
   vector_decoder_radius: 3  # controls the initial size of the shapes, 3 is good value
@@ -21,7 +21,7 @@ model_params:
   stop_predictor_num_classes: 1  # always 1 for now
   context_length: 125  # must be kept in sync with data_params.context_length
   reconstruction_loss_weight: 0.99  # reconstruction loss must be weighted much more in b/w images as white bg results in much less MSE
-  loss_mode: "pyramid"  # supported: [null, "default", "pyramid"]
+  loss_mode: "pyramid"  # supported: [null, "default", "pyramid", "mse_param"]
   down_sample_steps: 4  # number of downsampling steps for weighted pyramid loss, default: 3
 
 data_params:
@@ -38,7 +38,7 @@ data_params:
   num_workers: 4
 
 exp_params:
-  input_mode: "centered_layer"  # "absolute_layer", "centered_layer" or "merged", decides which input the model receives at each timestep
+  input_mode: "centered_layer"  # "absolute_layer", "centered_layer" or "absolute_merged", decides which input the model receives at each timestep
   lr: 0.0003  # was 0.0005 originally
   stroke_lr: 1.0e-5  # separate learning rate for stroke parameters
   weight_decay: 1.e-4  # specify positive float to enable, start experimenting with 1.e-4/1.e-3
