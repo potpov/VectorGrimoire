@@ -12,6 +12,8 @@ from models.mlp_vector_head import MLPVectorHeadFixed, MLPRasterHead
 from models.mlp import MultiLayerPerceptron
 import kornia
 from utils import log_all_images
+import pydiffvg
+
 
 class PositionalEncoding(nn.Module):
     """
@@ -39,7 +41,7 @@ class PositionalEncoding(nn.Module):
         Arguments:
             x: Tensor, shape ``[batch_size, seq_len, embedding_dim]``
         """
-        x = x + self.pe[:x.size(1)]
+        x = x + self.pe[:,:x.size(1)]
         return self.dropout(x)
 
 class VectorGPTv2(nn.Module):
@@ -200,7 +202,7 @@ class VectorGPTv2(nn.Module):
         rgb = rgb * (1 - inv_mask) + inv_mask
         return rgb
 
-    def forward(self, input_absolute_images: Tensor, input_positions: Tensor, drop_alpha_channel = False, verbose = False,**kwargs):
+    def forward(self, input_absolute_images: Tensor, input_positions: Tensor, only_final_timestep: bool = False, drop_alpha_channel = False, verbose = False,**kwargs):
         """
         Expects images to be in (batch, timesteps, channel, width, height).
         input_positions are in shape (batch, timesteps, 4): where the 4 is split into: rel_start_point_x, rel_start_point_y, rel_end_point_x, rel_end_point_y
@@ -243,14 +245,22 @@ class VectorGPTv2(nn.Module):
         # then we decode each t iteratively
         rasterized_shapes = []
         stop_preds = []
+        svg_points = []
         z_layers = []
         merged_preds = []
+        stroke_widths = []
         for t in range(timesteps):
+            if only_final_timestep and t != timesteps - 1:
+                continue
             if self.vector_decoder_model == "mlp":
                 out = self.vector_decoder.forward(transformed_latents[:,t,:], primitive = self.vector_decoder_primitive, verbose=verbose)
             else:
                 out = self.vector_decoder.forward(transformed_latents[:,t,:], verbose=verbose)
             rasterized_shape = out[0]
+            stroke_width = out[-1]
+            bezier_points = out[-2]  # (b, 1, self.segments*3+1, 2)
+            svg_points.append(bezier_points)
+            stroke_widths.append(stroke_width)
             stop_pred = self.stop_predictor.to(transformed_latents.device).forward(transformed_latents[:,t,:])
             rasterized_shapes.append(rasterized_shape)
             stop_preds.append(stop_pred)
@@ -258,6 +268,19 @@ class VectorGPTv2(nn.Module):
                 z_pred = self.z_order.to(transformed_latents.device).forward(transformed_latents[:,t,:])
                 z_layers.append(torch.exp(z_pred[:, :, None, None]))
                 merged_preds.append(self.soft_composite(rasterized_shapes, z_layers))
+
+        if only_final_timestep:
+            rasterized_shape = rasterized_shapes[-1]  # (b, c, w, h)
+            stop_pred = stop_preds[-1]  # (b, t)
+            bezier_pred = svg_points[-1]
+            stroke_width = stroke_widths[-1]
+            if len(merged_preds) > 0:
+                merged_pred = merged_preds[-1]
+            else:
+                merged_pred = None
+            if drop_alpha_channel:
+                rasterized_shape = rasterized_shape[:, :3, :, :]
+            return rasterized_shape, stop_pred, merged_pred, bezier_pred, stroke_width
 
         # re-introduce the time dimension
         rasterized_shapes = torch.stack(rasterized_shapes, dim=1) # (b, t, c, w, h)
@@ -272,6 +295,234 @@ class VectorGPTv2(nn.Module):
         stop_preds = stop_preds.squeeze(-1) # (b, t)
 
         return rasterized_shapes, stop_preds, merged_preds
+    
+    @torch.no_grad()
+    def generate(self, images: Tensor, positions: Tensor, max_new_steps: int):
+        """
+        Note: currently this takes images as input, but to fully assemble, you would ofc need SVG shapes as input.
+        Currently does not move the positional embedding if context length is exceeded. So it will always assume t=0 for the first input image.
+
+        images: (b, t_middle, c, w, h)
+        positions: (b, t_end, 4)
+
+        Most likely you'll want to make sure to be in model.eval() mode of operation for this.
+        """
+
+        assert images.size(0) == 1, "Currently only batch size 1 is supported for generation."
+
+        start_time = images.size(1)
+
+        for t in range(max_new_steps):
+            print(f"Generating step {start_time+t+1} of {start_time+max_new_steps}")
+            # if the sequence context is growing too long we must crop it at block_size
+            images_cond = images if images.size(1) <= self.context_length else images[:, -self.context_length:]
+
+            curr_positions = positions[:, :images.size(1)]
+            curr_positions = curr_positions if curr_positions.size(1) <= self.context_length else curr_positions[:, -self.context_length:]
+            # forward the model to get the logits for the index in the sequence
+            rasterized_shape, stop_pred, _, bezier_pred = self.forward(images_cond, curr_positions, only_final_timestep=True, drop_alpha_channel=True)
+            rasterized_shape = rasterized_shape[:, None, :, :, :]  # (b, 1, c, w, h)
+
+            # (optional) sample here
+
+            # append sampled image to the running sequence and continue
+            print(images.shape, rasterized_shape.shape)
+            images = torch.cat((images, rasterized_shape), dim=1)
+            # positions = torch.cat((positions, rasterized_shape), dim=1)
+
+            # stop if stop_pred is above threshold
+            print("stop_pred: ", stop_pred[0, 0])
+            if stop_pred[0, 0] > 0.70:
+                print("REACHED STOP SIGNAL")
+                return images
+
+        return images
+    
+    @torch.no_grad()
+    def generate_from_svg(self, input_bezier_points: Tensor, input_bezier_widths: Tensor, max_new_steps: int, scale: float, positions: Tensor):
+        """
+        We assume input mode is absolute_merged here. Does perform padding of the input to match the training input.
+
+        Input:
+            - input_bezier_points in format (b, t, 4, 2) - each timestep are the points of one cubic bezier curve, relative positions between [0, 1]
+            - input_bezier_widths in format (b, t, 1) - stroke widths for each timestep
+            - max_new_steps: number of steps to generate
+            - scale - the ratio of the full svg bounding box and the individual centered svg bounding box
+            - positions - the start and end points for ALL beziers in format (b, t_full, 4), even the ones not part of the input
+        """
+        assert scale > 1.0, "Scale must be larger than 1.0, did you calculate it the wrong way around?"
+        assert input_bezier_points.size(0) == 1, "Currently only batch size 1 is supported for generation."
+        assert input_bezier_points.size(2) == 4, "Expected input_bezier_points to be in format (b, t, 4, 2)"
+        assert input_bezier_points.dim() == 4, "Expected input_bezier_points to be in format (b, t, 4, 2)"
+        
+        absolute_merged_inputs = []
+        for t in range(1, input_bezier_points.size(1)):
+            # TODO change this behaviour from [:t] to [t] for individual shape layers instead of merged ones
+            curr_merged_absolute_input, _ = self._bezier_render(input_bezier_points[:, :t, :, :], 
+                                                        input_bezier_widths[:, :t, :], 
+                                                        torch.ones(*input_bezier_widths[:, :t, :].shape), 
+                                                        canvas_size=128, 
+                                                        primitive = "cubic", 
+                                                        colors=None, 
+                                                        white_background=True)
+            
+            absolute_merged_inputs.append(curr_merged_absolute_input[:,:3,:,:])
+        absolute_merged_inputs = torch.stack(absolute_merged_inputs, dim=1)  # (b, t, c, w, h)
+        
+        # add start padding that was also used in training
+        pad_input = torch.ones(*absolute_merged_inputs[:,0].shape).unsqueeze(1)
+        pad_pos = torch.zeros(*positions[:,0].shape).unsqueeze(1)
+
+        positions = torch.cat((pad_pos, positions), dim=1)
+        absolute_merged_inputs = torch.cat((pad_input, absolute_merged_inputs), dim=1)
+
+        all_bezier_points = input_bezier_points  # (b, t, 4, 2)
+        all_widths = input_bezier_widths  # (b, t, 1)
+
+        # TODO maybe minus 1 ?
+        start_time = absolute_merged_inputs.size(1)
+        for t in range(max_new_steps):
+            print(f"Generating step {start_time+t+1} of {start_time+max_new_steps}")
+            # if the sequence context is growing too long we must crop it at block_size
+            absolute_merged_inputs_cond = absolute_merged_inputs if absolute_merged_inputs.size(1) <= self.context_length else absolute_merged_inputs[:, -self.context_length:]
+            curr_positions = positions[:, :absolute_merged_inputs_cond.size(1)]
+            curr_positions = curr_positions if curr_positions.size(1) <= self.context_length else curr_positions[:, -self.context_length:]
+            # forward the model to get the logits for the index in the sequence
+            _, stop_pred, _, bezier_pred, stroke_width = self.forward(absolute_merged_inputs_cond, curr_positions, only_final_timestep=True, drop_alpha_channel=True)
+            # bezier_pred# (b, 1, self.segments*3+1, 2) 
+
+            # scale and shift bezier_pred to fit the absoulte_merged coordinates
+            bezier_pred = bezier_pred / scale
+            start_offset_x = positions[:, start_time+t, 0] - bezier_pred[:,0,0,0]
+            start_offset_y = positions[:, start_time+t, 1] - bezier_pred[:,0,0,1]
+
+            bezier_pred[:, :, 0] = bezier_pred[:, :, 0] + start_offset_x[:, None]
+            bezier_pred[:, :, 1] = bezier_pred[:, :, 1] + start_offset_y[:, None]
+
+            # append to all_bezier_points
+            all_bezier_points = torch.cat((all_bezier_points, bezier_pred), dim=1)
+            all_widths = torch.cat((all_widths, stroke_width[:, None, :]), dim=1)
+            
+            # rasterize new prediction and append it to the absolute_merged_inputs
+            curr_merged_absolute_input, _ = self._bezier_render(all_bezier_points, 
+                                                        all_widths, 
+                                                        torch.ones(*all_widths.shape), 
+                                                        canvas_size=128, 
+                                                        primitive = "cubic", 
+                                                        colors=None, 
+                                                        white_background=True)
+            
+
+            # (optional) sample here
+
+            # append sampled image to the running sequence and continue
+            absolute_merged_inputs = torch.cat((absolute_merged_inputs, curr_merged_absolute_input[:, None, :3, :, :]), dim=1)
+
+            # positions = torch.cat((positions, rasterized_shape), dim=1)
+
+            # stop if stop_pred is above threshold
+            print("stop_pred: ", stop_pred[0, 0])
+            if stop_pred[0, 0] > 0.70:
+                print("REACHED STOP SIGNAL")
+                return absolute_merged_inputs
+            if start_time + t >= positions.size(1):
+                print("REACHED MAX TIMESTEPS")
+                return absolute_merged_inputs
+        return absolute_merged_inputs
+        
+    def _render(self,
+                canvas_width, 
+                canvas_height, 
+                shapes, 
+                shape_groups, 
+                samples=2,
+                seed=42):
+        
+        render = pydiffvg.RenderFunction.apply
+        scene_args = pydiffvg.RenderFunction.serialize_scene(
+            canvas_width, canvas_height, shapes, shape_groups)
+        img = render(canvas_width, canvas_height, samples, samples,
+                    seed,   # seed
+                    None,  # background image
+                    *scene_args)
+        return img
+    
+    def _bezier_render(self, all_points: Tensor, all_widths: Tensor, all_alphas: Tensor,
+                    canvas_size=32, primitive: str = "cubic", colors=None, white_background=True):
+        device = all_points.device
+
+        # all_points = 0.5*(all_points + 1.0) * canvas_size
+        all_points = all_points * canvas_size
+
+        eps = 1e-4
+        all_points = all_points + eps*torch.randn_like(all_points, device=device)
+
+        bs, num_strokes, num_pts, _ = all_points.shape
+        num_segments = (num_pts - 1) // 3
+        n_out = 4
+        output = torch.zeros(bs, n_out, canvas_size, canvas_size,
+                        device=device)
+
+        scenes = []
+        for batch in range(bs):
+            shapes = []
+            shape_groups = []
+            for p in range(num_strokes):
+                points = all_points[batch, p].contiguous()  # (num_pts, 2)
+                if primitive == "cubic":
+                    num_ctrl_pts = torch.zeros(num_segments, dtype=torch.int32) + 2
+                elif primitive == "linear":
+                    if num_segments > 1:
+                        raise NotImplementedError("Linear primitive only supports 1 segment atm")
+                    num_ctrl_pts = torch.zeros(num_segments, dtype=torch.int32)
+                    points = points[[0, 3]]
+                else:
+                    raise NotImplementedError(f"Primitive {primitive} not implemented")
+                width = all_widths[batch, p]
+                alpha = all_alphas[batch, p]
+                if colors is not None:
+                    color = colors[batch, p]
+                else:
+                    color = torch.zeros(3, device=device)
+
+                color = torch.cat([color, alpha.view(1,)])
+
+                path = pydiffvg.Path(
+                    num_control_points=num_ctrl_pts, points=points,
+                    stroke_width=width, is_closed=False)
+                shapes.append(path)
+                path_group = pydiffvg.ShapeGroup(
+                    shape_ids=torch.tensor([len(shapes) - 1]),
+                    fill_color=None,
+                    stroke_color=color)
+                shape_groups.append(path_group)
+
+            # Rasterize
+            scenes.append((canvas_size, canvas_size, shapes, shape_groups))
+            raster = self._render(canvas_size, canvas_size, shapes, shape_groups,
+                            samples=2)
+            raster = raster.permute(2, 0, 1).view(4, canvas_size, canvas_size)
+
+            # alpha = raster[3:4]
+            # if colors is not None:  # color output
+            #     image = raster[:3]
+            #     alpha = alpha.repeat(3, 1, 1)
+            # else:
+            #     image = raster[:1]
+
+            # # alpha compositing
+            # image = image*alpha
+            # output[k] = image
+            output[batch] = raster
+
+        output = output.to(device)
+        
+        if white_background:
+            alpha = output[:, 3:4, :, :]
+            output_white_bg = output[:, :3, :, :] * alpha + (1 - alpha)
+            output = torch.cat([output_white_bg, alpha], dim=1)
+
+        return output, scenes
     
     def transform_loss_tensor_to_image(self, loss_tensor: Tensor):
         """

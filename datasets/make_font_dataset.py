@@ -124,6 +124,8 @@ if __name__ == "__main__":
             if not os.path.exists(output_folder):
                 os.makedirs(output_folder)
             output = os.path.join(BASE_OUT_PATH, char, f"{char}_{output_string}.svg")
+            if os.path.exists(output):
+                continue
             try:
                 converter.generate(char, output)
             except Exception as e:

@@ -95,7 +95,7 @@ elif config['model_params']['name'] == "VectorGPTv2":
 else:    
     experiment = VAEXperiment(model, config['exp_params'])
 
-data = DATASETMAP[config["data_params"]["dataset"]](**config["data_params"], pin_memory=True)
+data = DATASETMAP[config["data_params"]["dataset"]](**config["data_params"])
 
 data.setup()
 runner = Trainer(

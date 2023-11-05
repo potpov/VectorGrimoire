@@ -109,7 +109,7 @@ def get_viewbox(single_path, total_max_diff, offset: float = 1.0):
     center = top_left + diff / 2
     new_top_left = center - complex(total_max_diff / 2, total_max_diff / 2)
     viewbox = f"{new_top_left.real - offset} {new_top_left.imag - offset} {total_max_diff + offset*2} {total_max_diff + offset*2}"
-    return viewbox
+    return viewbox  # "min_x min_y width height"
 
 def get_rasterized_segments(single_paths:list, stroke_width:float, total_max_diff: float, svg_attributes, centered = False):
     if centered:
@@ -166,57 +166,64 @@ def get_positional_array_from_paths(single_paths, svg_attributes):
 
 if __name__ == "__main__":
     SEGMENT_THRESHOLD = 512  # equivalent to context length
-    OUT_DIR = "/scratch2/moritz_data/causal_figr8_trees"
-    CLASS = "tree"
+    OUT_DIR = "/scratch2/moritz_data/causal_google_fonts"
     OVERRIDE = True
     OUT_W = 128
     OUT_H = 128
 
     if OVERRIDE:
         if os.path.exists(OUT_DIR):
-            input("you are about to delete the existing output directory. press enter to continue")
+            input(f"you are about to delete the existing output directory {OUT_DIR}. press enter to continue")
             os.system(f"rm -rf {OUT_DIR}")
 
-    if not os.path.exists(OUT_DIR):
-        os.makedirs(os.path.join(OUT_DIR, CLASS))
+    df = pd.DataFrame(columns=["original_viewbox", "new_viewbox", "segments", 'raster_filename_absolute', "raster_filename_centered", "position_filename", 'class', 'split'])
+    
+    for curr_class in ["B"]:
+        print(f"processing class {curr_class}")
+        if not os.path.exists(OUT_DIR):
+            os.makedirs(os.path.join(OUT_DIR, curr_class))
 
-    start_id = 0
-    df = pd.DataFrame(columns=["segments", 'raster_filename_absolute', "raster_filename_centered", "position_filename", 'class', 'split'])
 
-    statistic_df = pd.read_csv("/home/mfeuerpfeil/master/thesis/datasets/figr8_trees_statistics.csv")
+        # statistic_df = pd.read_csv("/home/mfeuerpfeil/master/thesis/datasets/figr8_trees_statistics.csv")
 
-    all_paths = statistic_df[statistic_df["num_segments"] < SEGMENT_THRESHOLD].file.values
-    print("finding total max diff...")
-    total_max_diff = all_paths_to_max_diff(all_paths, index=4)
-    print(f"found total max diff: {total_max_diff}\n")
+        # all_paths = statistic_df[statistic_df["num_segments"] < SEGMENT_THRESHOLD].file.values
+        # all_paths = glob("/scratch2/moritz_data/openmoji_overfit_normalized/smile/*.svg")
+        all_paths = glob(f"/scratch2/moritz_data/google_fonts_normalized/{curr_class}/*.svg")
+        print(f"processing {len(all_paths)} paths\n")
 
-    for i, path in enumerate(tqdm(all_paths)):
-        paths, attributes, svg_attributes = svg2paths2(path)
-        single_paths = get_single_paths(paths)
+        print("finding total max diff...")
+        total_max_diff = all_paths_to_max_diff(all_paths, index=4)
+        print(f"found total max diff: {total_max_diff}\n")
 
-        rasterized_segments_centered = get_rasterized_segments(single_paths, stroke_width = 0.5, total_max_diff=total_max_diff, svg_attributes=svg_attributes, centered=True)
-        rasterized_segments = get_rasterized_segments(single_paths, stroke_width = 2.0, total_max_diff=total_max_diff, svg_attributes=svg_attributes, centered=False)
+        for i, path in enumerate(tqdm(all_paths)):
+            paths, attributes, svg_attributes = svg2paths2(path)
+            single_paths = get_single_paths(paths)
 
-        position_information = get_positional_array_from_paths(single_paths, svg_attributes)
+            rasterized_segments_centered = get_rasterized_segments(single_paths, stroke_width = 0.5, total_max_diff=total_max_diff, svg_attributes=svg_attributes, centered=True)
+            rasterized_segments = get_rasterized_segments(single_paths, stroke_width = 2.0, total_max_diff=total_max_diff, svg_attributes=svg_attributes, centered=False)
 
-        assert position_information.shape[0] == rasterized_segments_centered.shape[0] == rasterized_segments.shape[0], "something went wrong"
+            position_information = get_positional_array_from_paths(single_paths, svg_attributes)
 
-        raster_filename_absolute = f"I{i}_{len(rasterized_segments)}_Segments_images_absolute.npy"
-        raster_filename_centered = f"I{i}_{len(rasterized_segments)}_Segments_images_centered.npy"
-        position_filename = f"I{i}_{len(rasterized_segments)}_Segments_positions.npy"
+            assert position_information.shape[0] == rasterized_segments_centered.shape[0] == rasterized_segments.shape[0], "something went wrong"
 
-        np.save(os.path.join(OUT_DIR, CLASS, raster_filename_absolute), rasterized_segments)
-        np.save(os.path.join(OUT_DIR, CLASS, raster_filename_centered), rasterized_segments_centered)
-        np.save(os.path.join(OUT_DIR, CLASS, position_filename), position_information)
-        
-        new_row = {
-            "segments" : len(rasterized_segments),
-            "raster_filename_absolute": raster_filename_absolute,
-            "raster_filename_centered": raster_filename_centered,
-            "position_filename": position_filename,
-            "class": CLASS,
-            "split": np.random.choice(["train", "test"], p=[0.8, 0.2])
-        }
-        df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+            raster_filename_absolute = f"I{i}_{len(rasterized_segments)}_Segments_images_absolute.npy"
+            raster_filename_centered = f"I{i}_{len(rasterized_segments)}_Segments_images_centered.npy"
+            position_filename = f"I{i}_{len(rasterized_segments)}_Segments_positions.npy"
 
+            np.save(os.path.join(OUT_DIR, curr_class, raster_filename_absolute), rasterized_segments)
+            np.save(os.path.join(OUT_DIR, curr_class, raster_filename_centered), rasterized_segments_centered)
+            np.save(os.path.join(OUT_DIR, curr_class, position_filename), position_information)
+            
+            new_row = {
+                "original_viewbox" : svg_attributes["viewBox"],
+                "new_viewbox": get_viewbox(single_paths[0], total_max_diff),
+                "segments" : len(rasterized_segments),
+                "raster_filename_absolute": raster_filename_absolute,
+                "raster_filename_centered": raster_filename_centered,
+                "position_filename": position_filename,
+                "class": curr_class,
+                "split": np.random.choice(["train", "test"], p=[0.8, 0.2])
+            }
+            df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+    print("max segments:", df.segments.max())
     df.to_csv(os.path.join(OUT_DIR, 'split.csv'), index=False)

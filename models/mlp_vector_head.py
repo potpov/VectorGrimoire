@@ -247,7 +247,7 @@ class MLPVectorHeadFixed(nn.Module):
         # map to [-1, 1]
         # output = output*2.0 - 1.0
 
-        return output, scenes
+        return output, scenes, all_points, all_widths
     def render(self,
                 canvas_width, 
                 canvas_height, 
