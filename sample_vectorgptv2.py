@@ -9,6 +9,7 @@ from glob import glob
 import random
 from datasets.make_causal_positional_dataset import all_paths_to_max_diff, get_single_paths, svg2paths2, get_positional_array_from_paths
 from svgpathtools import Path, Line, CubicBezier, disvg
+from torchvision.utils import save_image, make_grid
 
 print(torch.cuda.is_available())
 
@@ -30,9 +31,10 @@ if not SKIP_WEIGHT_LOADING:
 
     mapped_state_dict = {}
     for key in state_dict.keys():
-        mapped_state_dict[key.replace("model.", "")] = state_dict[key]
+        mapped_state_dict[key.replace("model.", "").replace("stop_predictor", "stop_predictor.model")] = state_dict[key]
 
-    model.load_state_dict(state_dict, strict=False)
+    model.load_state_dict(mapped_state_dict, strict=True)
+    print("[INFO] LOADED WEIGHTS for font checkpoint")
 model.eval()
 print()
 
@@ -79,10 +81,17 @@ print(positions.shape)
 
 input_bezier_points = all_relative_positions[:,:generation_start_t]
 input_bezier_widths = torch.zeros(1,generation_start_t,1) + 2.0
-max_new_steps = 20
-scale = all_paths_to_max_diff([normalized_svg_path], index=0)
+max_new_steps = 30
+scale = viewbox_scaling / all_paths_to_max_diff([normalized_svg_path], index=0)
 positions = positions
 
-generation = model.generate_from_svg(input_bezier_points, input_bezier_widths, max_new_steps, scale, positions)
+for mode in ["auto_regressive", "teacher_forcing"]:
+    print("Generating for mode:", mode)
+    out = model.generate_from_svg(input_bezier_points, input_bezier_widths, max_new_steps, scale, positions, mode="auto_regressive")
 
+    generation = out[0]
+    all_rasterized_shapes = out[1]
+
+    save_image(make_grid(generation[0]), f"images/vectorgtpv2/{mode}_merged.png")
+    save_image(make_grid(all_rasterized_shapes[0]), f"images/vectorgtpv2/{mode}_centered_single.png")
 print("END")

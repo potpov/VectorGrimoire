@@ -339,7 +339,7 @@ class VectorGPTv2(nn.Module):
         return images
     
     @torch.no_grad()
-    def generate_from_svg(self, input_bezier_points: Tensor, input_bezier_widths: Tensor, max_new_steps: int, scale: float, positions: Tensor):
+    def generate_from_svg(self, input_bezier_points: Tensor, input_bezier_widths: Tensor, max_new_steps: int, scale: float, positions: Tensor, mode="auto_regressive"):
         """
         We assume input mode is absolute_merged here. Does perform padding of the input to match the training input.
 
@@ -349,12 +349,16 @@ class VectorGPTv2(nn.Module):
             - max_new_steps: number of steps to generate
             - scale - the ratio of the full svg bounding box and the individual centered svg bounding box
             - positions - the start and end points for ALL beziers in format (b, t_full, 4), even the ones not part of the input
+            - mode - how to deal with predictions, either append them and use as input ("auto-regressive") or just save them but use GT as input ("teacher-forcing")
         """
+        assert mode in ["auto_regressive", "teacher_forcing"], f"Mode {mode} not supported. Expected 'auto-regressive' or 'teacher-forcing'."
         assert scale > 1.0, "Scale must be larger than 1.0, did you calculate it the wrong way around?"
         assert input_bezier_points.size(0) == 1, "Currently only batch size 1 is supported for generation."
         assert input_bezier_points.size(2) == 4, "Expected input_bezier_points to be in format (b, t, 4, 2)"
         assert input_bezier_points.dim() == 4, "Expected input_bezier_points to be in format (b, t, 4, 2)"
         
+        return_tuple = None
+
         absolute_merged_inputs = []
         for t in range(1, input_bezier_points.size(1)):
             # TODO change this behaviour from [:t] to [t] for individual shape layers instead of merged ones
@@ -367,6 +371,8 @@ class VectorGPTv2(nn.Module):
                                                         white_background=True)
             
             absolute_merged_inputs.append(curr_merged_absolute_input[:,:3,:,:])
+        
+        # this is the Ground Truth throughout the generation process
         absolute_merged_inputs = torch.stack(absolute_merged_inputs, dim=1)  # (b, t, c, w, h)
         
         # add start padding that was also used in training
@@ -376,23 +382,39 @@ class VectorGPTv2(nn.Module):
         positions = torch.cat((pad_pos, positions), dim=1)
         absolute_merged_inputs = torch.cat((pad_input, absolute_merged_inputs), dim=1)
 
-        all_bezier_points = input_bezier_points  # (b, t, 4, 2)
-        all_widths = input_bezier_widths  # (b, t, 1)
+        all_gt_bezier_points = input_bezier_points  # (b, t, 4, 2)
+        all_gt_widths = input_bezier_widths  # (b, t, 1)
 
-        # TODO maybe minus 1 ?
-        start_time = absolute_merged_inputs.size(1)
+        # always start at the middle of all timesteps
+        start_time = absolute_merged_inputs.size(1) // 2
+
+        # this tracks all the generations
+        generations = absolute_merged_inputs[:, :start_time, :, :, :].clone()
+        # teacher_forcing_generations = absolute_merged_inputs[:, :start_time, :, :, :].clone()
+        bezier_predictions = input_bezier_points[:, :start_time, :, :].clone()
+        width_predictions = input_bezier_widths[:, :start_time, :].clone()
+
+        all_rasterized_shapes = []
         for t in range(max_new_steps):
             print(f"Generating step {start_time+t+1} of {start_time+max_new_steps}")
             # if the sequence context is growing too long we must crop it at block_size
-            absolute_merged_inputs_cond = absolute_merged_inputs if absolute_merged_inputs.size(1) <= self.context_length else absolute_merged_inputs[:, -self.context_length:]
-            curr_positions = positions[:, :absolute_merged_inputs_cond.size(1)]
+            if mode == "auto_regressive":
+                curr_auto_regressive_generations = generations
+                curr_input = curr_auto_regressive_generations if curr_auto_regressive_generations.size(1) <= self.context_length else curr_auto_regressive_generations[:, -self.context_length:]
+            elif mode == "teacher_forcing":
+                curr_gt_generations = absolute_merged_inputs[:, :start_time+t, :, :, :]
+                curr_input = curr_gt_generations if curr_gt_generations.size(1) <= self.context_length else curr_gt_generations[:, -self.context_length:]
+
+            curr_positions = positions[:, :curr_input.size(1)]
             curr_positions = curr_positions if curr_positions.size(1) <= self.context_length else curr_positions[:, -self.context_length:]
             # forward the model to get the logits for the index in the sequence
-            _, stop_pred, _, bezier_pred, stroke_width = self.forward(absolute_merged_inputs_cond, curr_positions, only_final_timestep=True, drop_alpha_channel=True)
+            rasterized_shape, stop_pred, _, bezier_pred, stroke_width = self.forward(curr_input, curr_positions, only_final_timestep=True, drop_alpha_channel=True)
+            all_rasterized_shapes.append(rasterized_shape)
             # bezier_pred# (b, 1, self.segments*3+1, 2) 
 
             # scale and shift bezier_pred to fit the absoulte_merged coordinates
             bezier_pred = bezier_pred / scale
+            stroke_width = stroke_width / scale
             start_offset_x = positions[:, start_time+t, 0] - bezier_pred[:,0,0,0]
             start_offset_y = positions[:, start_time+t, 1] - bezier_pred[:,0,0,1]
 
@@ -400,35 +422,41 @@ class VectorGPTv2(nn.Module):
             bezier_pred[:, :, 1] = bezier_pred[:, :, 1] + start_offset_y[:, None]
 
             # append to all_bezier_points
-            all_bezier_points = torch.cat((all_bezier_points, bezier_pred), dim=1)
-            all_widths = torch.cat((all_widths, stroke_width[:, None, :]), dim=1)
+            if mode == "auto_regressive":
+                bezier_predictions = torch.cat([bezier_predictions, bezier_pred], dim=1)
+                width_predictions = torch.cat((width_predictions, stroke_width[:, None, :]), dim=1)
+            elif mode == "teacher_forcing":
+                bezier_predictions = torch.cat([all_gt_widths[:, :start_time+t, :], bezier_pred], dim=1)
+                width_predictions = torch.cat((all_gt_bezier_points[:, :start_time+t, :, :], stroke_width[:, None, :]), dim=1)
             
-            # rasterize new prediction and append it to the absolute_merged_inputs
-            curr_merged_absolute_input, _ = self._bezier_render(all_bezier_points, 
-                                                        all_widths, 
-                                                        torch.ones(*all_widths.shape), 
-                                                        canvas_size=128, 
-                                                        primitive = "cubic", 
-                                                        colors=None, 
-                                                        white_background=True)
-            
+            curr_positioned_pred_shape_rasterized, _ = self._bezier_render(bezier_predictions, 
+                                                    width_predictions, 
+                                                    torch.ones(*width_predictions.shape), 
+                                                    canvas_size=128, 
+                                                    primitive = "cubic", 
+                                                    colors=None, 
+                                                    white_background=True)
 
             # (optional) sample here
 
             # append sampled image to the running sequence and continue
-            absolute_merged_inputs = torch.cat((absolute_merged_inputs, curr_merged_absolute_input[:, None, :3, :, :]), dim=1)
+            curr_positioned_pred_shape_rasterized = curr_positioned_pred_shape_rasterized[:,:3,:,:].unsqueeze(0)
+            generations = torch.cat((generations, curr_positioned_pred_shape_rasterized), dim=1)
+            # absolute_merged_inputs = torch.cat((absolute_merged_inputs, curr_merged_absolute_input[:, None, :3, :, :]), dim=1)
 
             # positions = torch.cat((positions, rasterized_shape), dim=1)
+
+            return_tuple = (generations, torch.stack(all_rasterized_shapes, dim=1), bezier_predictions, width_predictions)
 
             # stop if stop_pred is above threshold
             print("stop_pred: ", stop_pred[0, 0])
             if stop_pred[0, 0] > 0.70:
                 print("REACHED STOP SIGNAL")
-                return absolute_merged_inputs
-            if start_time + t >= positions.size(1):
+                return return_tuple
+            if start_time + t >= positions.size(1) - 1:
                 print("REACHED MAX TIMESTEPS")
-                return absolute_merged_inputs
-        return absolute_merged_inputs
+                return return_tuple
+        return return_tuple
         
     def _render(self,
                 canvas_width, 
