@@ -1,3 +1,4 @@
+from matplotlib import pyplot as plt
 import pandas as pd
 import numpy as np
 import os
@@ -61,37 +62,67 @@ def cubic_single_paths_to_relative_positions(cubic_single_paths, viewbox_scaling
         all_timesteps.append(timestep)
     return torch.stack(all_timesteps)
 
+def main(normalized_svg_path, id:int=0):
+    paths, attributes, svg_attributes = svg2paths2(normalized_svg_path)
+    single_paths = get_single_paths(paths)
 
-data_path = "/scratch2/moritz_data/google_fonts_normalized/B"
-all_svgs = glob(os.path.join(data_path, "*.svg"))
-normalized_svg_path = random.choice(all_svgs)
-print(normalized_svg_path)
+    viewbox_scaling = float(svg_attributes["viewBox"].split(" ")[-2])
+    cubic_single_paths = make_single_paths_cubic(single_paths)
+    all_relative_positions = cubic_single_paths_to_relative_positions(cubic_single_paths, viewbox_scaling=viewbox_scaling).unsqueeze(0)
+    print(all_relative_positions.shape)
 
-paths, attributes, svg_attributes = svg2paths2(normalized_svg_path)
-single_paths = get_single_paths(paths)
+    positions = all_relative_positions[:,:,[0,-1],:].flatten(start_dim=-2)  # (bs, t, 4, 2) -> (bs, t, 4)
+    # generation_start_t = all_relative_positions.size(1) // 2
+    print(positions.shape)
 
-viewbox_scaling = float(svg_attributes["viewBox"].split(" ")[-2])
-cubic_single_paths = make_single_paths_cubic(single_paths)
-all_relative_positions = cubic_single_paths_to_relative_positions(cubic_single_paths, viewbox_scaling=viewbox_scaling).unsqueeze(0)
-print(all_relative_positions.shape)
+    input_bezier_points = all_relative_positions  # [:,:generation_start_t]
+    input_bezier_widths = torch.zeros(1,input_bezier_points.size(1),1) + 2.0
+    max_new_steps = 50
+    scale = viewbox_scaling / all_paths_to_max_diff([normalized_svg_path], index=0)
+    positions = positions
 
-positions = all_relative_positions[:,:,[0,-1],:].flatten(start_dim=-2)  # (bs, t, 4, 2) -> (bs, t, 4)
-generation_start_t = all_relative_positions.size(1) // 2
-print(positions.shape)
+    all_final_preds = []
 
-input_bezier_points = all_relative_positions[:,:generation_start_t]
-input_bezier_widths = torch.zeros(1,generation_start_t,1) + 2.0
-max_new_steps = 30
-scale = viewbox_scaling / all_paths_to_max_diff([normalized_svg_path], index=0)
-positions = positions
+    for mode in ["auto_regressive", "teacher_forcing", "no_input"]:
+        print("Generating for mode:", mode)
+        out = model.generate_from_svg(input_bezier_points, input_bezier_widths, max_new_steps, scale, positions, mode=mode)
 
-for mode in ["auto_regressive", "teacher_forcing"]:
-    print("Generating for mode:", mode)
-    out = model.generate_from_svg(input_bezier_points, input_bezier_widths, max_new_steps, scale, positions, mode="auto_regressive")
+        generation = out[0]
+        all_rasterized_shapes = out[1]
+        final_gt_tensor = out[-1][0]
 
-    generation = out[0]
-    all_rasterized_shapes = out[1]
+        generation_start_t = all_relative_positions.size(1) // 2
+        generation[0][generation_start_t] = torch.minimum(generation[0][generation_start_t], torch.zeros(*generation[0][generation_start_t].shape) + 0.8)
 
-    save_image(make_grid(generation[0]), f"images/vectorgtpv2/{mode}_merged.png")
-    save_image(make_grid(all_rasterized_shapes[0]), f"images/vectorgtpv2/{mode}_centered_single.png")
-print("END")
+        save_image(make_grid(generation[0]), f"images/vectorgtpv2/{id}_{mode}_merged.png")
+        save_image(make_grid(all_rasterized_shapes[0]), f"images/vectorgtpv2/{id}_{mode}_centered_single.png")
+
+        all_final_preds.append({
+            "mode": mode,
+            "generation": generation[0][-1],  # only final timestep
+        })
+    save_comparison_plot(all_final_preds, final_gt_tensor, id)
+    print("Finished with id:", id)
+
+def save_comparison_plot(all_final_preds_dicts, final_gt_tensor, id):
+    """
+    saves a plot of GT and each of the final predictions side-by-side
+    """
+    fig, axs = plt.subplots(1, len(all_final_preds_dicts)+1, figsize=(20,10))  # +1 for GT
+    final_gt_image = final_gt_tensor.numpy().transpose(1,2,0)
+    axs[0].imshow(final_gt_image, cmap="gray")
+    axs[0].set_title("Ground Truth")
+    for i, final_pred_dict in enumerate(all_final_preds_dicts):
+        final_mse = torch.nn.functional.mse_loss(final_gt_tensor, final_pred_dict["generation"])
+        img = final_pred_dict["generation"].numpy().transpose(1,2,0)
+        axs[i+1].imshow(img)
+        axs[i+1].set_title(final_pred_dict["mode"]+f", mse: {np.round(final_mse.item(), decimals=4)}")
+    fig.savefig(f"images/vectorgtpv2/{id}_comparison.png")
+
+if __name__ == '__main__':
+    data_path = "/scratch2/moritz_data/google_fonts_normalized/B"
+    all_svgs = glob(os.path.join(data_path, "*.svg"))
+    for i in range(10):
+        normalized_svg_path = random.choice(all_svgs)
+        print(normalized_svg_path)
+        main(normalized_svg_path, id=i)
