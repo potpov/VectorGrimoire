@@ -45,24 +45,26 @@ class VectorGPTExperimentv2(pl.LightningModule):
         return self.model(input_images, positions, **kwargs)
     
     def training_step(self, batch, batch_idx, optimizer_idx=0):
-        input_absolute_shape_layers, input_centered_shape_layers, input_merged_images, stop_signals, captions, target_centered_shape_layers, positions = batch
+        input_absolute_shape_layers, input_centered_shape_layers, input_merged_images, stop_signals, captions, target_centered_shape_layers, positions, gt_positions = batch
         self.curr_device = input_absolute_shape_layers.device
         bs = input_absolute_shape_layers.shape[0]
 
         if self.input_mode == "absolute_layer":
-            predicted_shapes, stop_preds, _ = self.forward(input_absolute_shape_layers, positions, drop_alpha_channel=False)
+            predicted_shapes, stop_preds, _, pos_preds = self.forward(input_absolute_shape_layers, positions, drop_alpha_channel=False)
         if self.input_mode == "centered_layer":
-            predicted_shapes, stop_preds, _ = self.forward(input_centered_shape_layers, positions, drop_alpha_channel=False)
+            predicted_shapes, stop_preds, _, pos_preds = self.forward(input_centered_shape_layers, positions, drop_alpha_channel=False)
         elif self.input_mode == "absolute_merged":
-            predicted_shapes, stop_preds, _ = self.forward(input_merged_images, positions, drop_alpha_channel=False)
+            predicted_shapes, stop_preds, _, pos_preds = self.forward(input_merged_images, positions, drop_alpha_channel=False)
 
-        train_loss, recons_loss, stop_prediction_loss = self.model.loss_function(
+        train_loss, recons_loss, stop_prediction_loss, position_loss = self.model.loss_function(
             gt_shape_layers=target_centered_shape_layers,
             pred_images=predicted_shapes,
             gt_stop_signals=stop_signals,
             stop_signals=stop_preds,
             gt_merged_targets = None,
             merged_preds = None,
+            position_predictions = pos_preds,
+            gt_positions = gt_positions,
             optimizer_idx=optimizer_idx,
             batch_idx=batch_idx,
             log_loss = batch_idx % self.train_log_interval == 0 and self.wandb
@@ -121,7 +123,8 @@ class VectorGPTExperimentv2(pl.LightningModule):
 
         self.log_dict({"train_loss": train_loss, 
                        "train_recons_loss": recons_loss,
-                       "train_stop_prediction_loss": stop_prediction_loss}, sync_dist=True, prog_bar=True,
+                       "train_stop_prediction_loss": stop_prediction_loss,
+                       "position_loss":position_loss}, sync_dist=True, prog_bar=True,
                        batch_size=bs)
 
         return train_loss
@@ -133,23 +136,25 @@ class VectorGPTExperimentv2(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx, optimizer_idx=0):
 
-        input_absolute_shape_layers, input_centered_shape_layers, input_merged_images, stop_signals, captions, target_centered_shape_layers, positions = batch
+        input_absolute_shape_layers, input_centered_shape_layers, input_merged_images, stop_signals, captions, target_centered_shape_layers, positions, gt_positions = batch
         self.curr_device = input_absolute_shape_layers.device
 
         if self.input_mode == "absolute_layer":
-            predicted_shapes, stop_preds, _ = self.forward(input_absolute_shape_layers, positions)
+            predicted_shapes, stop_preds, _, pos_preds = self.forward(input_absolute_shape_layers, positions)
         elif self.input_mode == "centered_layer":
-            predicted_shapes, stop_preds, _ = self.forward(input_centered_shape_layers, positions)
+            predicted_shapes, stop_preds, _, pos_preds = self.forward(input_centered_shape_layers, positions)
         elif self.input_mode == "absolute_merged":
-            predicted_shapes, stop_preds, _ = self.forward(input_merged_images, positions)
+            predicted_shapes, stop_preds, _, pos_preds = self.forward(input_merged_images, positions)
 
-        val_loss, _, _ = self.model.loss_function(
+        val_loss, _, _, position_loss = self.model.loss_function(
             gt_shape_layers=target_centered_shape_layers,
             pred_images=predicted_shapes,
             gt_stop_signals=stop_signals,
             stop_signals=stop_preds,
             gt_merged_targets = None,
             merged_preds = None,
+            position_predictions = pos_preds,
+            gt_positions = gt_positions,
             optimizer_idx=optimizer_idx,
             batch_idx=batch_idx
         )
@@ -166,7 +171,7 @@ class VectorGPTExperimentv2(pl.LightningModule):
         return {}
     
     def sample_images(self, num_of_samples = 2):
-        input_absolute_shape_layers, input_centered_shape_layers, input_merged_images, stop_signals, captions, target_centered_shape_layers, positions = next(iter(self.trainer.datamodule.val_dataloader()))
+        input_absolute_shape_layers, input_centered_shape_layers, input_merged_images, stop_signals, captions, target_centered_shape_layers, positions, gt_positions = next(iter(self.trainer.datamodule.val_dataloader()))
         input_absolute_shape_layers = input_absolute_shape_layers[:num_of_samples].to(self.curr_device)
         input_centered_shape_layers = input_centered_shape_layers[:num_of_samples].to(self.curr_device)
         input_merged_images = input_merged_images[:num_of_samples].to(self.curr_device)[:, :, :3, :, :]
@@ -175,11 +180,11 @@ class VectorGPTExperimentv2(pl.LightningModule):
 
         with torch.no_grad():
             if self.input_mode == "absolute_layer":
-                predicted_shapes, _, _ = self.forward(input_absolute_shape_layers, positions, drop_alpha_channel = True, verbose = True)
+                predicted_shapes, _, _, _ = self.forward(input_absolute_shape_layers, positions, drop_alpha_channel = True, verbose = True)
             elif self.input_mode == "centered_layer":
-                predicted_shapes, _, _ = self.forward(input_centered_shape_layers, positions, drop_alpha_channel = True, verbose = True)
+                predicted_shapes, _, _, _ = self.forward(input_centered_shape_layers, positions, drop_alpha_channel = True, verbose = True)
             elif self.input_mode == "absolute_merged":
-                predicted_shapes, _, _ = self.forward(input_merged_images, positions, drop_alpha_channel = True, verbose = True)
+                predicted_shapes, _, _, _ = self.forward(input_merged_images, positions, drop_alpha_channel = True, verbose = True)
 
             # make sure there are no small negative numbers for rendering
             dummy = torch.nn.ReLU()

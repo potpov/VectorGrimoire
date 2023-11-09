@@ -55,7 +55,8 @@ class NewCausalSVGDataset(Dataset):
         centered_images = torch.from_numpy(np.load(os.path.join(self.root_path, curr_class, centered_filename)))
         absolute_images = torch.from_numpy(np.load(os.path.join(self.root_path, curr_class, absolute_filename)))
         positions = torch.from_numpy(np.load(os.path.join(self.root_path, curr_class, positions_filename))).to(torch.float32)
-        positions = torch.flatten(positions[:, :, 1:3], start_dim=-2) # (t, 4, 2) -> (t, 4)
+        # TODO test if this correct (expected: should extract start/end point of bezier in relative coordinates)
+        positions = torch.flatten(positions[:, [2,3], :], start_dim=-2) # (t, 4, 2) -> (t, 4)
 
         num_timesteps = centered_images.shape[0]
         if centered_images.max() > 1:
@@ -92,6 +93,9 @@ class NewCausalSVGDataset(Dataset):
         # input is all shifted one place to the right and starts with pos (0, 0, 0, 0)
         input_positions = torch.concat((torch.zeros((1, 4)), positions[:-1]))
 
+        # only take the positions of the first point as gt supervision signal
+        gt_positions = positions[:,:2]
+
         # creating stop ground truth with 0: no stop, 1: stop, -1: padding
         stop_pad_len = pad_len - 1  # stop signals require one less padding than images
         stop_signals = torch.zeros(self.context_length)
@@ -99,7 +103,7 @@ class NewCausalSVGDataset(Dataset):
         if stop_pad_len >= 1:
             stop_signals[-stop_pad_len:] = -1.
         caption = f"black and white icon of a {self.split.iloc[index]['class']}"
-        return input_absolute_shape_layers, input_centered_shape_layers, input_merged_images, stop_signals, caption, centered_shape_layers, input_positions
+        return input_absolute_shape_layers, input_centered_shape_layers, input_merged_images, stop_signals, caption, centered_shape_layers, input_positions, gt_positions
 
     def __len__(self):
         return len(self.split)

@@ -170,6 +170,10 @@ class VectorGPTv2(nn.Module):
                                                 dims=self.stop_predictor_dims,
                                                 activation=self.stop_predictor_activation,
                                                 num_classes=self.stop_predictor_num_classes)
+        self.position_predictor = MultiLayerPerceptron(input_dim=self.latent_transformer_dim,
+                                                dims=[768, 512, 256],
+                                                activation="relu",
+                                                num_classes=2)
         
     def soft_composite(self, layers: list, z_layers: list):
         """
@@ -245,6 +249,7 @@ class VectorGPTv2(nn.Module):
         # then we decode each t iteratively
         rasterized_shapes = []
         stop_preds = []
+        pos_preds = []
         svg_points = []
         z_layers = []
         merged_preds = []
@@ -262,8 +267,10 @@ class VectorGPTv2(nn.Module):
             svg_points.append(bezier_points)
             stroke_widths.append(stroke_width)
             stop_pred = self.stop_predictor.to(transformed_latents.device).forward(transformed_latents[:,t,:])
+            pos_pred = self.position_predictor.to(transformed_latents.device).forward(transformed_latents[:,t,:])
             rasterized_shapes.append(rasterized_shape)
             stop_preds.append(stop_pred)
+            pos_preds.append(pos_pred)
             if "merged" in self.loss_mode:
                 z_pred = self.z_order.to(transformed_latents.device).forward(transformed_latents[:,t,:])
                 z_layers.append(torch.exp(z_pred[:, :, None, None]))
@@ -272,6 +279,7 @@ class VectorGPTv2(nn.Module):
         if only_final_timestep:
             rasterized_shape = rasterized_shapes[-1]  # (b, c, w, h)
             stop_pred = stop_preds[-1]  # (b, t)
+            pos_pred = pos_preds[-1]  # 
             bezier_pred = svg_points[-1]
             stroke_width = stroke_widths[-1]
             if len(merged_preds) > 0:
@@ -280,7 +288,7 @@ class VectorGPTv2(nn.Module):
                 merged_pred = None
             if drop_alpha_channel:
                 rasterized_shape = rasterized_shape[:, :3, :, :]
-            return rasterized_shape, stop_pred, merged_pred, bezier_pred, stroke_width
+            return rasterized_shape, stop_pred, merged_pred, bezier_pred, stroke_width, pos_pred
 
         # re-introduce the time dimension
         rasterized_shapes = torch.stack(rasterized_shapes, dim=1) # (b, t, c, w, h)
@@ -294,7 +302,9 @@ class VectorGPTv2(nn.Module):
         stop_preds = torch.stack(stop_preds, dim=1) # (b, t, 1)
         stop_preds = stop_preds.squeeze(-1) # (b, t)
 
-        return rasterized_shapes, stop_preds, merged_preds
+        pos_preds = torch.stack(pos_preds, dim=1)  # (b, t, 2)
+
+        return rasterized_shapes, stop_preds, merged_preds, pos_preds
     
     @torch.no_grad()
     def generate(self, images: Tensor, positions: Tensor, max_new_steps: int):
@@ -307,7 +317,7 @@ class VectorGPTv2(nn.Module):
 
         Most likely you'll want to make sure to be in model.eval() mode of operation for this.
         """
-
+        raise NotImplementedError("This is not implemented yet. Please use the generate from svg function.")
         assert images.size(0) == 1, "Currently only batch size 1 is supported for generation."
 
         start_time = images.size(1)
@@ -320,7 +330,7 @@ class VectorGPTv2(nn.Module):
             curr_positions = positions[:, :images.size(1)]
             curr_positions = curr_positions if curr_positions.size(1) <= self.context_length else curr_positions[:, -self.context_length:]
             # forward the model to get the logits for the index in the sequence
-            rasterized_shape, stop_pred, _, bezier_pred = self.forward(images_cond, curr_positions, only_final_timestep=True, drop_alpha_channel=True)
+            rasterized_shape, stop_pred, _, bezier_pred, pos_pred = self.forward(images_cond, curr_positions, only_final_timestep=True, drop_alpha_channel=True)
             rasterized_shape = rasterized_shape[:, None, :, :, :]  # (b, 1, c, w, h)
 
             # (optional) sample here
@@ -348,7 +358,7 @@ class VectorGPTv2(nn.Module):
             - input_bezier_widths in format (b, t, 1) - stroke widths for each timestep
             - max_new_steps: number of steps to generate
             - scale - the ratio of the full svg bounding box and the individual centered svg bounding box
-            - positions - the start and end points for ALL beziers in format (b, t, 4)
+            - positions - the start and end points for start/end points of beziers in format (b, t, 4)
             - mode - how to deal with predictions, either append them and use as input ("auto-regressive") or just save them but use GT as input ("teacher-forcing")
         """
         assert mode in ["auto_regressive", "teacher_forcing", "no_input"], f"Mode {mode} not supported. Expected 'auto-regressive' or 'teacher-forcing' or 'no_input'."
@@ -412,7 +422,7 @@ class VectorGPTv2(nn.Module):
             curr_positions = positions[:, :curr_input.size(1)]
             curr_positions = curr_positions if curr_positions.size(1) <= self.context_length else curr_positions[:, -self.context_length:]
             # forward the model to get the logits for the index in the sequence
-            rasterized_shape, stop_pred, _, bezier_pred, stroke_width = self.forward(curr_input, curr_positions, only_final_timestep=True, drop_alpha_channel=True)
+            rasterized_shape, stop_pred, _, bezier_pred, stroke_width, pos_pred = self.forward(curr_input, curr_positions, only_final_timestep=True, drop_alpha_channel=True)
             all_rasterized_shapes.append(rasterized_shape)
             # bezier_pred# (b, 1, self.segments*3+1, 2) 
 
@@ -422,8 +432,14 @@ class VectorGPTv2(nn.Module):
             # scale and shift bezier_pred to fit the absoulte_merged coordinates
             bezier_pred = bezier_pred / scale
             # stroke_width = stroke_width / scale
-            start_offset_x = positions[:, start_time+t, 0] - bezier_pred[:,0,0,0]
-            start_offset_y = positions[:, start_time+t, 1] - bezier_pred[:,0,0,1]
+
+            # TODO this code was used for correct positioning. But it is not needed anymore since we now use predicted coordinates
+            # start_offset_x = positions[:, start_time+t, 0] - bezier_pred[:,0,0,0]
+            # start_offset_y = positions[:, start_time+t, 1] - bezier_pred[:,0,0,1]
+
+            # use predicted coordinates
+            start_offset_x = pos_pred[:, start_time+t, 0] - bezier_pred[:,0,0,0]
+            start_offset_y = pos_pred[:, start_time+t, 1] - bezier_pred[:,0,0,1]
 
             bezier_pred[:, :,:, 0] = bezier_pred[:, :,:, 0] + start_offset_x[:, None]
             bezier_pred[:, :,:, 1] = bezier_pred[:, :,:, 1] + start_offset_y[:, None]
@@ -615,13 +631,24 @@ class VectorGPTv2(nn.Module):
             wandb.log(recons_loss_contributions)
         return recon_loss
 
-    def loss_function(self, gt_shape_layers: Tensor, pred_images: Tensor, gt_stop_signals: Tensor, gt_merged_targets: Tensor, merged_preds:Tensor, stop_signals:Tensor, log_loss: bool = False, **kwargs):
+    def loss_function(self,
+                    gt_shape_layers: Tensor,
+                    pred_images: Tensor,
+                    gt_stop_signals: Tensor,
+                    gt_merged_targets: Tensor,
+                    merged_preds:Tensor,
+                    stop_signals:Tensor,
+                    position_predictions: Tensor,
+                    gt_positions: Tensor,
+                    log_loss: bool = False,
+                    **kwargs):
         """
         Args:
             - gt_shape_layers & pred_images in format (b, t, c, w, h)
             - gt_merged_targets & merged_preds in format (b, t, c, w, h)
             - gt_stop_signals in format (b, t)
             - stop signals in format (b, t)
+            - position_predictions and gt_positions in format (b, t, 2) and denote the position of the first point of the primitive
             - log_loss (bool): Whether to log the loss images to wandb. Default: False
 
         Important: gt_shape_layers are the individually rendered shapes for loss calculation. The complete compositions up to each current timestep is captured in gt_merged_targets.
@@ -668,7 +695,8 @@ class VectorGPTv2(nn.Module):
 
         stop_prediction_loss = F.binary_cross_entropy(selected_stop_signals, selected_gt_stop_signals)
         recons_loss = recons_loss.mean()
+        position_loss = F.mse_loss(position_predictions, gt_positions)
 
-        final_loss = (1 - self.reconstruction_loss_weight)*stop_prediction_loss + self.reconstruction_loss_weight*recons_loss
+        final_loss = (1 - self.reconstruction_loss_weight) * stop_prediction_loss + self.reconstruction_loss_weight * recons_loss + position_loss
 
-        return final_loss, recons_loss, stop_prediction_loss
+        return final_loss, recons_loss, stop_prediction_loss, position_loss
