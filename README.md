@@ -28,7 +28,39 @@ Install our requirements:
 $ conda env update -n SVG --file requirements.yaml
 ```
 
+## process font datasets
+NOTE: all scripts must be modified, paths are hard-coded
+
+
+- fonts are initally in .ttf format
+- convert them to svgs in `thesis/datasets/ttf_to_svg.py`
+
+### process for causal auto-regressive prediction
+- then we need to normalize and split them, which is done in the deepsvg, namely with `deepsvg/dataset/preprocess.py`
+- after that we need to generate the rasterized time-split version with `thesis/datasets/make_causal_positional_dataset.py`
+
 ## DATA
+### Fonts
+#### SVG-VAE - Glyphazzn
+This dataset is often referenced in the following related work as the "SVG-Fonts" dataset. It contains 14M examples across 62 characters (a-z, A-Z, 0-9). That is on average 225k examples for each glyph. At the time of this writing (11/2023) downloading the fonts from this dataset results in many 404 errors and no responses. The download of the remaining fonts can be found in `thesis/datasets/download_glyphazzn_dataset.py`.
+
+After downloading only the ttf files, we get:
+- 28136 fonts
+
+Note: on the conversion to svg, some fonts failed for only a subset of glyphs. E.g. many fonts just could not generate numbers, but all letters without issues.
+
+#### Google Fonts
+[GoogleFonts](https://github.com/google/fonts)
+
+#### Deepvecfont - subset of Glyphazzn
+This work from 2021 has a download available for a subset from SVG-VAE. Can be found [here](https://github.com/yizhiwang96/deepvecfont#customize-your-own-dataset).
+- 27383 train fonts, only ~14500 .ttf files
+- 3045 test fonts
+
+They are all in .ttf, .otf, or .pfb format. I have continued with downloading the still available fonts in .ttf format myself as this yielded more fonts in total and the conversion script was already in place.
+
+
+# DEPRECATION ALERT
 ### MNIST
 To download the dataset, please run the following scripts:
 ```bash
