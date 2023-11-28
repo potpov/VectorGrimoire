@@ -49,6 +49,7 @@ exp_params:
 trainer_params:
   devices: -1  # always keep at -1 as this takes all available GPUs specified through CUDA_VISIBLE_DEVICES
   max_epochs: 250
+  accumulate_grad_batches: 4
 
 logging_params:
   project: "test"  # your wandb project name
