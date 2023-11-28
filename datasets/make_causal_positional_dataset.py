@@ -81,6 +81,7 @@ def calc_max_diff(single_paths):
 
 def all_paths_to_max_diff(all_paths, index:int = 1):
     """
+    calculates the index'th maximum width of a single path in all_paths.
     index is the idx of the max_diff you want to get. idx=0 is largest, idx=1 is second largest, etc.
     """
     all_max_diffs = []
@@ -166,10 +167,13 @@ def get_positional_array_from_paths(single_paths, svg_attributes):
 
 if __name__ == "__main__":
     SEGMENT_THRESHOLD = 512  # equivalent to context length
-    OUT_DIR = "/scratch2/moritz_data/causal_google_fonts"
+    OUT_DIR = "/scratch2/moritz_data/glyphazzn/B_simplified/numpy"
+    INPUT_DIR = "/scratch2/moritz_data/glyphazzn/B_simplified/svgs"
+    DESCRIPTION = ""
     OVERRIDE = True
     OUT_W = 128
     OUT_H = 128
+    MODE = ["first_point_center", "whole_shape_center"]
 
     if OVERRIDE:
         if os.path.exists(OUT_DIR):
@@ -188,7 +192,10 @@ if __name__ == "__main__":
 
         # all_paths = statistic_df[statistic_df["num_segments"] < SEGMENT_THRESHOLD].file.values
         # all_paths = glob("/scratch2/moritz_data/openmoji_overfit_normalized/smile/*.svg")
-        all_paths = glob(f"/scratch2/moritz_data/google_fonts_normalized/{curr_class}/*.svg")
+        
+        
+        #FIXME all_paths = glob(f"{INPUT_DIR}/{curr_class}/*.svg")
+        all_paths = glob(f"{INPUT_DIR}/*.svg")
         print(f"processing {len(all_paths)} paths\n")
 
         print("finding total max diff...")
@@ -215,8 +222,10 @@ if __name__ == "__main__":
             np.save(os.path.join(OUT_DIR, curr_class, position_filename), position_information)
             
             new_row = {
+                "path" : path,
                 "original_viewbox" : svg_attributes["viewBox"],
                 "new_viewbox": get_viewbox(single_paths[0], total_max_diff),
+                "total_max_diff" : total_max_diff,
                 "segments" : len(rasterized_segments),
                 "raster_filename_absolute": raster_filename_absolute,
                 "raster_filename_centered": raster_filename_centered,
@@ -225,5 +234,5 @@ if __name__ == "__main__":
                 "split": np.random.choice(["train", "test"], p=[0.8, 0.2])
             }
             df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
-    print("max segments:", df.segments.max())
-    df.to_csv(os.path.join(OUT_DIR, 'split.csv'), index=False)
+        print("max segments:", df.segments.max())
+        df.to_csv(os.path.join(OUT_DIR, 'split.csv'), index=False)

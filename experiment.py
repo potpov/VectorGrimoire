@@ -5,7 +5,7 @@ import random
 import torch
 from torch import Tensor
 from torch import optim
-from models import BaseVAE, VectorVAEnLayers, VectorGPT, VectorGPTv2
+from models import BaseVAE, VectorVAEnLayers, VectorGPT, VectorGPTv2, Vector_VQVAE
 import pytorch_lightning as pl
 from torchvision import transforms
 import torchvision.utils as vutils
@@ -14,6 +14,39 @@ from torch.utils.data import DataLoader
 from utils import log_images
 from torchmetrics.image.fid import FrechetInceptionDistance
 from torchmetrics.multimodal.clip_score import CLIPScore
+
+class VectorVQVAE_Experiment(pl.LightningModule):
+    """
+    Vector quantized pre-training of an autoencoder for SVG primitives.
+    
+    Input/Output are shape layers and positions.
+    """
+
+    def __init__(self,
+                 model: Vector_VQVAE,
+                 vector_decoder_model: str = "raster_conv",  # or mlp
+                 lr: float = 0.0003,
+                 weight_decay: float = 0.0,
+                 scheduler_gamma: float = 0.99,
+                 train_log_interval: int = 250,
+                 manual_seed: int = 42,
+                 wandb: bool = True,
+                 **kwargs) -> None:
+        super(VectorVQVAE_Experiment, self).__init__()
+
+        self.model = model
+        self.vector_decoder_model = vector_decoder_model
+        self.lr = lr
+        self.weight_decay = weight_decay
+        self.scheduler_gamma = scheduler_gamma
+        self.train_log_interval = train_log_interval
+        self.manual_seed = manual_seed
+        self.curr_device = None
+        self.wandb = wandb
+
+    def forward(self, input_images: Tensor, positions: Tensor, **kwargs) -> Tensor:
+        return self.model(input_images, positions, **kwargs)
+
 
 class VectorGPTExperimentv2(pl.LightningModule):
     def __init__(self,
