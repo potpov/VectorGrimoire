@@ -294,6 +294,9 @@ class MLPVectorHeadFixed(nn.Module):
                         raise NotImplementedError("Linear primitive only supports 1 segment atm")
                     num_ctrl_pts = torch.zeros(num_segments, dtype=torch.int32)
                     points = points[[0, 3]]
+                elif primitive == "quadratic":
+                    num_ctrl_pts = torch.zeros(num_segments, dtype=torch.int32) + 1
+                    points = points[[0, 1, 3]]
                 else:
                     raise NotImplementedError(f"Primitive {primitive} not implemented")
                 width = all_widths[batch, p]
