@@ -105,7 +105,7 @@ class VectorGPTv2(nn.Module):
         self.wandb_logging = wandb_logging
 
         assert self.loss_mode in [None, "default", "pyramid"], f"Loss mode {self.loss_mode} not supported. Merged was deprecated in v2."
-        assert self.vector_decoder_primitive in ["cubic", "linear"], f"Vector decoder primitive {self.vector_decoder_primitive} not supported. Expected 'cubic', 'quadratic' or 'linear'."
+        assert self.vector_decoder_primitive in ["cubic", "linear", "quadratic"], f"Vector decoder primitive {self.vector_decoder_primitive} not supported. Expected 'cubic', 'quadratic' or 'linear'."
 
         if self.image_encoder_model == "resnet18":
             self.resnet = ResNet18(self.image_encoder_latent_dim)
@@ -303,6 +303,7 @@ class VectorGPTv2(nn.Module):
         stop_preds = stop_preds.squeeze(-1) # (b, t)
 
         pos_preds = torch.stack(pos_preds, dim=1)  # (b, t, 2)
+        svg_points = torch.cat(svg_points, dim=1)  # (b, t, 4, 2)
 
         return rasterized_shapes, stop_preds, merged_preds, pos_preds
     
@@ -349,7 +350,7 @@ class VectorGPTv2(nn.Module):
         return images
     
     @torch.no_grad()
-    def generate_from_svg(self, input_bezier_points: Tensor, input_bezier_widths: Tensor, max_new_steps: int, scale: float, positions: Tensor, mode="auto_regressive"):
+    def generate_from_svg(self, input_bezier_points: Tensor, input_bezier_widths: Tensor, max_new_steps: int, scale: float, positions: Tensor, mode="auto_regressive", start_time: int = 0):
         """
         We assume input mode is absolute_merged here. Does perform padding of the input to match the training input.
 
@@ -361,6 +362,7 @@ class VectorGPTv2(nn.Module):
             - positions - the start and end points for start/end points of beziers in format (b, t, 4)
             - mode - how to deal with predictions, either append them and use as input ("auto-regressive") or just save them but use GT as input ("teacher-forcing")
         """
+        assert start_time >= 0 and start_time < input_bezier_points.size(1), f"start_time must be between 0 and {input_bezier_points.size(1)}, got {start_time}" 
         assert mode in ["auto_regressive", "teacher_forcing", "no_input"], f"Mode {mode} not supported. Expected 'auto-regressive' or 'teacher-forcing' or 'no_input'."
         assert scale > 1.0, "Scale must be larger than 1.0, did you calculate it the wrong way around?"
         assert input_bezier_points.size(0) == 1, "Currently only batch size 1 is supported for generation."
@@ -392,12 +394,14 @@ class VectorGPTv2(nn.Module):
 
         positions = torch.cat((pad_pos, positions), dim=1)
         absolute_merged_inputs = torch.cat((pad_input, absolute_merged_inputs), dim=1)
+        start_time = start_time + 1  # account for padding
 
         all_gt_bezier_points = input_bezier_points  # (b, t, 4, 2)
         all_gt_widths = input_bezier_widths  # (b, t, 1)
 
-        # always start at the middle of all timesteps
-        start_time = absolute_merged_inputs.size(1) // 2
+        # # make the gt and predictions different colors, this is the incorrect way of doing it as this is affecting the model's input
+        # colors = torch.zeros((*absolute_merged_inputs.shape[:2], 3), device=absolute_merged_inputs.device)
+        # colors[:,:,1] = 1.0
 
         # this tracks all the generations
         generations = absolute_merged_inputs[:, :start_time, :, :, :].clone()
@@ -407,7 +411,7 @@ class VectorGPTv2(nn.Module):
 
         all_rasterized_shapes = []
         for t in range(max_new_steps):
-            print(f"Generating step {start_time+t+1}/{start_time*2} with max of {start_time+max_new_steps}")
+            print(f"Generating step {start_time+t+1}/{absolute_merged_inputs.size(1)} with max of {start_time+max_new_steps}")
             # if the sequence context is growing too long we must crop it at block_size
             if mode == "auto_regressive":
                 curr_auto_regressive_generations = generations
@@ -428,6 +432,7 @@ class VectorGPTv2(nn.Module):
 
             # print("predicted stroke width", stroke_width)
             stroke_width = torch.tensor([[2.0]])
+            # colors = torch.cat((colors, torch.tensor([[[0.,0.,0.]]], device=colors.device)), dim=1)
 
             # scale and shift bezier_pred to fit the absoulte_merged coordinates
             bezier_pred = bezier_pred / scale
@@ -438,8 +443,8 @@ class VectorGPTv2(nn.Module):
             # start_offset_y = positions[:, start_time+t, 1] - bezier_pred[:,0,0,1]
 
             # use predicted coordinates
-            start_offset_x = pos_pred[:, start_time+t, 0] - bezier_pred[:,0,0,0]
-            start_offset_y = pos_pred[:, start_time+t, 1] - bezier_pred[:,0,0,1]
+            start_offset_x = pos_pred[:, 0] - bezier_pred[:,0,0,0]
+            start_offset_y = pos_pred[:, 1] - bezier_pred[:,0,0,1]
 
             bezier_pred[:, :,:, 0] = bezier_pred[:, :,:, 0] + start_offset_x[:, None]
             bezier_pred[:, :,:, 1] = bezier_pred[:, :,:, 1] + start_offset_y[:, None]
@@ -502,6 +507,7 @@ class VectorGPTv2(nn.Module):
                     *scene_args)
         return img
     
+    # FIXME port the function from the MLP head to here
     def _bezier_render(self, all_points: Tensor, all_widths: Tensor, all_alphas: Tensor,
                     canvas_size=32, primitive: str = "cubic", colors=None, white_background=True):
         device = all_points.device
