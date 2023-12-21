@@ -1,0 +1,33 @@
+model_params:
+  name: "SVG_VAQVAE"  # always keep this "VectorGPT"
+  vector_decoder_model: "mlp" # "mlp" or "raster_conv"
+  quantized_dim: 512
+
+data_params:
+  dataset: "centeredShapeLayers"  # must be in the DATASETMAP in run.py
+  csv_path: "/scratch2/moritz_data/glyphazzn/B_simplified/split.csv"  # root path for CausalSVGDataModule in dataset.py
+  channels: 3  # use 3
+  width: 128  # KEEP THIS SYNC WITH make_causal_svg_dateset
+  train_batch_size: 4
+  val_batch_size:  4
+  num_workers: 4
+  individual_max_length : 10.0  # max length of a single stroke
+
+exp_params:
+  lr: 0.0003  # was 0.0005 originally
+  weight_decay: 1.e-4  # specify positive float to enable, start experimenting with 1.e-4/1.e-3
+  scheduler_gamma: 0.95  # 0.95 is a good starting value
+  train_log_interval: 5 # len(dataset) / train_batch_size / desired_logging_frequency
+  manual_seed: 1265
+
+trainer_params:
+  devices: -1  # always keep at -1 as this takes all available GPUs specified through CUDA_VISIBLE_DEVICES
+  max_epochs: 250
+  accumulate_grad_batches: 2
+
+logging_params:
+  project: "test"  # your wandb project name
+  save_dir: "/scratch2/moritz_logs/SVG_VQVAE/Stage1/glyphazzn_B_simplified"
+  name: "SVG_VQVAE Stage1"  # name of the run in wandb
+  version: 0
+  author: "Moritz"  # will be a tag in wandb

@@ -3,14 +3,14 @@ import yaml
 import argparse
 import numpy as np
 from pathlib import Path
-from experiment import VAEXperiment, VectorGPTExperiment, VectorGPTExperimentv2
 import torch.backends.cudnn as cudnn
 from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import WandbLogger, TensorBoardLogger
 from pytorch_lightning import seed_everything
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, LearningRateFinder, EarlyStopping
-from dataset import MNISTDataset, MNISTppDataset, NounProjectDataset, EmojiDataset, MNISTDatasetCSVG, CausalSVGDataModule, NewCausalSVGDataModule
-from models import VAEctorGen, VectorGPT, VanillaVAE, VectorVAEnLayers, VectorGPTv2
+from dataset import MNISTDataset, MNISTppDataset, NounProjectDataset, EmojiDataset, MNISTDatasetCSVG, CausalSVGDataModule, NewCausalSVGDataModule, CenterShapeLayersFromSVGDataModule
+from models import VAEctorGen, VectorGPT, VanillaVAE, VectorVAEnLayers, VectorGPTv2, Vector_VQVAE
+from experiment import VAEXperiment, VectorGPTExperiment, VectorGPTExperimentv2, VectorVQVAE_Experiment_Stage1
 import wandb
 from utils import get_rank
 import torch
@@ -25,6 +25,7 @@ DATASETMAP = {
     "mnistpp": MNISTppDataset,
     "mnist": MNISTDataset,
     "mnistCSVG": MNISTDatasetCSVG,
+    "centeredShapeLayers" : CenterShapeLayersFromSVGDataModule,
 }
 
 MODELS = {
@@ -33,6 +34,7 @@ MODELS = {
     "VectorVAEnLayers": VectorVAEnLayers,
     "VectorGPT": VectorGPT,
     "VectorGPTv2": VectorGPTv2,
+    "SVG_VAQVAE": Vector_VQVAE,
   }
 
 
@@ -92,7 +94,9 @@ if config['model_params']['name'] == "VectorGPT":
     experiment = VectorGPTExperiment(model, **config['exp_params'], wandb = args.wandb)
 elif config['model_params']['name'] == "VectorGPTv2":
     experiment = VectorGPTExperimentv2(model, **config['exp_params'], wandb = args.wandb)
-else:    
+elif config['model_params']['name'] == "SVG_VAQVAE":
+    experiment = VectorVQVAE_Experiment_Stage1(model, config['exp_params'], wandb = args.wandb)
+else:
     experiment = VAEXperiment(model, config['exp_params'])
 
 data = DATASETMAP[config["data_params"]["dataset"]](**config["data_params"])

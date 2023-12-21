@@ -133,12 +133,14 @@ if __name__ == "__main__":
                 output_string = font_name
 
             # output = f'/scratch2/moritz_data/fonts/svg/{char}/{char}_{output_string}.svg'
+
             split = choice(["train", "test"], p=[0.8, 0.2])
             output_folder = os.path.join(BASE_OUT_PATH, split, char)
             if not os.path.exists(output_folder):
                 os.makedirs(output_folder)
             output = os.path.join(output_folder, f"{char}_{output_string}.svg")
-            if os.path.exists(output):
+            # the splitting is not seeded, so we need to check if the file already exists in any split
+            if os.path.exists(output) or os.path.exists(output.replace("test", "train")) or os.path.exists(output.replace("test", "train")):
                 continue
             try:
                 converter.generate(char, output)
@@ -163,7 +165,11 @@ if __name__ == "__main__":
             df = pd.concat([df, new_row], ignore_index=True)
 
         if i % 2000 == 0:
-            df.to_csv(os.path.join(BASE_OUT_PATH, f"split_{total_iterations_df}th_iteration.csv"), index=False)
+            out_df_path = os.path.join(BASE_OUT_PATH, f"split_{total_iterations_df}th_iteration.csv")
+            while os.path.exists(out_df_path):
+                total_iterations_df = total_iterations_df + 1
+                out_df_path = os.path.join(BASE_OUT_PATH, f"split_{total_iterations_df}th_iteration.csv")
+            df.to_csv(out_df_path, index=False)
             total_iterations_df += 1
             df = pd.DataFrame(columns=columns)
         else:

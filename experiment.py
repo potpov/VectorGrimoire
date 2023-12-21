@@ -15,7 +15,7 @@ from utils import log_images
 from torchmetrics.image.fid import FrechetInceptionDistance
 from torchmetrics.multimodal.clip_score import CLIPScore
 
-class VectorVQVAE_Experiment(pl.LightningModule):
+class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
     """
     Vector quantized pre-training of an autoencoder for SVG primitives.
     
@@ -32,7 +32,7 @@ class VectorVQVAE_Experiment(pl.LightningModule):
                  manual_seed: int = 42,
                  wandb: bool = True,
                  **kwargs) -> None:
-        super(VectorVQVAE_Experiment, self).__init__()
+        super(VectorVQVAE_Experiment_Stage1, self).__init__()
 
         self.model = model
         self.vector_decoder_model = vector_decoder_model
@@ -44,8 +44,109 @@ class VectorVQVAE_Experiment(pl.LightningModule):
         self.curr_device = None
         self.wandb = wandb
 
-    def forward(self, input_images: Tensor, positions: Tensor, **kwargs) -> Tensor:
-        return self.model(input_images, positions, **kwargs)
+    def forward(self, input_images: Tensor, **kwargs) -> list:
+        return self.model.forward(input_images, **kwargs)
+    
+    def training_step(self, batch, batch_idx, optimizer_idx=0):
+        all_center_shapes, label = batch  # TODO this has one dimension too much rn
+        self.curr_device = all_center_shapes.device
+        bs = all_center_shapes.shape[0]
+        channels = all_center_shapes.shape[1]
+
+        out = self.forward(all_center_shapes)
+        reconstructions=out[0]
+        inputs = all_center_shapes
+        vq_loss=out[2]
+
+        loss_dict = self.model.loss_function(
+            reconstructions=reconstructions[:,:channels,:,:],
+            gt_images=inputs,
+            vq_loss=vq_loss,
+        )
+    
+        # always log the first batch and variable amount of timesteps up to 10
+        if batch_idx % self.train_log_interval == 0 and self.wandb:
+            if reconstructions[0].shape[0] > 10:
+                log_amount = 10
+            else:
+                log_amount = reconstructions[0].shape[0]
+
+            # Log input against prediction
+            log_images(
+                reconstructions[0][:log_amount],
+                inputs[:log_amount],
+                log_key="input (left) vs. reconstruction (right)",
+                captions=""
+            )
+
+
+        self.log_dict(loss_dict, sync_dist=True, prog_bar=True,
+                       batch_size=bs)
+
+        return loss_dict["loss"]
+
+    def on_train_epoch_end(self):
+        # gc.collect()
+        # torch.cuda.empty_cache()
+        return {}
+
+    def validation_step(self, batch, batch_idx, optimizer_idx=0):
+
+        all_center_shapes, label = batch  # TODO this has one dimension too much rn
+        self.curr_device = all_center_shapes.device
+        bs = all_center_shapes.shape[0]
+        channels = all_center_shapes.shape[1]
+
+        out = self.forward(all_center_shapes)
+        reconstructions=out[0]
+        inputs = all_center_shapes
+        vq_loss=out[2]
+
+        loss_dict = self.model.loss_function(
+            reconstructions=reconstructions[:,:channels,:,:],
+            gt_images=inputs,
+            vq_loss=vq_loss,
+        )
+
+        self.log_dict({"val_loss": loss_dict["loss"]}, sync_dist=True, prog_bar=True)
+        return loss_dict["loss"]
+
+    def on_validation_end(self) -> None:
+        # if self.wandb:
+        #     self.sample_images()
+        # gc.collect()
+        # torch.cuda.empty_cache()
+        return {}
+    
+    def configure_optimizers(self):
+
+        optims = []
+        scheds = []
+
+        param_group_1 = {'params': self.model.parameters(), 'lr': self.lr}
+        param_groups = [param_group_1]
+
+        if not self.weight_decay:
+            optimizer = optim.AdamW(
+                param_groups,
+                lr=self.lr,
+                weight_decay=self.weight_decay
+            )
+        else:
+            # learning rates should be explicitly specified in the param_groups
+            optimizer = optim.Adam(param_groups)
+        optims.append(optimizer)
+        
+        try:
+            if self.scheduler_gamma is not None:
+                scheduler = optim.lr_scheduler.ExponentialLR(optims[0],
+                                                             gamma = self.scheduler_gamma)
+                scheds.append(scheduler)
+
+                return optims, scheds
+        except:
+            pass
+        return optims
 
 
 class VectorGPTExperimentv2(pl.LightningModule):

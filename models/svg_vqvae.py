@@ -43,53 +43,55 @@ class Vector_VQVAE(nn.Module):
     """
     Vector quantized pre-training of an autoencoder for SVG primitives.
     
-    Input/Output are shape layers and positions.
+    Input/Output are shape layers, no positions. Positions are decoded using the transformer in Stage II.
 
     TODO:
-        - reduce encoding dimension from (512, 4, 4) to something more reasonable like (512, 2, 2)
-        - add powerful network before the MLP vector head
+        - reduce encoding dimension from (512, 4, 4) to something more reasonable like (512, 2, 2), this must also be changed in the quantize layer
+        - add powerful network before the MLP vector head?
         - pyramid loss for vector mlp head
     """
 
-    def __init__(self, 
-                 vector_decoder_model: str = "mlp", 
+    def __init__(self,
+                 vector_decoder_model: str = "mlp",
+                 quantized_dim: int = 512,
                  **kwargs) -> None:
-        super().__init__(**kwargs)
+        super(Vector_VQVAE, self).__init__()
 
         assert vector_decoder_model in ["mlp", "raster_conv"], "vector_decoder_model must be one of ['mlp', 'raster_conv']"
 
         self.vector_decoder_model = vector_decoder_model
+        self.quantized_dim = quantized_dim
 
-        self.encoder = ResNet(BasicBlock, 
-                              [2, 2, 2, 2], 
-                              10, 
-                              skip_linear=True)  # outputs (b, 512, 4, 4)
-        self.quantize_layer = VectorQuantizer(num_embeddings=64, 
-                                              embedding_dim=512, 
-                                              beta=0.25)
-
-        self.latent_dim = 512 * 4 * 4
+        self.encoder = ResNet(BasicBlock,
+                              [2, 2, 2, 2],
+                              10,
+                              skip_linear=True)  # outputs (b, 512, 4, 4) - final W x H essentially decides the number of quantized vectors that form a single image, here its 4*4=16
+        
+        self.quantize_layer = VectorQuantizer(num_embeddings = 64,
+                                              embedding_dim = self.quantized_dim,
+                                              beta = 0.25)
+        
+        self.latent_dim = self.quantized_dim * 4 * 4  # 4*4 is the final W x H of the encoder
         
         if self.vector_decoder_model == "mlp":
             self.decoder = MLPVectorHeadFixed(latent_dim = self.latent_dim,
-                                              segments = 1, 
+                                              segments = 1,
                                               imsize = 128,
                                               max_stroke_width=20.)
         elif self.vector_decoder_model == "raster_conv":
             self.decoder = DeconvResNet()
-        
-        self.position_decoder = MultiLayerPerceptron(self.latent_dim, 
-                                                     dims=[768, 512, 256, 128], 
-                                                     num_classes=2)
 
-    def encode(self, input: Tensor):
+    def encode(self, input: Tensor, quantize: bool = False):
         """
         Encodes the input by passing through the encoder network
         and returns the latent codes.
         :param input: (Tensor) Input tensor to encoder [N x C x H x W]
         :return: (Tensor) latent codes
         """
-        result = self.encoder(input)
+        result = self.encoder.forward(input)
+        # result = self.mapping_layer(result.view(-1, 512 * 4 * 4))
+        if quantize:
+            result = self.quantize_layer(result)
         return result
     
     
@@ -107,39 +109,29 @@ class Vector_VQVAE(nn.Module):
     
     
     def forward(self, input: Tensor, **kwargs):
-        encoding = self.encode(input)
-        print("encoding: ",encoding.shape)
+        encoding = self.encode(input, quantize=False)
+        bs = encoding.shape[0]
         if self.vector_decoder_model == "mlp":
             # quantize the encoding
             quantized_inputs, vq_loss = self.quantize_layer(encoding)
             # flatten it for MLP digestion
-            quantized_inputs = quantized_inputs.view(-1, self.latent_dim)
-            print("quantized_inputs: ", quantized_inputs.shape)
-            positions = self.position_decoder(quantized_inputs)
+            quantized_inputs = quantized_inputs.view(bs, self.latent_dim)
+            # print("quantized_inputs: ", quantized_inputs.shape)
         elif self.vector_decoder_model == "raster_conv":
             quantized_inputs, vq_loss = self.quantize_layer(encoding)
-            positions = None  # dont need positions, everything is already rastered
-        return [self.decode(quantized_inputs), positions, input, vq_loss]
+        return [self.decode(quantized_inputs), input, vq_loss]
     
     def loss_function(self,
                       reconstructions: Tensor,
                       gt_images: Tensor,
                       vq_loss: Tensor,
-                      pred_positions: Tensor,
-                      gt_positions: Tensor,
                       **kwargs) -> dict:
 
         recons_loss = F.mse_loss(reconstructions, gt_images)
-        if pred_positions is None:
-            positional_loss = torch.tensor(0.)
-        else:
-            positional_loss = F.mse_loss(pred_positions, gt_positions)
-
-        loss = recons_loss + vq_loss + positional_loss
+        loss = recons_loss + vq_loss
         return {'loss': loss,
                 'Reconstruction_Loss': recons_loss,
-                'VQ_Loss':vq_loss,
-                "positional_loss": positional_loss}
+                'VQ_Loss':vq_loss}
     
     def sample(self,
                num_samples: int,

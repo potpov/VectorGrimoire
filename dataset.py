@@ -10,6 +10,126 @@ import glob
 import pandas as pd
 import numpy as np
 
+from utils import svg2paths2, disvg, raster, get_single_paths, get_similar_length_paths, check_for_continouity
+import copy
+class CenterShapeLayersFromSVGDataset(Dataset):
+    """
+    This dataset takes SVG files and preprocesses them into rasterized centered shape layers.
+
+    Args:
+        - csv_path: path to csv file with the following columns:
+            - file_path: full path to svg file
+            - class: class label
+            - split: "train" or "test"
+        - channels: number of channels for the rasterized images
+        - width: width/height of the rasterized images
+    """
+
+    def __init__(self, 
+                 csv_path: str,
+                 channels: int,
+                 width: int,
+                 train: bool = True,
+                 individual_max_length: float = 10.,
+                 **kwargs):
+        super(CenterShapeLayersFromSVGDataset, self)
+        self.csv_path = csv_path
+        self.individual_max_length = individual_max_length
+        self.channels = channels
+        self.width = width
+        self.train = train
+        self.split = pd.read_csv(self.csv_path)
+        self.split = self.split[self.split["split"] == ("train" if self.train else "test")]
+
+    def __getitem__(self, index) -> tuple:
+        svg_path = self.split.iloc[index]["file_path"]
+        label = self.split.iloc[index]["class"]
+        paths, attributes, svg_attributes = svg2paths2(svg_path)
+        single_paths = get_single_paths(paths)
+        queue = copy.deepcopy(single_paths)
+        sim_length_paths = get_similar_length_paths(queue, self.individual_max_length)
+        assert check_for_continouity(sim_length_paths), "paths are not continous"
+        
+        all_center_shapes = raster(disvg(sim_length_paths[0], paths2Drawing=True), out_h=self.width, out_w=self.width)
+        # all_center_shapes = all_center_shapes.unsqueeze(dim=0)  # ready shape for stacking
+        # for path in sim_length_paths[1:]:
+        #     rasterized_center_shape = raster(disvg(path, paths2Drawing=True), out_h=self.width, out_w=self.width)
+        #     all_center_shapes = torch.cat((all_center_shapes, rasterized_center_shape.unsqueeze(dim=0)), dim=0)
+        
+        return all_center_shapes, label
+
+    def __len__(self):
+        return len(self.split)
+
+class CenterShapeLayersFromSVGDataModule(LightningDataModule):
+    def __init__(
+        self,
+        csv_path: str,
+        train_batch_size: int,
+        val_batch_size: int,
+        channels: int,
+        width: int,
+        individual_max_length: float = 10.,
+        num_workers: int = 0,
+        **kwargs,
+    ):
+        super().__init__()
+
+        self.train_batch_size = train_batch_size
+        self.val_batch_size = val_batch_size
+        self.num_workers = num_workers
+        self.csv_path = csv_path
+        self.channels = channels
+        self.width = width
+        self.num_workers = num_workers
+        self.individual_max_length = individual_max_length
+
+    def setup(self, stage: Optional[str] = None) -> None:
+        self.train_dataset = CenterShapeLayersFromSVGDataset(
+            self.csv_path,
+            self.channels,
+            self.width,
+            train=True,
+            individual_max_length=self.individual_max_length
+        )
+
+        self.val_dataset = CenterShapeLayersFromSVGDataset(
+            self.csv_path,
+            self.channels,
+            self.width,
+            train=False,
+            individual_max_length=self.individual_max_length
+        )
+
+    #       ===============================================================
+
+    def train_dataloader(self) -> DataLoader:
+        return DataLoader(
+            self.train_dataset,
+            batch_size=self.train_batch_size,
+            num_workers=self.num_workers,
+            shuffle=True,
+            pin_memory=False,
+        )
+
+    def val_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
+        return DataLoader(
+            self.val_dataset,
+            batch_size=self.val_batch_size,
+            num_workers=self.num_workers,
+            shuffle=False,
+            pin_memory=False,
+        )
+
+    def test_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
+        return DataLoader(
+            self.val_dataset,
+            batch_size=16,
+            num_workers=self.num_workers,
+            shuffle=False,
+            pin_memory=False,
+        )
+
 class NewCausalSVGDataset(Dataset):
     """
     New FIGR8 dataset from a root directory for causal svg generation.
