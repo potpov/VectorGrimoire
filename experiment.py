@@ -66,14 +66,14 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
     
         # always log the first batch and variable amount of timesteps up to 10
         if batch_idx % self.train_log_interval == 0 and self.wandb:
-            if reconstructions[0].shape[0] > 10:
+            if reconstructions.shape[0] > 10:
                 log_amount = 10
             else:
-                log_amount = reconstructions[0].shape[0]
+                log_amount = reconstructions.shape[0]
 
             # Log input against prediction
             log_images(
-                reconstructions[0][:log_amount],
+                reconstructions[:log_amount],
                 inputs[:log_amount],
                 log_key="input (left) vs. reconstruction (right)",
                 captions=""

@@ -111,10 +111,13 @@ def raster(svg_file: Drawing, out_h: int = 128, out_w: int = 128):
     svg_png_image = svg2png(
         bytestring=svg_file.tostring(),
         output_width=out_w,
-        output_height=out_h)
+        output_height=out_h,
+        background_color="white")
     img = Image.open(io.BytesIO(svg_png_image))
+    # rgb_image = Image.new("RGB", img.size, (255, 255, 255))
+    # rgb_image.paste(img, mask=img.split()[3])
     transform = transforms.ToTensor()
-    tensor_image = transform(img)[:3,:,:]
+    tensor_image = transform(img)
     return tensor_image
 
 def plot_segments(rasterized_segments, title:str="A disassembled tree"):

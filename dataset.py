@@ -50,7 +50,8 @@ class CenterShapeLayersFromSVGDataset(Dataset):
         sim_length_paths = get_similar_length_paths(queue, self.individual_max_length)
         assert check_for_continouity(sim_length_paths), "paths are not continous"
         
-        all_center_shapes = raster(disvg(sim_length_paths[0], paths2Drawing=True), out_h=self.width, out_w=self.width)
+        all_center_shapes = raster(disvg(sim_length_paths[0], paths2Drawing=True, stroke_widths=[1.]), out_h=self.width, out_w=self.width)
+        
         # all_center_shapes = all_center_shapes.unsqueeze(dim=0)  # ready shape for stacking
         # for path in sim_length_paths[1:]:
         #     rasterized_center_shape = raster(disvg(path, paths2Drawing=True), out_h=self.width, out_w=self.width)
