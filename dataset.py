@@ -10,8 +10,9 @@ import glob
 import pandas as pd
 import numpy as np
 
-from utils import svg2paths2, disvg, raster, get_single_paths, get_similar_length_paths, check_for_continouity
+from utils import svg2paths2, disvg, raster, get_single_paths, get_similar_length_paths, check_for_continouity, get_rasterized_segments, all_paths_to_max_diff
 import copy
+import random
 class CenterShapeLayersFromSVGDataset(Dataset):
     """
     This dataset takes SVG files and preprocesses them into rasterized centered shape layers.
@@ -31,14 +32,19 @@ class CenterShapeLayersFromSVGDataset(Dataset):
                  width: int,
                  train: bool = True,
                  individual_max_length: float = 10.,
+                 stroke_width: float = 0.3,
+                 max_shapes_per_svg: int = 64,
                  **kwargs):
         super(CenterShapeLayersFromSVGDataset, self)
         self.csv_path = csv_path
         self.individual_max_length = individual_max_length
+        self.stroke_width = stroke_width
+        self.max_shapes_per_svg = max_shapes_per_svg
         self.channels = channels
         self.width = width
         self.train = train
         self.split = pd.read_csv(self.csv_path)
+        self.max_diff = all_paths_to_max_diff(self.split["file_path"].values, index=int(0.05 * len(self.split)))
         self.split = self.split[self.split["split"] == ("train" if self.train else "test")]
 
     def __getitem__(self, index) -> tuple:
@@ -49,18 +55,23 @@ class CenterShapeLayersFromSVGDataset(Dataset):
         queue = copy.deepcopy(single_paths)
         sim_length_paths = get_similar_length_paths(queue, self.individual_max_length)
         assert check_for_continouity(sim_length_paths), "paths are not continous"
+        arr = get_rasterized_segments(sim_length_paths, self.stroke_width, self.max_diff, svg_attributes, centered=True, height=self.width, width=self.width)
+        imgs = torch.stack(arr)  # (n_shapes, channels, width, width)
+        if imgs.size(0) > self.max_shapes_per_svg:
+            radn_start_index = random.randint(0, imgs.size(0) - self.max_shapes_per_svg)
+            imgs = imgs[radn_start_index:radn_start_index + self.max_shapes_per_svg]
+            attention_mask = torch.ones(self.max_shapes_per_svg)
+        else:
+            attention_mask = torch.ones(imgs.size(0))
+            imgs = torch.cat((imgs, torch.ones(self.max_shapes_per_svg - imgs.size(0), self.channels, self.width, self.width)), dim=0)
+            attention_mask = torch.cat((attention_mask, torch.zeros(self.max_shapes_per_svg - attention_mask.size(0))), dim=0)
         
-        all_center_shapes = raster(disvg(sim_length_paths[0], paths2Drawing=True, stroke_widths=[1.]), out_h=self.width, out_w=self.width)
-        
-        # all_center_shapes = all_center_shapes.unsqueeze(dim=0)  # ready shape for stacking
-        # for path in sim_length_paths[1:]:
-        #     rasterized_center_shape = raster(disvg(path, paths2Drawing=True), out_h=self.width, out_w=self.width)
-        #     all_center_shapes = torch.cat((all_center_shapes, rasterized_center_shape.unsqueeze(dim=0)), dim=0)
-        
-        return all_center_shapes, label
+        return imgs, attention_mask, label
 
     def __len__(self):
         return len(self.split)
+    
+    def get_similar_path_segments(self, index):
 
 class CenterShapeLayersFromSVGDataModule(LightningDataModule):
     def __init__(

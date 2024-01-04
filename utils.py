@@ -193,12 +193,12 @@ def get_viewbox(single_path, total_max_diff, offset: float = 1.0):
     viewbox = f"{new_top_left.real - offset} {new_top_left.imag - offset} {total_max_diff + offset*2} {total_max_diff + offset*2}"
     return viewbox
 
-def get_rasterized_segments(single_paths:list, stroke_width:float, total_max_diff: float, svg_attributes, centered = False):
+def get_rasterized_segments(single_paths:list, stroke_width:float, total_max_diff: float, svg_attributes, centered = False, height: int = 128, width: int = 128) -> List:
     if centered:
-        return np.array([raster(disvg(my_path, paths2Drawing=True, stroke_widths=[stroke_width] * len(my_path), viewbox=get_viewbox(my_path, total_max_diff))) for my_path in single_paths if my_path.length() > 0.])
+        return [raster(disvg(my_path, paths2Drawing=True, stroke_widths=[stroke_width] * len(my_path), viewbox=get_viewbox(my_path, total_max_diff)), out_h = height, out_w = width) for my_path in single_paths if my_path.length() > 0.]
     else:
         viewbox=svg_attributes["viewBox"]
-        return np.array([raster(disvg(my_path, paths2Drawing=True, stroke_widths=[stroke_width] * len(my_path), viewbox=viewbox)) for my_path in single_paths if my_path.length() > 0.])
+        return [raster(disvg(my_path, paths2Drawing=True, stroke_widths=[stroke_width] * len(my_path), viewbox=viewbox), out_h = height, out_w = width) for my_path in single_paths if my_path.length() > 0.]
 
 def svg_path_to_segment_image_arrays(svg_path, total_max_diff: float):
     """
