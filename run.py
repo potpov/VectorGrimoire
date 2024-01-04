@@ -63,13 +63,17 @@ if args.debug:
 current_process_rank = get_rank()
 
 if args.wandb:
+    if "entity" not in config['logging_params']:
+        entity = "mfeuer"
+    else:
+        entity = config['logging_params']['entity']
     wandb_logger = WandbLogger(
         name=config['logging_params']['name'],
         save_dir=config['logging_params']['save_dir'],
         tags=[config['logging_params']['author']],
         project=config["logging_params"]["project"],
         log_model=True,
-        entity="aiis-chair",
+        entity=entity,
         mode="disabled" if args.debug else "online",
     )
     if current_process_rank == 0:

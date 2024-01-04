@@ -5,6 +5,7 @@ import random
 import torch
 from torch import Tensor
 from torch import optim
+import wandb
 from models import BaseVAE, VectorVAEnLayers, VectorGPT, VectorGPTv2, Vector_VQVAE
 import pytorch_lightning as pl
 from torchvision import transforms
@@ -45,7 +46,8 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
         self.wandb = wandb
 
     def forward(self, input_images: Tensor, **kwargs) -> list:
-        return self.model.forward(input_images, **kwargs)
+        out, logging_dict = self.model.forward(input_images, **kwargs)
+        return out, logging_dict
     
     def training_step(self, batch, batch_idx, optimizer_idx=0):
         all_center_shapes, label = batch  # TODO this has one dimension too much rn
@@ -53,7 +55,7 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
         bs = all_center_shapes.shape[0]
         channels = all_center_shapes.shape[1]
 
-        out = self.forward(all_center_shapes)
+        out, logging_dict = self.forward(all_center_shapes)
         reconstructions=out[0]
         inputs = all_center_shapes
         vq_loss=out[2]
@@ -66,6 +68,8 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
     
         # always log the first batch and variable amount of timesteps up to 10
         if batch_idx % self.train_log_interval == 0 and self.wandb:
+            logging_dict = {f"train/{key}": value for key, value in logging_dict.items()}
+            wandb.log(logging_dict)
             if reconstructions.shape[0] > 10:
                 log_amount = 10
             else:
@@ -79,10 +83,7 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
                 captions=""
             )
 
-
-        self.log_dict(loss_dict, sync_dist=True, prog_bar=True,
-                       batch_size=bs)
-
+        self.log_dict(loss_dict)
         return loss_dict["loss"]
 
     def on_train_epoch_end(self):
@@ -97,7 +98,7 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
         bs = all_center_shapes.shape[0]
         channels = all_center_shapes.shape[1]
 
-        out = self.forward(all_center_shapes)
+        out, logging_dict = self.forward(all_center_shapes)
         reconstructions=out[0]
         inputs = all_center_shapes
         vq_loss=out[2]
@@ -108,7 +109,10 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
             vq_loss=vq_loss,
         )
 
-        self.log_dict({"val_loss": loss_dict["loss"]}, sync_dist=True, prog_bar=True)
+        if batch_idx % self.train_log_interval == 0 and self.wandb:
+            logging_dict = {f"val/{key}": value for key, value in logging_dict.items()}
+            wandb.log(logging_dict)
+        self.log("val_loss", loss_dict["loss"])
         return loss_dict["loss"]
 
     def on_validation_end(self) -> None:

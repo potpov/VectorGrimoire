@@ -4,7 +4,7 @@ from torch import nn
 from torch.nn import functional as F
 from typing import List
 import pydiffvg
-
+import wandb
 
 class MLPVectorHead(nn.Module):
     """
@@ -178,6 +178,7 @@ class MLPVectorHeadFixed(nn.Module):
         super(MLPVectorHeadFixed, self).__init__()
 
         self.stroke_width = max_stroke_width
+        self.min_stroke_width = 0.3
         self.imsize = imsize
         self.segments = segments
         self.latent_dim = latent_dim
@@ -215,11 +216,17 @@ class MLPVectorHeadFixed(nn.Module):
             )
 
     def forward(self, z, primitive: str = "cubic", **kwargs):
+        logging_dict = {}
         bs = z.shape[0]
 
         feats = z
         all_points = self.point_predictor(feats)
         all_widths = self.stroke_predictor(feats) * self.stroke_width
+        all_widths = torch.max(all_widths, torch.ones_like(all_widths)*self.min_stroke_width)  # enforce min stroke width
+        data = [[s] for s in all_widths.detach().cpu().flatten()]
+        table = wandb.Table(data=data, columns=["stroke_widths"])
+        # logging_dict["stroke_width"] = wandb.Histogram(all_widths.detach().cpu().flatten())
+        logging_dict["stroke_width"] = wandb.plot.histogram(table, "stroke_widths", title="Stroke Width Predictions")
 
         if self.color_predictor:
             all_colors = self.color_predictor(feats)
@@ -247,7 +254,7 @@ class MLPVectorHeadFixed(nn.Module):
         # map to [-1, 1]
         # output = output*2.0 - 1.0
 
-        return output, scenes, all_points, all_widths
+        return [output, scenes, all_points, all_widths], logging_dict
     def render(self,
                 canvas_width, 
                 canvas_height, 

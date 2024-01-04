@@ -1,4 +1,5 @@
 from typing import Union
+import kornia
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -54,6 +55,7 @@ class Vector_VQVAE(nn.Module):
     def __init__(self,
                  vector_decoder_model: str = "mlp",
                  quantized_dim: int = 512,
+                 image_loss: str = "pyramid",
                  **kwargs) -> None:
         super(Vector_VQVAE, self).__init__()
 
@@ -61,6 +63,7 @@ class Vector_VQVAE(nn.Module):
 
         self.vector_decoder_model = vector_decoder_model
         self.quantized_dim = quantized_dim
+        self.image_loss = image_loss
 
         self.encoder = ResNet(BasicBlock,
                               [2, 2, 2, 2],
@@ -102,13 +105,14 @@ class Vector_VQVAE(nn.Module):
         :return: (Tensor) [B x C x H x W]
         """
 
-        result = self.decoder.forward(z)
+        result, logging_dict = self.decoder.forward(z)
         if self.vector_decoder_model == "mlp":
             result = result[0]  # extract only the raster image for now
-        return result
+        return result, logging_dict
     
     
     def forward(self, input: Tensor, **kwargs):
+        logging_dict = {}
         encoding = self.encode(input, quantize=False)
         bs = encoding.shape[0]
         if self.vector_decoder_model == "mlp":
@@ -119,15 +123,60 @@ class Vector_VQVAE(nn.Module):
             # print("quantized_inputs: ", quantized_inputs.shape)
         elif self.vector_decoder_model == "raster_conv":
             quantized_inputs, vq_loss = self.quantize_layer(encoding)
-        return [self.decode(quantized_inputs), input, vq_loss]
+        
+        out, decode_logging_dict = self.decode(quantized_inputs)
+        logging_dict = {**logging_dict, **decode_logging_dict}
+        return [out, input, vq_loss], logging_dict
     
+    def gaussian_pyramid_loss(self, recons_images: Tensor, gt_images: Tensor, down_sample_steps: int = 3, log_loss: bool = False):
+        """
+        Calculates the gaussian pyramid loss between reconstructed images and ground truth images.
+
+        Args:
+            - recons_images (Tensor): Reconstructed images in format (-1, c, w, h)
+            - gt_images (Tensor): Ground truth images in format (-1, c, w, h)
+            - down_sample_steps (int): Number of downsample steps to calculate the loss for. Default: 3
+
+        Returns:
+            - recon_loss (Tensor): The gaussian pyramid loss between reconstructed images and ground truth images.
+        """
+        dsample = kornia.geometry.transform.pyramid.PyrDown()
+        timesteps_to_log = 4
+        recon_loss = F.mse_loss(recons_images, gt_images, reduction='none')
+        recons_loss_contributions = {}
+        if log_loss:
+            all_loss_images = []
+            all_loss_images.append(self.transform_loss_tensor_to_image(recon_loss[:timesteps_to_log]))
+        recon_loss = recon_loss.mean()
+        for j in range(2, 2 + down_sample_steps):
+            weight = 1 / j
+            recons_images = dsample(recons_images)
+            gt_images = dsample(gt_images)
+            loss_images = F.mse_loss(recons_images, gt_images, reduction='none')
+            if log_loss:
+                all_loss_images.append(self.transform_loss_tensor_to_image(loss_images[:timesteps_to_log]))
+
+            curr_pyramid_loss = loss_images.mean() / weight
+            recons_loss_contributions[f"pyramid_loss_step_{j-1}"] = curr_pyramid_loss
+            recon_loss = recon_loss + curr_pyramid_loss
+
+        if log_loss:
+            log_all_images(all_loss_images, log_key="pyramid loss", caption=f"Gaussian Pyramid Loss, {down_sample_steps+1} steps")
+            wandb.log(recons_loss_contributions)
+        return recon_loss
+
     def loss_function(self,
                       reconstructions: Tensor,
                       gt_images: Tensor,
                       vq_loss: Tensor,
+                      log_loss: bool = False,
                       **kwargs) -> dict:
-
-        recons_loss = F.mse_loss(reconstructions, gt_images)
+        if self.image_loss == "mse":
+            recons_loss = F.mse_loss(reconstructions, gt_images)
+        elif self.image_loss == "pyramid":
+            recons_loss = self.gaussian_pyramid_loss(reconstructions, gt_images, down_sample_steps=3, log_loss=log_loss)
+        else:
+            raise NotImplementedError("Only mse and pyramid loss implemented for now.")
         loss = recons_loss + vq_loss
         return {'loss': loss,
                 'Reconstruction_Loss': recons_loss,
