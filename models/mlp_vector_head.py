@@ -223,10 +223,9 @@ class MLPVectorHeadFixed(nn.Module):
         all_points = self.point_predictor(feats)
         all_widths = self.stroke_predictor(feats) * self.stroke_width
         all_widths = torch.max(all_widths, torch.ones_like(all_widths)*self.min_stroke_width)  # enforce min stroke width
-        data = [[s] for s in all_widths.detach().cpu().flatten()]
-        table = wandb.Table(data=data, columns=["stroke_widths"])
+
         # logging_dict["stroke_width"] = wandb.Histogram(all_widths.detach().cpu().flatten())
-        logging_dict["stroke_width"] = wandb.plot.histogram(table, "stroke_widths", title="Stroke Width Predictions")
+        logging_dict["mean_stroke_width"] = all_widths.detach().mean()
 
         if self.color_predictor:
             all_colors = self.color_predictor(feats)
