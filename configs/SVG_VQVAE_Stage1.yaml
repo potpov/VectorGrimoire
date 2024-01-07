@@ -30,6 +30,6 @@ logging_params:
   # entity: "aiis-chair"  # comment to use default wandb entity "mfeuer"
   project: "test"  # your wandb project name
   save_dir: "/scratch2/moritz_logs/SVG_VQVAE/Stage1/glyphazzn_B_simplified"
-  name: "SVG_VQVAE Stage1 mlp Head"  # name of the run in wandb
+  name: "SVG_VQVAE_Stage1_mlp_Head"  # name of the run in wandb
   version: 0
   author: "Moritz"  # will be a tag in wandb

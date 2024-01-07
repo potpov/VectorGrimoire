@@ -9,7 +9,7 @@ from PIL import Image
 import glob
 import pandas as pd
 import numpy as np
-
+import string
 from utils import svg2paths2, disvg, raster, get_single_paths, get_similar_length_paths, check_for_continouity, get_rasterized_segments, all_paths_to_max_diff
 import copy
 import random
@@ -24,6 +24,14 @@ class CenterShapeLayersFromSVGDataset(Dataset):
             - split: "train" or "test"
         - channels: number of channels for the rasterized images
         - width: width/height of the rasterized images
+        - individual_max_length: maximum length of a single shape layer
+        - stroke_width: stroke width for rasterization
+        - max_shapes_per_svg: maximum number of shape layers per svg file
+    
+    Returns:
+        - imgs: (bs, max_shapes_per_svg, channels, width, width) tensor of rasterized shape layers
+        - padding_mask: (bs, max_shapes_per_svg) tensor of 1s and 0s, 1s indicate that the shape layer is not padding
+        - label: class label encoded as the index of string.printable
     """
 
     def __init__(self, 
@@ -33,7 +41,7 @@ class CenterShapeLayersFromSVGDataset(Dataset):
                  train: bool = True,
                  individual_max_length: float = 10.,
                  stroke_width: float = 0.3,
-                 max_shapes_per_svg: int = 64,
+                 max_shapes_per_svg: int = 64,  # (b, 64, 3, w, h)
                  **kwargs):
         super(CenterShapeLayersFromSVGDataset, self)
         self.csv_path = csv_path
@@ -50,6 +58,7 @@ class CenterShapeLayersFromSVGDataset(Dataset):
     def __getitem__(self, index) -> tuple:
         svg_path = self.split.iloc[index]["file_path"]
         label = self.split.iloc[index]["class"]
+        label = string.printable.index(label)
         paths, attributes, svg_attributes = svg2paths2(svg_path)
         single_paths = get_single_paths(paths)
         queue = copy.deepcopy(single_paths)
@@ -57,21 +66,26 @@ class CenterShapeLayersFromSVGDataset(Dataset):
         assert check_for_continouity(sim_length_paths), "paths are not continous"
         arr = get_rasterized_segments(sim_length_paths, self.stroke_width, self.max_diff, svg_attributes, centered=True, height=self.width, width=self.width)
         imgs = torch.stack(arr)  # (n_shapes, channels, width, width)
-        if imgs.size(0) > self.max_shapes_per_svg:
-            radn_start_index = random.randint(0, imgs.size(0) - self.max_shapes_per_svg)
-            imgs = imgs[radn_start_index:radn_start_index + self.max_shapes_per_svg]
-            attention_mask = torch.ones(self.max_shapes_per_svg)
-        else:
-            attention_mask = torch.ones(imgs.size(0))
-            imgs = torch.cat((imgs, torch.ones(self.max_shapes_per_svg - imgs.size(0), self.channels, self.width, self.width)), dim=0)
-            attention_mask = torch.cat((attention_mask, torch.zeros(self.max_shapes_per_svg - attention_mask.size(0))), dim=0)
+        if False:
+            if imgs.size(0) > self.max_shapes_per_svg:
+                radn_start_index = random.randint(0, imgs.size(0) - self.max_shapes_per_svg)
+                imgs = imgs[radn_start_index:radn_start_index + self.max_shapes_per_svg]
+                padding_mask = torch.ones(self.max_shapes_per_svg)
+            else:
+                padding_mask = torch.ones(imgs.size(0))
+                imgs = torch.cat((imgs, torch.ones(self.max_shapes_per_svg - imgs.size(0), self.channels, self.width, self.width)), dim=0)
+                padding_mask = torch.cat((padding_mask, torch.zeros(self.max_shapes_per_svg - padding_mask.size(0))), dim=0)
         
-        return imgs, attention_mask, label
+        # # reshape to have only one batch dimension
+        # bs, length, channels, width, height = imgs.shape
+        # imgs = imgs.view(bs * length, channels, width, height)
+        # padding_mask = padding_mask.view(bs * length)
+        # return imgs, padding_mask, label
+        labels = torch.ones(imgs.size(0)) * label
+        return imgs, labels
 
     def __len__(self):
         return len(self.split)
-    
-    def get_similar_path_segments(self, index):
 
 class CenterShapeLayersFromSVGDataModule(LightningDataModule):
     def __init__(
@@ -115,6 +129,12 @@ class CenterShapeLayersFromSVGDataModule(LightningDataModule):
 
     #       ===============================================================
 
+    def collate_fn(self, batch):
+        imgs, labels = zip(*batch)
+        imgs = torch.concat(imgs)
+        labels = torch.concat(labels)
+        return imgs, labels
+
     def train_dataloader(self) -> DataLoader:
         return DataLoader(
             self.train_dataset,
@@ -122,6 +142,7 @@ class CenterShapeLayersFromSVGDataModule(LightningDataModule):
             num_workers=self.num_workers,
             shuffle=True,
             pin_memory=False,
+            collate_fn=self.collate_fn
         )
 
     def val_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
@@ -131,6 +152,7 @@ class CenterShapeLayersFromSVGDataModule(LightningDataModule):
             num_workers=self.num_workers,
             shuffle=False,
             pin_memory=False,
+            collate_fn=self.collate_fn
         )
 
     def test_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
@@ -140,6 +162,7 @@ class CenterShapeLayersFromSVGDataModule(LightningDataModule):
             num_workers=self.num_workers,
             shuffle=False,
             pin_memory=False,
+            collate_fn=self.collate_fn
         )
 
 class NewCausalSVGDataset(Dataset):

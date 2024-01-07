@@ -50,7 +50,7 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
         return out, logging_dict
     
     def training_step(self, batch, batch_idx, optimizer_idx=0):
-        all_center_shapes, label = batch  # TODO this has one dimension too much rn
+        all_center_shapes, labels = batch
         self.curr_device = all_center_shapes.device
         bs = all_center_shapes.shape[0]
         channels = all_center_shapes.shape[1]
