@@ -52,8 +52,8 @@ def log_all_images(images: List[Tensor], log_key="validation", caption="Captions
 
 def log_images(recons: Tensor, real_imgs: Tensor, log_key="validation", captions="Captions not set"):
 
-    if get_rank() != 0:
-        return
+    # if get_rank() != 0:
+    #     return
 
     if recons.shape[-2:] != real_imgs.shape[-2:]:
         common_size = recons.shape[-2:]

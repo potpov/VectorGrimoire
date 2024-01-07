@@ -99,7 +99,7 @@ if config['model_params']['name'] == "VectorGPT":
 elif config['model_params']['name'] == "VectorGPTv2":
     experiment = VectorGPTExperimentv2(model, **config['exp_params'], wandb = args.wandb)
 elif config['model_params']['name'] == "SVG_VAQVAE":
-    experiment = VectorVQVAE_Experiment_Stage1(model, config['exp_params'], wandb = args.wandb)
+    experiment = VectorVQVAE_Experiment_Stage1(model, **config['exp_params'], wandb = args.wandb)
 else:
     experiment = VAEXperiment(model, config['exp_params'])
 

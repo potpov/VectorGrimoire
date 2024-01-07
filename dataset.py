@@ -97,6 +97,7 @@ class CenterShapeLayersFromSVGDataModule(LightningDataModule):
         width: int,
         individual_max_length: float = 10.,
         num_workers: int = 0,
+        stroke_width: float = 0.3,
         **kwargs,
     ):
         super().__init__()
@@ -108,6 +109,7 @@ class CenterShapeLayersFromSVGDataModule(LightningDataModule):
         self.channels = channels
         self.width = width
         self.num_workers = num_workers
+        self.stroke_width = stroke_width
         self.individual_max_length = individual_max_length
 
     def setup(self, stage: Optional[str] = None) -> None:
@@ -116,7 +118,8 @@ class CenterShapeLayersFromSVGDataModule(LightningDataModule):
             self.channels,
             self.width,
             train=True,
-            individual_max_length=self.individual_max_length
+            individual_max_length=self.individual_max_length,
+            stroke_width=self.stroke_width
         )
 
         self.val_dataset = CenterShapeLayersFromSVGDataset(
@@ -124,7 +127,8 @@ class CenterShapeLayersFromSVGDataModule(LightningDataModule):
             self.channels,
             self.width,
             train=False,
-            individual_max_length=self.individual_max_length
+            individual_max_length=self.individual_max_length,
+            stroke_width=self.stroke_width
         )
 
     #       ===============================================================

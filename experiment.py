@@ -29,7 +29,7 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
                  lr: float = 0.0003,
                  weight_decay: float = 0.0,
                  scheduler_gamma: float = 0.99,
-                 train_log_interval: int = 250,
+                 train_log_interval: int = 30,
                  manual_seed: int = 42,
                  wandb: bool = True,
                  **kwargs) -> None:
@@ -79,8 +79,8 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
             log_images(
                 reconstructions[:log_amount],
                 inputs[:log_amount],
-                log_key="input (left) vs. reconstruction (right)",
-                captions=""
+                log_key="train/reconstruction",
+                captions="input (left) vs. reconstruction (right)"
             )
 
         self.log_dict(loss_dict)
@@ -93,7 +93,7 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx, optimizer_idx=0):
 
-        all_center_shapes, label = batch  # TODO this has one dimension too much rn
+        all_center_shapes, label = batch
         self.curr_device = all_center_shapes.device
         bs = all_center_shapes.shape[0]
         channels = all_center_shapes.shape[1]
@@ -112,6 +112,19 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
         if batch_idx % self.train_log_interval == 0 and self.wandb:
             logging_dict = {f"val/{key}": value for key, value in logging_dict.items()}
             wandb.log(logging_dict)
+            if reconstructions.shape[0] > 10:
+                log_amount = 10
+            else:
+                log_amount = reconstructions.shape[0]
+
+            # Log input against prediction
+            log_images(
+                reconstructions[:log_amount],
+                inputs[:log_amount],
+                log_key="val/reconstruction",
+                captions="input (left) vs. reconstruction (right)"
+            )
+
         self.log("val_loss", loss_dict["loss"])
         return loss_dict["loss"]
 

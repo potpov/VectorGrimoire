@@ -38,7 +38,7 @@ class DeconvResNet(nn.Module):
         x = self.relu(self.bn4(self.deconv4(x)))
         x = F.sigmoid(self.deconv5(x))  # Using sigmoid for the final layer to scale values between 0 and 1
 
-        return x
+        return x, {}
     
 class Vector_VQVAE(nn.Module):
     """
