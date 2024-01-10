@@ -10,9 +10,11 @@ import glob
 import pandas as pd
 import numpy as np
 import string
-from utils import svg2paths2, disvg, raster, get_single_paths, get_similar_length_paths, check_for_continouity, get_rasterized_segments, all_paths_to_max_diff
+from utils import svg2paths2, disvg, raster, get_single_paths, get_similar_length_paths, check_for_continouity, get_rasterized_segments, all_paths_to_max_diff, Path
 import copy
 import random
+import math
+
 class CenterShapeLayersFromSVGDataset(Dataset):
     """
     This dataset takes SVG files and preprocesses them into rasterized centered shape layers.
@@ -24,14 +26,11 @@ class CenterShapeLayersFromSVGDataset(Dataset):
             - split: "train" or "test"
         - channels: number of channels for the rasterized images
         - width: width/height of the rasterized images
-        - individual_max_length: maximum length of a single shape layer
+        - train: whether to use the train or test split
+        - individual_min_length: minimum length of a path segment to qualify for being a single shape layer
+        - individual_max_length: maximum length of a path segment, everything longer than this will be cropped into multiple segments
         - stroke_width: stroke width for rasterization
-        - max_shapes_per_svg: maximum number of shape layers per svg file
-    
-    Returns:
-        - imgs: (bs, max_shapes_per_svg, channels, width, width) tensor of rasterized shape layers
-        - padding_mask: (bs, max_shapes_per_svg) tensor of 1s and 0s, 1s indicate that the shape layer is not padding
-        - label: class label encoded as the index of string.printable
+        - max_shapes_per_svg: maximum number of shape layers per svg file, can be tuned for VRAM savings
     """
 
     def __init__(self, 
@@ -39,12 +38,14 @@ class CenterShapeLayersFromSVGDataset(Dataset):
                  channels: int,
                  width: int,
                  train: bool = True,
+                 individual_min_length: float = 1.,
                  individual_max_length: float = 10.,
                  stroke_width: float = 0.3,
-                 max_shapes_per_svg: int = 64,  # (b, 64, 3, w, h)
+                 max_shapes_per_svg: int = 64,
                  **kwargs):
         super(CenterShapeLayersFromSVGDataset, self)
         self.csv_path = csv_path
+        self.individual_min_length = individual_min_length
         self.individual_max_length = individual_max_length
         self.stroke_width = stroke_width
         self.max_shapes_per_svg = max_shapes_per_svg
@@ -52,8 +53,35 @@ class CenterShapeLayersFromSVGDataset(Dataset):
         self.width = width
         self.train = train
         self.split = pd.read_csv(self.csv_path)
-        self.max_diff = all_paths_to_max_diff(self.split["file_path"].values, index=int(0.05 * len(self.split)))
         self.split = self.split[self.split["split"] == ("train" if self.train else "test")]
+
+    def crop_path_into_segments(self, path:Path, length:float = 5.):
+        """
+        a single input path is cropped into segments of approx length `length`. I say "approx" because we divide the path into same length segments, which will not be exactly `length` long.
+        """
+        segments = []
+        num_iters = math.ceil(path.length() / length)
+        for i in range(num_iters):
+            cropped_segment = path.cropped(i/num_iters, (i+1)/num_iters)
+            segments.append(cropped_segment)
+
+        return segments
+
+    def get_similar_length_paths(self, single_paths, max_length: float = 5.):
+        similar_length_paths = []
+        for path in single_paths:
+            if path.length() < self.individual_min_length:
+                continue
+            segments = self.crop_path_into_segments(path, length=max_length)
+            similar_length_paths.extend(segments)
+        return similar_length_paths
+    
+    def get_similar_length_paths_from_index(self, index, max_length: float = 5.):
+        svg_path = self.split.iloc[index]["file_path"]
+        paths, attributes, svg_attributes = svg2paths2(svg_path)
+        single_paths = get_single_paths(paths)
+        sim_length_paths = self.get_similar_length_paths(single_paths, max_length=max_length)
+        return sim_length_paths
 
     def __getitem__(self, index) -> tuple:
         svg_path = self.split.iloc[index]["file_path"]
@@ -61,26 +89,15 @@ class CenterShapeLayersFromSVGDataset(Dataset):
         label = string.printable.index(label)
         paths, attributes, svg_attributes = svg2paths2(svg_path)
         single_paths = get_single_paths(paths)
-        queue = copy.deepcopy(single_paths)
-        sim_length_paths = get_similar_length_paths(queue, self.individual_max_length)
+        # queue = copy.deepcopy(single_paths)
+        sim_length_paths = self.get_similar_length_paths(single_paths, self.individual_max_length)
         assert check_for_continouity(sim_length_paths), "paths are not continous"
-        arr = get_rasterized_segments(sim_length_paths, self.stroke_width, self.max_diff, svg_attributes, centered=True, height=self.width, width=self.width)
+        # select a random slice of the paths of length max_shapes_per_svg
+        if len(sim_length_paths) > self.max_shapes_per_svg:
+            start_idx = random.randint(0, len(sim_length_paths) - self.max_shapes_per_svg)
+            sim_length_paths = sim_length_paths[start_idx:start_idx+self.max_shapes_per_svg]
+        arr = get_rasterized_segments(sim_length_paths, self.stroke_width, self.individual_max_length, svg_attributes, centered=True, height=self.width, width=self.width)
         imgs = torch.stack(arr)  # (n_shapes, channels, width, width)
-        if False:
-            if imgs.size(0) > self.max_shapes_per_svg:
-                radn_start_index = random.randint(0, imgs.size(0) - self.max_shapes_per_svg)
-                imgs = imgs[radn_start_index:radn_start_index + self.max_shapes_per_svg]
-                padding_mask = torch.ones(self.max_shapes_per_svg)
-            else:
-                padding_mask = torch.ones(imgs.size(0))
-                imgs = torch.cat((imgs, torch.ones(self.max_shapes_per_svg - imgs.size(0), self.channels, self.width, self.width)), dim=0)
-                padding_mask = torch.cat((padding_mask, torch.zeros(self.max_shapes_per_svg - padding_mask.size(0))), dim=0)
-        
-        # # reshape to have only one batch dimension
-        # bs, length, channels, width, height = imgs.shape
-        # imgs = imgs.view(bs * length, channels, width, height)
-        # padding_mask = padding_mask.view(bs * length)
-        # return imgs, padding_mask, label
         labels = torch.ones(imgs.size(0)) * label
         return imgs, labels
 
