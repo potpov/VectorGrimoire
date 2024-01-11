@@ -120,6 +120,21 @@ def raster(svg_file: Drawing, out_h: int = 128, out_w: int = 128):
     tensor_image = transform(img)
     return tensor_image
 
+def save_path_as_image(path: Path, out_h: int = 128, out_w: int = 128):
+    """
+    This function simply resizes and rasters a series of Paths
+    @param svg_file: Drawing object
+    @return: Numpy array of the raster image single-channel
+    """
+    svg_file = disvg(path, paths2Drawing=True, stroke_widths=[2.0] * len(path))
+    svg_png_image = svg2png(
+        bytestring=svg_file.tostring(),
+        output_width=out_w,
+        output_height=out_h,
+        background_color="white")
+    img = Image.open(io.BytesIO(svg_png_image))
+    img.save("test.png")
+
 def plot_segments(rasterized_segments, title:str="A disassembled tree"):
     assert rasterized_segments.shape[0] > 8, "too few segments to plot"
     nrows = math.ceil(len(rasterized_segments) / 8)

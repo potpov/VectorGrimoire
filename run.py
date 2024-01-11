@@ -112,7 +112,7 @@ runner = Trainer(
     callbacks=[
         LearningRateMonitor(logging_interval="epoch", log_momentum=True),
         #  LearningRateFinder(early_stop_threshold=None, num_training_steps=200),
-        EarlyStopping("val_loss", 0.005, 15, verbose=True),
+        EarlyStopping("val_loss", 0.005, 50, verbose=True),
         ModelCheckpoint(save_top_k=1,
                         dirpath =os.path.join(config['logging_params']['save_dir'], "checkpoints"),
                         monitor= "val_loss",

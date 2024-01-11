@@ -72,8 +72,12 @@ class CenterShapeLayersFromSVGDataset(Dataset):
         for path in single_paths:
             if path.length() < self.individual_min_length:
                 continue
-            segments = self.crop_path_into_segments(path, length=max_length)
-            similar_length_paths.extend(segments)
+            try:
+                segments = self.crop_path_into_segments(path, length=max_length)
+                similar_length_paths.extend(segments)
+            except AssertionError:
+                print("Error while cropping path into segments, skipping...")
+                continue
         return similar_length_paths
     
     def get_similar_length_paths_from_index(self, index, max_length: float = 5.):
