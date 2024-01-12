@@ -49,13 +49,14 @@ class Vector_VQVAE(nn.Module):
     TODO:
         - reduce encoding dimension from (512, 4, 4) to something more reasonable like (512, 2, 2), this must also be changed in the quantize layer
         - add powerful network before the MLP vector head?
-        - pyramid loss for vector mlp head
     """
 
     def __init__(self,
                  vector_decoder_model: str = "mlp",
-                 quantized_dim: int = 512,
+                 quantized_dim: int = 256,
+                 codebook_size: int = 512,
                  image_loss: str = "pyramid",
+                 single_code_representation: bool = True,
                  **kwargs) -> None:
         super(Vector_VQVAE, self).__init__()
 
@@ -63,18 +64,24 @@ class Vector_VQVAE(nn.Module):
 
         self.vector_decoder_model = vector_decoder_model
         self.quantized_dim = quantized_dim
+        self.codebook_size = codebook_size
         self.image_loss = image_loss
 
         self.encoder = ResNet(BasicBlock,
                               [2, 2, 2, 2],
                               10,
                               skip_linear=True)  # outputs (b, 512, 4, 4) - final W x H essentially decides the number of quantized vectors that form a single image, here its 4*4=16
-        
-        self.quantize_layer = VectorQuantizer(num_embeddings = 64,
+        if single_code_representation:
+            self.encoder = nn.Sequential(self.encoder,
+                                         nn.Conv2d(512, self.quantized_dim, kernel_size=4, stride=4, padding=0),
+                                         nn.ReLU())
+
+
+        self.quantize_layer = VectorQuantizer(num_embeddings = self.codebook_size,
                                               embedding_dim = self.quantized_dim,
                                               beta = 0.25)
         
-        self.latent_dim = self.quantized_dim * 4 * 4  # 4*4 is the final W x H of the encoder
+        self.latent_dim = self.quantized_dim
         
         if self.vector_decoder_model == "mlp":
             self.decoder = MLPVectorHeadFixed(latent_dim = self.latent_dim,

@@ -1,8 +1,10 @@
 model_params:
   name: "SVG_VAQVAE"  # always keep this "VectorGPT"
   vector_decoder_model: "mlp" # "mlp" or "raster_conv"
-  quantized_dim: 512
+  quantized_dim: 256
+  codebook_size: 512
   image_loss: "mse"  # "pyramid" or "mse"
+  single_code_representation: true
 
 data_params:
   dataset: "centeredShapeLayers"  # must be in the DATASETMAP in run.py
@@ -18,7 +20,7 @@ data_params:
 exp_params:
   lr: 0.00002  # was 0.0005 originally
   weight_decay: 1.e-4  # specify positive float to enable, start experimenting with 1.e-4/1.e-3
-  scheduler_gamma: 0.95  # 0.95 is a good starting value
+  scheduler_gamma: 0.98  # 0.95 is a good starting value
   train_log_interval: 100 # len(dataset) / train_batch_size / desired_logging_frequency
   manual_seed: 1265
 
@@ -30,7 +32,7 @@ trainer_params:
 logging_params:
   # entity: "aiis-chair"  # comment to use default wandb entity "mfeuer"
   project: "test"  # your wandb project name
-  save_dir: "/scratch2/moritz_logs/SVG_VQVAE/Stage1/glyphazzn_B_simplified"
-  name: "SVG_VQVAE glyphazzn_B Stage1 MLP MSE, similar length"  # name of the run in wandb
+  save_dir: "/scratch2/moritz_logs/SVG_VQVAE/Stage1/glyphazzn_B_simplified_single_code"
+  name: "SVG_VQVAE glyphazzn_B Stage1 MLP MSE, similar length, single code representation"  # name of the run in wandb
   version: 0
   author: "Moritz"  # will be a tag in wandb
