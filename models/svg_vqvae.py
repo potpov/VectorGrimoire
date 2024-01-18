@@ -73,8 +73,7 @@ class Vector_VQVAE(nn.Module):
                               skip_linear=True)  # outputs (b, 512, 4, 4) - final W x H essentially decides the number of quantized vectors that form a single image, here its 4*4=16
         if single_code_representation:
             self.encoder = nn.Sequential(self.encoder,
-                                         nn.Conv2d(512, self.quantized_dim, kernel_size=4, stride=4, padding=0),
-                                         nn.ReLU())
+                                         nn.Conv2d(512, self.quantized_dim, kernel_size=4, stride=4, padding=0))  # no ReLU here, we want to keep the negative values for the quantization
 
 
         self.quantize_layer = VectorQuantizer(num_embeddings = self.codebook_size,
@@ -118,13 +117,13 @@ class Vector_VQVAE(nn.Module):
         return result, logging_dict
     
     
-    def forward(self, input: Tensor, **kwargs):
+    def forward(self, input: Tensor, logging = False, **kwargs):
         logging_dict = {}
         encoding = self.encode(input, quantize=False)
         bs = encoding.shape[0]
         if self.vector_decoder_model == "mlp":
             # quantize the encoding
-            quantized_inputs, vq_loss = self.quantize_layer(encoding)
+            quantized_inputs, vq_loss, vq_logging_dict = self.quantize_layer.forward(encoding, logging=logging)
             # flatten it for MLP digestion
             quantized_inputs = quantized_inputs.view(bs, self.latent_dim)
             # print("quantized_inputs: ", quantized_inputs.shape)
@@ -132,7 +131,7 @@ class Vector_VQVAE(nn.Module):
             quantized_inputs, vq_loss = self.quantize_layer(encoding)
         
         out, decode_logging_dict = self.decode(quantized_inputs)
-        logging_dict = {**logging_dict, **decode_logging_dict}
+        logging_dict = {**logging_dict, **decode_logging_dict, **vq_logging_dict}
         return [out, input, vq_loss], logging_dict
     
     def gaussian_pyramid_loss(self, recons_images: Tensor, gt_images: Tensor, down_sample_steps: int = 3, log_loss: bool = False):

@@ -89,7 +89,7 @@ seed_everything(config['exp_params']['manual_seed'], True)
 
 if args.wandb:
     model = MODELS[config['model_params']['name']](**config['model_params'], wandb_logging=True)
-    wandb_logger.watch(model, log="gradients", log_freq=500, log_graph=False)
+    # wandb_logger.watch(model, log="gradients", log_freq=500, log_graph=False)
     # wandb.watch(model, log='all', log_freq=100)  # can be "all"
 else:
     model = MODELS[config['model_params']['name']](**config['model_params'])
@@ -119,7 +119,8 @@ runner = Trainer(
                         save_last= True),
     ],
     #  overfit_batches=20,
-     log_every_n_steps=max(int(config['exp_params']["train_log_interval"] / 10), 5),
+    log_every_n_steps=max(int(config['exp_params']["train_log_interval"] / 10), 5),
+    profiler="simple",
     **config['trainer_params']
 )
 
