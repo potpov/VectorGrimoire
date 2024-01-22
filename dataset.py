@@ -100,10 +100,17 @@ class CenterShapeLayersFromSVGDataset(Dataset):
         if len(sim_length_paths) > self.max_shapes_per_svg:
             start_idx = random.randint(0, len(sim_length_paths) - self.max_shapes_per_svg)
             sim_length_paths = sim_length_paths[start_idx:start_idx+self.max_shapes_per_svg]
-        arr = get_rasterized_segments(sim_length_paths, self.stroke_width, self.individual_max_length, svg_attributes, centered=True, height=self.width, width=self.width)
-        imgs = torch.stack(arr)  # (n_shapes, channels, width, width)
+        rasterized_segments, centers = get_rasterized_segments(sim_length_paths, self.stroke_width, self.individual_max_length, svg_attributes, centered=True, height=self.width, width=self.width)
+        imgs = torch.stack(rasterized_segments)  # (n_shapes, channels, width, width)
+        centers = torch.tensor(centers)  # (n_shapes, 2)
         labels = torch.ones(imgs.size(0)) * label
-        return imgs, labels
+        return imgs, labels, centers
+    
+    def _get_full_svg_drawing(self, index, width:int = 720):
+        svg_path = self.split.iloc[index]["file_path"]
+        paths, attributes, svg_attributes = svg2paths2(svg_path)
+        single_paths = get_single_paths(paths)
+        return disvg(single_paths, paths2Drawing=True, stroke_widths=[self.stroke_width]*len(single_paths), viewbox = svg_attributes["viewBox"],dimensions=(width, width))
 
     def __len__(self):
         return len(self.split)
@@ -155,10 +162,11 @@ class CenterShapeLayersFromSVGDataModule(LightningDataModule):
     #       ===============================================================
 
     def collate_fn(self, batch):
-        imgs, labels = zip(*batch)
+        imgs, labels, centers = zip(*batch)
         imgs = torch.concat(imgs)
         labels = torch.concat(labels)
-        return imgs, labels
+        centers = torch.concat(centers)
+        return imgs, labels, centers
 
     def train_dataloader(self) -> DataLoader:
         return DataLoader(

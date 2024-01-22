@@ -50,17 +50,18 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
         return out, logging_dict
     
     def training_step(self, batch, batch_idx, optimizer_idx=0):
-        all_center_shapes, labels = batch
+        all_center_shapes, labels, centers = batch
         self.curr_device = all_center_shapes.device
         bs = all_center_shapes.shape[0]
         channels = all_center_shapes.shape[1]
         if batch_idx % self.train_log_interval == 0 and self.wandb:
             out, logging_dict = self.forward(all_center_shapes, logging=True)
         else:
-            out, logging_dict = self.forward(all_center_shapes, logging=False)
+            out, logging_dict = self.forward(all_center_shapes, logging=False)  # out is [reconstructions, input, all_points, vq_loss]
         reconstructions=out[0]
         inputs = all_center_shapes
-        vq_loss=out[2]
+        # all_points = out[2]
+        vq_loss=out[3]
 
         loss_dict = self.model.loss_function(
             reconstructions=reconstructions[:,:channels,:,:],
@@ -95,7 +96,7 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx, optimizer_idx=0):
 
-        all_center_shapes, label = batch
+        all_center_shapes, label, centers = batch
         self.curr_device = all_center_shapes.device
         bs = all_center_shapes.shape[0]
         channels = all_center_shapes.shape[1]

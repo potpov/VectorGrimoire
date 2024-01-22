@@ -1,15 +1,17 @@
 from typing import Union
 import kornia
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 import wandb
-from utils import log_all_images
+from utils import log_all_images, tensor_to_histogram_image
 from models.resnet import ResNet, BasicBlock
 from models.vq_vae import VectorQuantizer
 from models.mlp_vector_head import MLPVectorHeadFixed
 from models.mlp import MultiLayerPerceptron
+from vector_quantize_pytorch import FSQ
 
 class DeconvResNet(nn.Module):
     def __init__(self):
@@ -57,6 +59,8 @@ class Vector_VQVAE(nn.Module):
                  codebook_size: int = 512,
                  image_loss: str = "pyramid",
                  single_code_representation: bool = True,
+                 vq_method:str = "vqvae",
+                 fsq_levels:list =[8,5,5,5],
                  **kwargs) -> None:
         super(Vector_VQVAE, self).__init__()
 
@@ -64,8 +68,13 @@ class Vector_VQVAE(nn.Module):
 
         self.vector_decoder_model = vector_decoder_model
         self.quantized_dim = quantized_dim
-        self.codebook_size = codebook_size
         self.image_loss = image_loss
+        self.vq_method = vq_method.lower()
+        self.fsq_levels = fsq_levels
+        if self.vq_method == "fsq":
+            self.codebook_size = np.prod(fsq_levels)
+        else:
+            self.codebook_size = codebook_size
 
         self.encoder = ResNet(BasicBlock,
                               [2, 2, 2, 2],
@@ -75,10 +84,18 @@ class Vector_VQVAE(nn.Module):
             self.encoder = nn.Sequential(self.encoder,
                                          nn.Conv2d(512, self.quantized_dim, kernel_size=4, stride=4, padding=0))  # no ReLU here, we want to keep the negative values for the quantization
 
+        if self.vq_method == "vqvae":
+            self.quantize_layer = VectorQuantizer(num_embeddings = self.codebook_size,
+                                                embedding_dim = self.quantized_dim,
+                                                beta = 0.25)
+        elif self.vq_method == "fsq":
+            self.quantize_layer = FSQ(levels=self.fsq_levels,
+                                      dim=self.quantized_dim)
+        elif self.vq_method == "vqtorch":
+            raise NotImplementedError("VQVAE with vqtorch not implemented yet.")
+        else:
+            raise ValueError(f"vq_method must be one of ['vqvae', 'fsq', 'vqtorch'], but is {self.vq_method}")
 
-        self.quantize_layer = VectorQuantizer(num_embeddings = self.codebook_size,
-                                              embedding_dim = self.quantized_dim,
-                                              beta = 0.25)
         
         self.latent_dim = self.quantized_dim
         
@@ -100,7 +117,7 @@ class Vector_VQVAE(nn.Module):
         result = self.encoder.forward(input)
         # result = self.mapping_layer(result.view(-1, 512 * 4 * 4))
         if quantize:
-            result = self.quantize_layer(result)
+            result = self.quantize_layer.forward(result)
         return result
     
     
@@ -112,8 +129,8 @@ class Vector_VQVAE(nn.Module):
         """
 
         result, logging_dict = self.decoder.forward(z)
-        if self.vector_decoder_model == "mlp":
-            result = result[0]  # extract only the raster image for now
+        # if self.vector_decoder_model == "mlp":
+        #     result = result[0]  # extract only the raster image for now
         return result, logging_dict
     
     
@@ -121,18 +138,28 @@ class Vector_VQVAE(nn.Module):
         logging_dict = {}
         encoding = self.encode(input, quantize=False)
         bs = encoding.shape[0]
+        vq_logging_dict={}
         if self.vector_decoder_model == "mlp":
             # quantize the encoding
-            quantized_inputs, vq_loss, vq_logging_dict = self.quantize_layer.forward(encoding, logging=logging)
+            if self.vq_method == "vqvae":
+                quantized_inputs, vq_loss, vq_logging_dict = self.quantize_layer.forward(encoding, logging=logging)
+            elif self.vq_method == "fsq":
+                quantized_inputs, indices = self.quantize_layer.forward(encoding)
+                vq_loss = torch.tensor(0.)
+                if logging:
+                    vq_logging_dict = {"codebook_histogram":wandb.Image(tensor_to_histogram_image(indices.detach().flatten().cpu()))}
+                    
             # flatten it for MLP digestion
             quantized_inputs = quantized_inputs.view(bs, self.latent_dim)
             # print("quantized_inputs: ", quantized_inputs.shape)
         elif self.vector_decoder_model == "raster_conv":
             quantized_inputs, vq_loss = self.quantize_layer(encoding)
         
-        out, decode_logging_dict = self.decode(quantized_inputs)
+        out, decode_logging_dict = self.decode(quantized_inputs)  # for mlp out is [output, scenes, all_points, all_widths]
+        reconstructions = out[0]
+        all_points = out[2]
         logging_dict = {**logging_dict, **decode_logging_dict, **vq_logging_dict}
-        return [out, input, vq_loss], logging_dict
+        return [reconstructions, input, all_points, vq_loss], logging_dict
     
     def gaussian_pyramid_loss(self, recons_images: Tensor, gt_images: Tensor, down_sample_steps: int = 3, log_loss: bool = False):
         """
@@ -201,3 +228,9 @@ class Vector_VQVAE(nn.Module):
         """
 
         return self.forward(x)[0]
+    
+    def _assemble_svg(self, svg_predictions: Tensor, center_positions: Tensor):
+        """
+        Assembles the SVG prediction from the transformer into a single SVG.
+        """
+        raise NotImplementedError("Not implemented yet.")

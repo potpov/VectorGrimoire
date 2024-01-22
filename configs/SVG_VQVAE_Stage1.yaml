@@ -2,9 +2,11 @@ model_params:
   name: "SVG_VAQVAE"  # always keep this "VectorGPT"
   vector_decoder_model: "mlp" # "mlp" or "raster_conv"
   quantized_dim: 256
-  codebook_size: 512
+  codebook_size: 128  # will be ignored for FSQ
   image_loss: "mse"  # "pyramid" or "mse"
   single_code_representation: true
+  vq_method: "fsq"  # "vqvae", "FSQ", "vqtorch"
+  fsq_levels: [8,5,5,5]  # will determine codebook_size, see Table 1 of FSQ paper
 
 data_params:
   dataset: "centeredShapeLayers"  # must be in the DATASETMAP in run.py
@@ -18,7 +20,7 @@ data_params:
   stroke_width: 0.7  # IMPORTANT: this must scale with individiual_max_length as they together define the image
 
 exp_params:
-  lr: 0.00002  # was 0.0005 originally
+  lr: 0.00002  # 0.00002
   weight_decay: 1.e-4  # specify positive float to enable, start experimenting with 1.e-4/1.e-3
   scheduler_gamma: 0.98  # 0.95 is a good starting value
   train_log_interval: 100 # len(dataset) / train_batch_size / desired_logging_frequency

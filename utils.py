@@ -8,7 +8,37 @@ from torch import Tensor
 import os
 from torchvision.utils import make_grid
 from torchvision.transforms import Resize
+from svgwrite import Drawing
+from svgpathtools import disvg, CubicBezier
 
+def calculate_global_positions(local_positions: Tensor, local_viewbox_width:float, global_center_positions: Tensor):
+    """
+    Calculates the global positions of svg shapes from the local centered positions.
+    """
+    local_points_delta_to_middle = local_positions - 0.5
+    scaled_local_points_delta_to_middle = local_points_delta_to_middle * local_viewbox_width
+    global_center_positions = global_center_positions.unsqueeze(1).unsqueeze(1).repeat(1, scaled_local_points_delta_to_middle.shape[1], scaled_local_points_delta_to_middle.shape[2], 1)
+    global_positions = global_center_positions + scaled_local_points_delta_to_middle
+    return global_positions
+
+def tensor_to_complex(my_tensor):
+    return complex(my_tensor[0].item(), my_tensor[1].item())
+
+def stroke_points_to_bezier(my_tensor:Tensor):
+    """
+    expects my_tensor to be in shape (4, 2)
+    """
+    return CubicBezier(tensor_to_complex(my_tensor[0]), tensor_to_complex(my_tensor[1]), tensor_to_complex(my_tensor[2]), tensor_to_complex(my_tensor[3]))
+
+def shapes_to_drawing(shapes:Tensor, stroke_width:float, w=128) -> Drawing:
+    """
+    expects shapes to be in shape (n, 4, 2)
+    """
+    all_shapes = []
+    for shape in shapes:
+        all_shapes.append(stroke_points_to_bezier(shape))
+    drawing = disvg(all_shapes, stroke_widths=[stroke_width]*len(all_shapes), paths2Drawing=True, viewbox=f"0 0 {w} {w}")
+    return drawing
 
 def fig2data(fig):
     """
@@ -90,6 +120,24 @@ def get_rank() -> int:
             return 0
     else:
         return torch.distributed.get_rank()
+
+def tensor_to_histogram_image(tensor, bins=100):
+    # Create a histogram plot
+    plt.hist(tensor, bins=bins)
+    plt.title('Codebook usage histogram')
+
+    # Save the plot to a BytesIO object
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png')
+    buf.seek(0)
+
+    # Create a PIL image from the BytesIO object
+    image = Image.open(buf).copy()
+
+    # Close the buffer
+    buf.close()
+
+    return image
 
 ##############################################################################################################
 # SVG splitting utils
@@ -198,6 +246,9 @@ def all_paths_to_max_diffs(all_paths):
     return all_max_diffs
 
 def get_viewbox(single_path, total_max_diff, offset: float = 1.0):
+    """
+    returns viewbox and center of the viewbox as x-y-tuple
+    """
     abs_start = single_path.start
     abs_end = single_path.end
     top_left = complex(min(abs_start.real, abs_end.real), min(abs_start.imag, abs_end.imag))
@@ -206,14 +257,21 @@ def get_viewbox(single_path, total_max_diff, offset: float = 1.0):
     center = top_left + diff / 2
     new_top_left = center - complex(total_max_diff / 2, total_max_diff / 2)
     viewbox = f"{new_top_left.real - offset} {new_top_left.imag - offset} {total_max_diff + offset*2} {total_max_diff + offset*2}"
-    return viewbox
+    return viewbox, [center.real, center.imag]
 
 def get_rasterized_segments(single_paths:list, stroke_width:float, total_max_diff: float, svg_attributes, centered = False, height: int = 128, width: int = 128) -> List:
     if centered:
-        return [raster(disvg(my_path, paths2Drawing=True, stroke_widths=[stroke_width] * len(my_path), viewbox=get_viewbox(my_path, total_max_diff)), out_h = height, out_w = width) for my_path in single_paths if my_path.length() > 0.]
+        out = [get_viewbox(my_path, total_max_diff) for my_path in single_paths if my_path.length() > 0.]
+        viewboxes = [x[0] for x in out]
+        centers = [x[1] for x in out]
+        rasterized_segments = [raster(disvg(my_path, paths2Drawing=True, stroke_widths=[stroke_width] * len(my_path), viewbox=viewboxes[i]), out_h = height, out_w = width) for i, my_path in enumerate(single_paths) if my_path.length() > 0.]
+        return rasterized_segments, centers
     else:
         viewbox=svg_attributes["viewBox"]
-        return [raster(disvg(my_path, paths2Drawing=True, stroke_widths=[stroke_width] * len(my_path), viewbox=viewbox), out_h = height, out_w = width) for my_path in single_paths if my_path.length() > 0.]
+        rasterized_segments = [raster(disvg(my_path, paths2Drawing=True, stroke_widths=[stroke_width] * len(my_path), viewbox=viewbox), out_h = height, out_w = width) for my_path in single_paths if my_path.length() > 0.]
+        centers = [(0,0)] * len(rasterized_segments)
+        return rasterized_segments, centers
+
 
 def svg_path_to_segment_image_arrays(svg_path, total_max_diff: float):
     """
