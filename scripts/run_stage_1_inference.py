@@ -1,24 +1,10 @@
 import os
 import torch
-from torch import Tensor
-from typing import List, Optional, Sequence, Union
-from pytorch_lightning import LightningDataModule
-from torch.utils.data import DataLoader, Dataset
-from torchvision import transforms
-from PIL import Image
-import glob
-import pandas as pd
-import numpy as np
 from models import Vector_VQVAE
-
-from utils import svg2paths2, disvg, raster, get_single_paths, get_similar_length_paths, check_for_continouity, get_rasterized_segments, all_paths_to_max_diff
-import copy
-import string
 from dataset import CenterShapeLayersFromSVGDataset
-from svgpathtools import svg2paths, svg2paths2, disvg, Path, CubicBezier
-from svgwrite import Drawing
 from thesis.utils import calculate_global_positions, shapes_to_drawing
 import argparse
+import random
 
 def main(args):
     # Your existing code here
@@ -38,7 +24,8 @@ def main(args):
     model.load_state_dict(state_dict)
     model = model.eval()
 
-    shape_layers, _, positions = ds.__getitem__(3)
+    idx = random.choice(range(len(ds)))
+    shape_layers, _, positions = ds.__getitem__(idx)
 
     with torch.inference_mode():
         out, _ = model.forward(shape_layers)
