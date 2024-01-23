@@ -12,7 +12,7 @@ from models.vq_vae import VectorQuantizer
 from models.mlp_vector_head import MLPVectorHeadFixed
 from models.mlp import MultiLayerPerceptron
 from vector_quantize_pytorch import FSQ
-
+from x_transformers import TransformerWrapper, Decoder
 class DeconvResNet(nn.Module):
     def __init__(self):
         super(DeconvResNet, self).__init__()
@@ -41,7 +41,49 @@ class DeconvResNet(nn.Module):
         x = F.sigmoid(self.deconv5(x))  # Using sigmoid for the final layer to scale values between 0 and 1
 
         return x, {}
+
+class VQ_Transformer(nn.Module):
+    """
+    Stage 2 of the SVG-VQ-VAE pipeline.
+    """
+
+    def __init__(self, 
+                num_tokens: int = 20000, 
+                max_seq_len: int = 512,
+                dim: int = 512,
+                depth: int = 12,
+                heads: int = 8,
+                 **kwargs) -> None:
+        
+        super(VQ_Transformer, self).__init__()
+
+        self.num_tokens = num_tokens
+        self.max_seq_len = max_seq_len
+        self.dim = dim
+        self.depth = depth
+        self.heads = heads
+
+        self.model = TransformerWrapper(
+            num_tokens = self.num_tokens,
+            max_seq_len = self.max_seq_len,
+            attn_layers = Decoder(
+                dim = self.dim,
+                depth = self.depth,
+                heads = self.heads,
+                attn_flash = True,
+                alibi_pos_bias = True, # turns on ALiBi positional embedding
+                alibi_num_heads = 4    # only use ALiBi for 4 out of the 8 heads, so other 4 heads can still attend far distances
+            )
+        )
+
+    def forward(self, x: Tensor) -> Union[Tensor, dict]:
+        return self.model.forward(x), {}
     
+    def loss_function(self, x: Tensor, pred_probabilities: Tensor, **kwargs) -> dict:
+        loss = F.cross_entropy(pred_probabilities,x)
+        return {'loss': loss}
+
+
 class Vector_VQVAE(nn.Module):
     """
     Vector quantized pre-training of an autoencoder for SVG primitives.
@@ -117,18 +159,33 @@ class Vector_VQVAE(nn.Module):
         result = self.encoder.forward(input)
         # result = self.mapping_layer(result.view(-1, 512 * 4 * 4))
         if quantize:
-            result = self.quantize_layer.forward(result)
+            result = self.quantize_layer.forward(result)  # this might change the result return type to list
         return result
     
     
     def decode(self, z: Tensor) -> Tensor:
         """
-        Maps the given latent codes onto the image space and position prediction.
+        Maps the given latent codes onto the image space.
         :param z: (Tensor) [B x D x H x W]
         :return: (Tensor) [B x C x H x W]
         """
 
         result, logging_dict = self.decoder.forward(z)
+        # if self.vector_decoder_model == "mlp":
+        #     result = result[0]  # extract only the raster image for now
+        return result, logging_dict
+    
+    def decode_from_indices(self, idxs: Tensor) -> Tensor:
+        """
+        Maps the given idxs from codebook onto the image space.
+        :param z: (Tensor) [B x 1]
+        :return: (Tensor) [B x C x H x W]
+        """
+        if self.vq_method == "fsq":
+            codes = self.quantize_layer.indices_to_codes(idxs)
+        else:
+            raise NotImplementedError("Only FSQ implemented for now.")
+        result, logging_dict = self.decoder.forward(codes)
         # if self.vector_decoder_model == "mlp":
         #     result = result[0]  # extract only the raster image for now
         return result, logging_dict

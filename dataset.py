@@ -15,6 +15,106 @@ import copy
 import random
 import math
 
+class VQDataset(Dataset):
+    def __init__(self, ds_path, split, seed):
+        self.data: np.ndarray = np.load(ds_path)
+        self.split = split
+        self.seed = seed
+        # TODO add train/test split here
+        idx = np.arange(len(self.data))
+        self.data = self.data[self.data[:, 0] == self.split]
+        print(f"Loaded dataset with shape {self.data.shape} and dtype: {self.data.dtype}")
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        row = self.data[idx]
+        return torch.from_numpy(row.astype(np.int32))
+    
+class VQDataModule(LightningDataModule):
+    def __init__(
+        self,
+        csv_path: str,
+        train_batch_size: int,
+        val_batch_size: int,
+        channels: int,
+        width: int,
+        individual_max_length: float = 10.,
+        num_workers: int = 0,
+        stroke_width: float = 0.3,
+        **kwargs,
+    ):
+        super().__init__()
+
+        self.train_batch_size = train_batch_size
+        self.val_batch_size = val_batch_size
+        self.num_workers = num_workers
+        self.csv_path = csv_path
+        self.channels = channels
+        self.width = width
+        self.num_workers = num_workers
+        self.stroke_width = stroke_width
+        self.individual_max_length = individual_max_length
+
+    def setup(self, stage: Optional[str] = None) -> None:
+        self.train_dataset = CenterShapeLayersFromSVGDataset(
+            self.csv_path,
+            self.channels,
+            self.width,
+            train=True,
+            individual_max_length=self.individual_max_length,
+            stroke_width=self.stroke_width
+        )
+
+        self.val_dataset = CenterShapeLayersFromSVGDataset(
+            self.csv_path,
+            self.channels,
+            self.width,
+            train=False,
+            individual_max_length=self.individual_max_length,
+            stroke_width=self.stroke_width
+        )
+
+    #       ===============================================================
+
+    def collate_fn(self, batch):
+        imgs, labels, centers = zip(*batch)
+        imgs = torch.concat(imgs)
+        labels = torch.concat(labels)
+        centers = torch.concat(centers)
+        return imgs, labels, centers
+
+    def train_dataloader(self) -> DataLoader:
+        return DataLoader(
+            self.train_dataset,
+            batch_size=self.train_batch_size,
+            num_workers=self.num_workers,
+            shuffle=True,
+            pin_memory=False,
+            collate_fn=self.collate_fn
+        )
+
+    def val_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
+        return DataLoader(
+            self.val_dataset,
+            batch_size=self.val_batch_size,
+            num_workers=self.num_workers,
+            shuffle=False,
+            pin_memory=False,
+            collate_fn=self.collate_fn
+        )
+
+    def test_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
+        return DataLoader(
+            self.val_dataset,
+            batch_size=16,
+            num_workers=self.num_workers,
+            shuffle=False,
+            pin_memory=False,
+            collate_fn=self.collate_fn
+        )
+
 class CenterShapeLayersFromSVGDataset(Dataset):
     """
     This dataset takes SVG files and preprocesses them into rasterized centered shape layers.

@@ -1,20 +1,129 @@
 import gc
-import os
-import math
 import random
 import torch
 from torch import Tensor
 from torch import optim
 import wandb
-from models import BaseVAE, VectorVAEnLayers, VectorGPT, VectorGPTv2, Vector_VQVAE
+from models import BaseVAE, VectorVAEnLayers, VectorGPT, VectorGPTv2, Vector_VQVAE, VQ_Transformer
 import pytorch_lightning as pl
-from torchvision import transforms
-import torchvision.utils as vutils
-from torchvision.datasets import CelebA
-from torch.utils.data import DataLoader
 from utils import log_images
 from torchmetrics.image.fid import FrechetInceptionDistance
 from torchmetrics.multimodal.clip_score import CLIPScore
+import torch.nn.functional as F
+
+class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
+    def __init__(self,
+                 model: VQ_Transformer,
+                 lr: float = 0.0003,
+                 weight_decay: float = 0.0,
+                 scheduler_gamma: float = 0.99,
+                 train_log_interval: int = 30,
+                 manual_seed: int = 42,
+                 wandb: bool = True,
+                 **kwargs) -> None:
+        super(SVG_VQVAE_Stage2_Experiment, self).__init__()
+
+        self.model = model
+        self.lr = lr
+        self.weight_decay = weight_decay
+        self.scheduler_gamma = scheduler_gamma
+        self.train_log_interval = train_log_interval
+        self.manual_seed = manual_seed
+        self.curr_device = None
+        self.wandb = wandb
+
+    def forward(self, input_tokens: Tensor, logging=False, **kwargs) -> list:
+        out, logging_dict = self.model.forward(input_tokens, logging=logging, **kwargs)
+        return out, logging_dict
+    
+    def training_step(self, batch, batch_idx, optimizer_idx=0):
+        tokens = batch
+        self.curr_device = tokens.device
+
+        if batch_idx % self.train_log_interval == 0 and self.wandb:
+            out, logging_dict = self.forward(tokens, logging=True)
+        else:
+            out, logging_dict = self.forward(tokens, logging=False)  # out is [reconstructions, input, all_points, vq_loss]
+        
+        pred_logits = out[0]  # (b, seq_len)
+        
+        # one_hot_gt = F.one_hot(tokens, num_classes=self.model.num_tokens)  # (b, seq_len, num_tokens)
+
+        loss_dict = self.model.loss_function(
+            x=tokens,
+            pred_probabilities=pred_logits,
+        )
+    
+        # always log the first batch and variable amount of timesteps up to 10
+        # if batch_idx % self.train_log_interval == 0 and self.wandb:
+        #     logging_dict = {f"train/{key}": value for key, value in logging_dict.items()}
+        #     wandb.log(logging_dict)
+        
+        self.log_dict(loss_dict)
+        return loss_dict["loss"]
+
+    def on_train_epoch_end(self):
+        # gc.collect()
+        # torch.cuda.empty_cache()
+        return {}
+
+    def validation_step(self, batch, batch_idx, optimizer_idx=0):
+
+        tokens = batch
+        self.curr_device = tokens.device
+
+        with torch.no_grad():
+            if batch_idx % self.train_log_interval == 0 and self.wandb:
+                out, logging_dict = self.forward(tokens, logging=True)
+            else:
+                out, logging_dict = self.forward(tokens, logging=False)  # out is [reconstructions, input, all_points, vq_loss]
+        
+        pred_logits = out[0]  # (b, seq_len)
+        
+        loss_dict = self.model.loss_function(
+            x=tokens,
+            pred_probabilities=pred_logits,
+        )
+
+        self.log("val_loss", loss_dict["loss"])
+        return loss_dict["loss"]
+
+    def on_validation_end(self) -> None:
+        # if self.wandb:
+        #     self.sample_images()
+        # gc.collect()
+        # torch.cuda.empty_cache()
+        return {}
+    
+    def configure_optimizers(self):
+
+        optims = []
+        scheds = []
+
+        param_group_1 = {'params': self.model.parameters(), 'lr': self.lr}
+        param_groups = [param_group_1]
+
+        if not self.weight_decay:
+            optimizer = optim.AdamW(
+                param_groups,
+                lr=self.lr,
+                weight_decay=self.weight_decay
+            )
+        else:
+            # learning rates should be explicitly specified in the param_groups
+            optimizer = optim.Adam(param_groups)
+        optims.append(optimizer)
+        
+        try:
+            if self.scheduler_gamma is not None:
+                scheduler = optim.lr_scheduler.ExponentialLR(optims[0],
+                                                             gamma = self.scheduler_gamma)
+                scheds.append(scheduler)
+
+                return optims, scheds
+        except:
+            pass
+        return optims
 
 class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
     """
