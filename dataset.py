@@ -10,80 +10,62 @@ import glob
 import pandas as pd
 import numpy as np
 import string
-from utils import svg2paths2, disvg, raster, get_single_paths, get_similar_length_paths, check_for_continouity, get_rasterized_segments, all_paths_to_max_diff, Path
+from thesis.utils import svg2paths2, disvg, raster, get_single_paths, get_similar_length_paths, check_for_continouity, get_rasterized_segments, all_paths_to_max_diff, Path
 import copy
 import random
 import math
 
 class VQDataset(Dataset):
-    def __init__(self, ds_path, split, seed):
+    def __init__(self, ds_path, train:bool = True):
         self.data: np.ndarray = np.load(ds_path)
-        self.split = split
-        self.seed = seed
-        # TODO add train/test split here
-        idx = np.arange(len(self.data))
-        self.data = self.data[self.data[:, 0] == self.split]
+        self.train = train
+        # TODO add better train/test split here
+        if self.train:
+            self.data = self.data[:int(0.8*len(self.data))]
+        else:
+            self.data = self.data[int(0.8*len(self.data)):]
         print(f"Loaded dataset with shape {self.data.shape} and dtype: {self.data.dtype}")
 
     def __len__(self):
         return len(self.data)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx:int):
         row = self.data[idx]
         return torch.from_numpy(row.astype(np.int32))
     
 class VQDataModule(LightningDataModule):
     def __init__(
         self,
-        csv_path: str,
+        ds_path: str,
         train_batch_size: int,
         val_batch_size: int,
-        channels: int,
-        width: int,
-        individual_max_length: float = 10.,
         num_workers: int = 0,
-        stroke_width: float = 0.3,
         **kwargs,
     ):
         super().__init__()
 
+        self.ds_path = ds_path
         self.train_batch_size = train_batch_size
         self.val_batch_size = val_batch_size
         self.num_workers = num_workers
-        self.csv_path = csv_path
-        self.channels = channels
-        self.width = width
-        self.num_workers = num_workers
-        self.stroke_width = stroke_width
-        self.individual_max_length = individual_max_length
 
     def setup(self, stage: Optional[str] = None) -> None:
-        self.train_dataset = CenterShapeLayersFromSVGDataset(
-            self.csv_path,
-            self.channels,
-            self.width,
+        self.train_dataset = VQDataset(
+            self.ds_path,
             train=True,
-            individual_max_length=self.individual_max_length,
-            stroke_width=self.stroke_width
         )
 
-        self.val_dataset = CenterShapeLayersFromSVGDataset(
-            self.csv_path,
-            self.channels,
-            self.width,
+        self.val_dataset = VQDataset(
+            self.ds_path,
             train=False,
-            individual_max_length=self.individual_max_length,
-            stroke_width=self.stroke_width
         )
 
     #       ===============================================================
 
     def collate_fn(self, batch):
-        imgs, labels, centers = zip(*batch)
-        imgs = torch.concat(imgs)
-        labels = torch.concat(labels)
-        centers = torch.concat(centers)
-        return imgs, labels, centers
+        sequences = zip(*batch)
+        sequences = torch.concat(sequences)
+        return sequences
 
     def train_dataloader(self) -> DataLoader:
         return DataLoader(
@@ -153,7 +135,10 @@ class CenterShapeLayersFromSVGDataset(Dataset):
         self.width = width
         self.train = train
         self.split = pd.read_csv(self.csv_path)
-        self.split = self.split[self.split["split"] == ("train" if self.train else "test")]
+        if train is not None:
+            self.split = self.split[self.split["split"] == ("train" if self.train else "test")]
+        else:
+            print("[WARNING] Using the whole dataset! Train was None.")
 
     def crop_path_into_segments(self, path:Path, length:float = 5.):
         """
