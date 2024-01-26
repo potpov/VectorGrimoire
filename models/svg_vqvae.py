@@ -76,11 +76,11 @@ class VQ_Transformer(nn.Module):
             )
         )
 
-    def forward(self, x: Tensor) -> Union[Tensor, dict]:
+    def forward(self, x: Tensor, **kwargs) -> Union[Tensor, dict]:
         return self.model.forward(x), {}
     
-    def loss_function(self, x: Tensor, pred_probabilities: Tensor, **kwargs) -> dict:
-        loss = F.cross_entropy(pred_probabilities,x)
+    def loss_function(self, targets: Tensor, pred_probabilities: Tensor, **kwargs) -> dict:
+        loss = F.cross_entropy(pred_probabilities,targets)
         return {'loss': loss}
 
 

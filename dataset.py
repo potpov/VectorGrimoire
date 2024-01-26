@@ -16,27 +16,43 @@ import random
 import math
 
 class VQDataset(Dataset):
-    def __init__(self, ds_path, train:bool = True):
-        self.data: np.ndarray = np.load(ds_path)
+    def __init__(self, csv_path:str, context_length: int,train:bool = True):
+        self.split = pd.read_csv(csv_path)
         self.train = train
-        # TODO add better train/test split here
+        self.context_length = context_length
         if self.train:
-            self.data = self.data[:int(0.8*len(self.data))]
+            self.data: np.ndarray = np.load(self.split[self.split["split"] == "train"]["file_path"].iloc[0])
         else:
-            self.data = self.data[int(0.8*len(self.data)):]
+            self.data: np.ndarray = np.load(self.split[self.split["split"] == "test"]["file_path"].iloc[0])
         print(f"Loaded dataset with shape {self.data.shape} and dtype: {self.data.dtype}")
+        print("Processing...")
+
+        self.data = np.split(self.data, np.where(self.data == 0)[0])[1:]  # as 0 is the <SOS> token
+        self.data = [x for x in self.data if len(x) < self.context_length - 1]  # -1 so we can shift one position for the target
+        for i, array in enumerate(self.data):
+            if len(array) < self.context_length:
+                self.data[i] = np.append(array, np.zeros(self.context_length - len(array), dtype=np.ushort) + 2)
+        self.data = np.stack(self.data)
+        # TODO shift by one!
+        print("Finished processing dataset.")
+        print(f"Dataset now with shape {self.data.shape} and dtype: {self.data.dtype}")
+
 
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx:int):
         row = self.data[idx]
-        return torch.from_numpy(row.astype(np.int32))
+        inputs = torch.from_numpy(row.astype(np.int32)).long()
+        targets = torch.from_numpy(np.roll(row, -1).astype(np.int32)).long()
+        targets[-1] = 2  # <PAD> token
+        return inputs, targets
     
 class VQDataModule(LightningDataModule):
     def __init__(
         self,
-        ds_path: str,
+        csv_path: str,
+        context_length: int,
         train_batch_size: int,
         val_batch_size: int,
         num_workers: int = 0,
@@ -44,27 +60,30 @@ class VQDataModule(LightningDataModule):
     ):
         super().__init__()
 
-        self.ds_path = ds_path
+        self.csv_path = csv_path
         self.train_batch_size = train_batch_size
         self.val_batch_size = val_batch_size
         self.num_workers = num_workers
+        self.context_length = context_length
 
     def setup(self, stage: Optional[str] = None) -> None:
         self.train_dataset = VQDataset(
-            self.ds_path,
+            self.csv_path,
+            context_length=self.context_length,
             train=True,
         )
 
         self.val_dataset = VQDataset(
-            self.ds_path,
+            self.csv_path,
+            context_length=self.context_length,
             train=False,
         )
 
     #       ===============================================================
 
     def collate_fn(self, batch):
-        sequences = zip(*batch)
-        sequences = torch.concat(sequences)
+        # sequences = zip(*batch)
+        sequences = torch.concat(batch)
         return sequences
 
     def train_dataloader(self) -> DataLoader:
@@ -74,7 +93,7 @@ class VQDataModule(LightningDataModule):
             num_workers=self.num_workers,
             shuffle=True,
             pin_memory=False,
-            collate_fn=self.collate_fn
+            # collate_fn=self.collate_fn
         )
 
     def val_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
@@ -84,7 +103,7 @@ class VQDataModule(LightningDataModule):
             num_workers=self.num_workers,
             shuffle=False,
             pin_memory=False,
-            collate_fn=self.collate_fn
+            # collate_fn=self.collate_fn
         )
 
     def test_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
@@ -94,7 +113,7 @@ class VQDataModule(LightningDataModule):
             num_workers=self.num_workers,
             shuffle=False,
             pin_memory=False,
-            collate_fn=self.collate_fn
+            # collate_fn=self.collate_fn
         )
 
 class CenterShapeLayersFromSVGDataset(Dataset):

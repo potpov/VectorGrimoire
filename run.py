@@ -8,9 +8,9 @@ from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import WandbLogger, TensorBoardLogger
 from pytorch_lightning import seed_everything
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, LearningRateFinder, EarlyStopping
-from dataset import MNISTDataset, MNISTppDataset, NounProjectDataset, EmojiDataset, MNISTDatasetCSVG, CausalSVGDataModule, NewCausalSVGDataModule, CenterShapeLayersFromSVGDataModule
-from models import VAEctorGen, VectorGPT, VanillaVAE, VectorVAEnLayers, VectorGPTv2, Vector_VQVAE
-from experiment import VAEXperiment, VectorGPTExperiment, VectorGPTExperimentv2, VectorVQVAE_Experiment_Stage1
+from dataset import MNISTDataset, MNISTppDataset, NounProjectDataset, EmojiDataset, MNISTDatasetCSVG, CausalSVGDataModule, NewCausalSVGDataModule, CenterShapeLayersFromSVGDataModule, VQDataModule
+from models import VAEctorGen, VectorGPT, VanillaVAE, VectorVAEnLayers, VectorGPTv2, Vector_VQVAE, VQ_Transformer
+from experiment import VAEXperiment, VectorGPTExperiment, VectorGPTExperimentv2, VectorVQVAE_Experiment_Stage1, SVG_VQVAE_Stage2_Experiment
 import wandb
 from utils import get_rank
 import torch
@@ -26,6 +26,7 @@ DATASETMAP = {
     "mnist": MNISTDataset,
     "mnistCSVG": MNISTDatasetCSVG,
     "centeredShapeLayers" : CenterShapeLayersFromSVGDataModule,
+    "tokens" : VQDataModule,
 }
 
 MODELS = {
@@ -35,6 +36,7 @@ MODELS = {
     "VectorGPT": VectorGPT,
     "VectorGPTv2": VectorGPTv2,
     "SVG_VAQVAE": Vector_VQVAE,
+    "VQ_Transformer" : VQ_Transformer,
   }
 
 
@@ -96,14 +98,20 @@ else:
 
 if config['model_params']['name'] == "VectorGPT":
     experiment = VectorGPTExperiment(model, **config['exp_params'], wandb = args.wandb)
+    data = DATASETMAP[config["data_params"]["dataset"]](**config["data_params"])
 elif config['model_params']['name'] == "VectorGPTv2":
     experiment = VectorGPTExperimentv2(model, **config['exp_params'], wandb = args.wandb)
+    data = DATASETMAP[config["data_params"]["dataset"]](**config["data_params"])
 elif config['model_params']['name'] == "SVG_VAQVAE":
     experiment = VectorVQVAE_Experiment_Stage1(model, **config['exp_params'], wandb = args.wandb)
+    data = DATASETMAP[config["data_params"]["dataset"]](**config["data_params"])
+elif config['model_params']['name'] == "VQ_Transformer":
+    experiment = SVG_VQVAE_Stage2_Experiment(model, **config['exp_params'], wandb = args.wandb)
+    data = DATASETMAP[config["data_params"]["dataset"]](**config["data_params"], context_length = config["model_params"]["max_seq_len"])
 else:
     experiment = VAEXperiment(model, config['exp_params'])
+    data = DATASETMAP[config["data_params"]["dataset"]](**config["data_params"])
 
-data = DATASETMAP[config["data_params"]["dataset"]](**config["data_params"])
 
 data.setup()
 runner = Trainer(
@@ -113,7 +121,7 @@ runner = Trainer(
         LearningRateMonitor(logging_interval="epoch", log_momentum=True),
         #  LearningRateFinder(early_stop_threshold=None, num_training_steps=200),
         EarlyStopping("val_loss", 0.005, 50, verbose=True),
-        ModelCheckpoint(save_top_k=1,
+        ModelCheckpoint(save_top_k=2,
                         dirpath =os.path.join(config['logging_params']['save_dir'], "checkpoints"),
                         monitor= "val_loss",
                         save_last= True),

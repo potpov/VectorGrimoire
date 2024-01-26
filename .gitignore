@@ -15,6 +15,7 @@ configs/*.yaml
 !VectorGPTv2.yaml
 !VectorGPT_sweep_basis.yaml
 !SVG_VQVAE_Stage1.yaml
+!SVG_VQVAE_Stage2.yaml
 images/*
 
 # Byte-compiled / optimized / DLL files

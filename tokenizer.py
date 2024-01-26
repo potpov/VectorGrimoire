@@ -3,7 +3,7 @@ from typing import Tuple
 import numpy as np
 from models import Vector_VQVAE
 import torch
-from torch import round, no_grad, Tensor
+from torch import Tensor
 
 class VQTokenizer:
     """
@@ -55,7 +55,7 @@ class VQTokenizer:
         Returns:
             Tensor: Tensor of shape (num_pos, 1)
         """
-        positions = positions * self.full_image_res
+        assert positions.mean() > 1., f"Positions should be scaled with the full image resolution already, got mean: {positions.mean()}"
         positions = positions[:, 0].round() + self.full_image_res * positions[:, 1].round()
         return positions + self.start_of_pos_token_idx
         

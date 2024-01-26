@@ -14,6 +14,7 @@ import torch.nn.functional as F
 class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
     def __init__(self,
                  model: VQ_Transformer,
+                 checkpoint_path:str,
                  lr: float = 0.0003,
                  weight_decay: float = 0.0,
                  scheduler_gamma: float = 0.99,
@@ -24,6 +25,7 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
         super(SVG_VQVAE_Stage2_Experiment, self).__init__()
 
         self.model = model
+        self.checkpoint_path = checkpoint_path
         self.lr = lr
         self.weight_decay = weight_decay
         self.scheduler_gamma = scheduler_gamma
@@ -32,25 +34,40 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
         self.curr_device = None
         self.wandb = wandb
 
+        # state_dict = torch.load(self.checkpoint_path)["state_dict"]
+        # try:
+        #     self.model.load_state_dict(state_dict)
+        #     print("Loaded weights.")
+        # except:
+        #     self.model.load_state_dict({k.replace("model.", ""): v for k, v in state_dict.items()})
+        #     print("Loaded weights.")
+
+        # self.model = self.model.eval()
+    
+
     def forward(self, input_tokens: Tensor, logging=False, **kwargs) -> list:
         out, logging_dict = self.model.forward(input_tokens, logging=logging, **kwargs)
         return out, logging_dict
     
     def training_step(self, batch, batch_idx, optimizer_idx=0):
-        tokens = batch
-        self.curr_device = tokens.device
+        inputs, targets = batch
+        self.curr_device = inputs.device
 
         if batch_idx % self.train_log_interval == 0 and self.wandb:
-            out, logging_dict = self.forward(tokens, logging=True)
+            out, logging_dict = self.forward(inputs, logging=True)
         else:
-            out, logging_dict = self.forward(tokens, logging=False)  # out is [reconstructions, input, all_points, vq_loss]
+            out, logging_dict = self.forward(inputs, logging=False)  # out is [reconstructions, input, all_points, vq_loss]
         
-        pred_logits = out[0]  # (b, seq_len)
+        pred_logits = out  # (b, seq_len)
         
         # one_hot_gt = F.one_hot(tokens, num_classes=self.model.num_tokens)  # (b, seq_len, num_tokens)
 
+        # reshape pred and targets to (b*seq_len, context_length)
+        pred_logits = pred_logits.view(-1, pred_logits.shape[-1])
+        targets = targets.view(-1)
+
         loss_dict = self.model.loss_function(
-            x=tokens,
+            targets=targets,
             pred_probabilities=pred_logits,
         )
     
@@ -69,19 +86,25 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx, optimizer_idx=0):
 
-        tokens = batch
-        self.curr_device = tokens.device
+        inputs, targets = batch
+        self.curr_device = inputs.device
 
         with torch.no_grad():
             if batch_idx % self.train_log_interval == 0 and self.wandb:
-                out, logging_dict = self.forward(tokens, logging=True)
+                out, logging_dict = self.forward(inputs, logging=True)
             else:
-                out, logging_dict = self.forward(tokens, logging=False)  # out is [reconstructions, input, all_points, vq_loss]
+                out, logging_dict = self.forward(inputs, logging=False)  # out is [reconstructions, input, all_points, vq_loss]
         
-        pred_logits = out[0]  # (b, seq_len)
+        pred_logits = out  # (b, seq_len)
+
+        # reshape pred to (b*seq_len, context_length)
+        pred_logits = pred_logits.view(-1, pred_logits.shape[-1])
+        # and targets to (b*seq_len)
+        targets = targets.view(-1)
+
         
         loss_dict = self.model.loss_function(
-            x=tokens,
+            targets=targets,
             pred_probabilities=pred_logits,
         )
 

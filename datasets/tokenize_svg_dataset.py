@@ -8,7 +8,7 @@ import os
 from tqdm import tqdm
 
 def main():
-    CONTEXT_LENGTH = 512
+    CONTEXT_LENGTH = 256
     MODEL_WEIGHTS_PATH = "/scratch2/moritz_logs/SVG_VQVAE/Stage1/glyphazzn_B_simplified_single_code/checkpoints/last-v3.ckpt"
     OUT_DIR = "/scratch2/moritz_data/glyphazzn/B_simplified/tokenized"
     if not os.path.exists(OUT_DIR):
@@ -27,6 +27,7 @@ def main():
         model.load_state_dict({k.replace("model.", ""): v for k, v in state_dict.items()})
     model = model.eval()
     tokenizer = VQTokenizer(model, 128, CONTEXT_LENGTH, 1)
+    print("Number of Tokens: ",tokenizer.num_tokens)
 
     train_tokens = []
     print("Processing training set..")
