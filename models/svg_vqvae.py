@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 import wandb
-from utils import log_all_images, tensor_to_histogram_image
+from thesis.utils import log_all_images, tensor_to_histogram_image
 from models.resnet import ResNet, BasicBlock
 from models.vq_vae import VectorQuantizer
 from models.mlp_vector_head import MLPVectorHeadFixed
