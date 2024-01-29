@@ -47,8 +47,8 @@ class VQ_Transformer(nn.Module):
     Stage 2 of the SVG-VQ-VAE pipeline.
     """
 
-    def __init__(self, 
-                num_tokens: int = 20000, 
+    def __init__(self,
+                num_tokens: int = 20000,
                 max_seq_len: int = 512,
                 dim: int = 512,
                 depth: int = 12,
@@ -82,6 +82,23 @@ class VQ_Transformer(nn.Module):
     def loss_function(self, targets: Tensor, pred_probabilities: Tensor, **kwargs) -> dict:
         loss = F.cross_entropy(pred_probabilities,targets)
         return {'loss': loss}
+    
+    def generate(self, input_tokens: Tensor, eos_token: int) -> Tensor:
+        with torch.no_grad():  # no need to track gradients when generating tokens
+            while input_tokens.shape[1] < self.max_seq_len:
+                predictions, _ = self.forward(input_tokens)
+                # get the last predicted token
+                last_token = predictions[:, -1:, :].argmax(dim=-1)
+                # check if the last token is the <EOS> token
+                # append the last token to the input tokens
+                input_tokens = torch.cat([input_tokens, last_token], dim=1)
+                if last_token.item() == eos_token:
+                    reason = "EOS token reached"
+                    break
+                elif input_tokens.shape[1] >= self.max_seq_len:
+                    reason = "Max sequence length reached"
+                    break
+        return input_tokens, reason
 
 
 class Vector_VQVAE(nn.Module):
@@ -175,11 +192,11 @@ class Vector_VQVAE(nn.Module):
         #     result = result[0]  # extract only the raster image for now
         return result, logging_dict
     
-    def decode_from_indices(self, idxs: Tensor) -> Tensor:
+    def decode_from_indices(self, idxs: Tensor) -> Union[Tensor, dict]:
         """
-        Maps the given idxs from codebook onto the image space.
+        Maps the given idxs to [reconstructions, input, all_points, vq_loss], all_points are the points of the bezier curves
         :param z: (Tensor) [B x 1]
-        :return: (Tensor) [B x C x H x W]
+
         """
         if self.vq_method == "fsq":
             codes = self.quantize_layer.indices_to_codes(idxs)

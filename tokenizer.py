@@ -1,9 +1,11 @@
 from typing import Tuple
+from thesis.utils import calculate_global_positions, shapes_to_drawing
 
 import numpy as np
 from models import Vector_VQVAE
 import torch
 from torch import Tensor
+from svgwrite import Drawing
 
 class VQTokenizer:
     """
@@ -92,19 +94,23 @@ class VQTokenizer:
         
         return final_tokens
     
-    def decode_patches(self, tokens: Tensor) -> Tensor:
+    def decode_patches(self, tokens: Tensor, raster:bool = False) -> Tensor:
         """
-        Decodes the patches from the tokens.
+        Decodes the patches from the tokens into bezier points.
 
         Args:
             tokens (Tensor): Tensor of shape (num_patches, self.tokens_per_patch)
+            raster (bool, optional): Whether to return the rasterized patches. Defaults to False.
 
         Returns:
             Tensor: Tensor of shape (num_patches, channels, patch_res, patch_res)
         """
         with torch.no_grad():
-            patches = self.vq_model.decode_from_indices(tokens - self.start_of_patch_token_idx)
-        return patches
+            out, _ = self.vq_model.decode_from_indices(tokens - self.start_of_patch_token_idx)
+        if raster:
+            return out[0]
+        else:
+            return out[2]
     
     def decode_positions(self, tokens: Tensor) -> Tensor:
         """
@@ -119,3 +125,35 @@ class VQTokenizer:
         tokens = tokens - self.start_of_pos_token_idx
         positions = torch.stack([tokens % self.full_image_res, tokens // self.full_image_res], dim=1)
         return positions
+    
+    def decode(self, tokens: Tensor, ignore_eos: bool = False):
+        """
+        Decodes the patches and positions from the tokens.
+
+        Args:
+            tokens (Tensor): Tensor of shape (num_tokens)
+
+        Returns:
+            Tuple[Tensor, Tensor]: Tuple of tensors of shape (num_patches, channels, patch_res, patch_res) and (num_pos, 2)
+        """
+        # remove all occurence of <PAD> token
+        tokens = tokens[tokens != self.special_token_mapping["<PAD>"]]
+
+        assert tokens.ndim == 1, f"Tokens should be 1D, got shape {tokens.shape}"
+        assert tokens.size(0) > 3, f"Tokens should have at least 4 elements, got {tokens.size(0)}"
+        assert tokens[0] == self.special_token_mapping["<SOS>"], f"First token should be <SOS>, got {tokens[0]}"
+        if not ignore_eos:
+            assert tokens[-1] == self.special_token_mapping["<EOS>"], f"Last token should be <EOS>, got {tokens[-1]}"
+        tokens = tokens[1:-1]
+        if self.tokens_per_patch == 1:
+            assert tokens.size(0) % 2 == 0, f"Number of tokens should be even, got {tokens.size(0)}"
+        patch_tokens = tokens[::2]
+        pos_tokens = tokens[1::2]
+        bezier_points = self.decode_patches(patch_tokens)
+        positions = self.decode_positions(pos_tokens)
+        return bezier_points, positions
+    
+    def assemble_svg(self, bezier_points: Tensor, center_positions: Tensor, padded_individual_max_length: float, stroke_width: float) -> Drawing:
+        global_shapes = calculate_global_positions(bezier_points, padded_individual_max_length, center_positions)[:,0]
+        reconstructed_drawing = shapes_to_drawing(global_shapes, stroke_width=stroke_width, w=72.)
+        return reconstructed_drawing
