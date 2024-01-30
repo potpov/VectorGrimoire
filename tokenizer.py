@@ -28,10 +28,21 @@ class VQTokenizer:
         }
 
         self.start_of_patch_token_idx = len(self.special_token_mapping)
-        self.start_of_pos_token_idx = self.start_of_patch_token_idx + self.codebook_size * self.tokens_per_patch  # TODO validate if this needs a +1
+        self.start_of_pos_token_idx = self.start_of_patch_token_idx + self.codebook_size * self.tokens_per_patch  # TODO validate (everywhere) if stuff needs a +1
         self.num_tokens = self.start_of_pos_token_idx + self.max_num_pos_tokens
         
+    def _is_position(self, token: int) -> bool:
+        return token >= self.start_of_pos_token_idx and token <= self.num_tokens
 
+    def _is_patch(self, token: int) -> bool:
+        return token >= self.start_of_patch_token_idx and token < self.start_of_pos_token_idx
+    
+    def _get_patch_idx_range(self) -> Tuple[int, int]:
+        return self.start_of_patch_token_idx, self.start_of_pos_token_idx
+    
+    def _get_pos_idx_range(self) -> Tuple[int, int]:
+        return self.start_of_pos_token_idx, self.num_tokens
+    
     def tokenize_patches(self, patches: Tensor) -> Tensor:
         """
         Tokenizes the patches of the rasterized SVGs.

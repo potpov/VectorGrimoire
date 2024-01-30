@@ -1,4 +1,4 @@
-from typing import Union
+from typing import Tuple, Union
 import kornia
 import numpy as np
 import torch
@@ -83,7 +83,10 @@ class VQ_Transformer(nn.Module):
         loss = F.cross_entropy(pred_probabilities,targets)
         return {'loss': loss}
     
-    def generate(self, input_tokens: Tensor, eos_token: int) -> Tensor:
+    def _generate(self, input_tokens: Tensor, eos_token: int) -> Tensor:
+        """
+        Generates tokens from the given input tokens but has no constraints on the order of the type of tokens. Can produce invalid SVGs.
+        """
         with torch.no_grad():  # no need to track gradients when generating tokens
             while input_tokens.shape[1] < self.max_seq_len:
                 predictions, _ = self.forward(input_tokens)
@@ -99,7 +102,41 @@ class VQ_Transformer(nn.Module):
                     reason = "Max sequence length reached"
                     break
         return input_tokens, reason
+    
+    def generate_with_constraint(self, input_tokens: Tensor, pad_token:int, eos_token: int, patch_idx_range: Tuple[int, int], pos_idx_range: Tuple[int, int]) -> Tensor:
+        assert pos_idx_range[0] >= patch_idx_range[1], "pos_idx_range must start after patch_idx_range ends"
+        if (input_tokens[:, -1] >= pos_idx_range[0]).all() and (input_tokens[:, -1] <= pos_idx_range[1]).all():
+            required_token = "patch"
+        elif (input_tokens[:, -1] >= patch_idx_range[0]).all() and (input_tokens[:, -1] <= patch_idx_range[1]).all():
+            required_token = "pos"
+        elif (input_tokens[:, -1] < patch_idx_range[0]).all():  # e.g. only <SOS> tokens in input
+            required_token = "patch"
+        else:
+            raise ValueError("Last tokens in Input must be of the same type (special, patch, or pos).")
 
+        with torch.no_grad():
+            while input_tokens.shape[1] < self.max_seq_len:
+                predictions, _ = self.forward(input_tokens)
+                predictions[:, -1, pad_token] = -torch.inf  # mask the padding token
+                if required_token == "patch":
+                    predictions[:, -1, pos_idx_range[0]:pos_idx_range[1]] = -torch.inf
+                    required_token = "pos"
+                elif required_token == "pos":
+                    predictions[:, -1, patch_idx_range[0]:patch_idx_range[1]] = -torch.inf
+                    required_token = "patch"
+                
+                # get the last predicted token
+                last_token = predictions[:, -1:, :].argmax(dim=-1)
+                # check if the last token is the <EOS> token
+                # append the last token to the input tokens
+                input_tokens = torch.cat([input_tokens, last_token], dim=1)
+                if last_token.item() == eos_token:
+                    reason = "EOS token reached"
+                    break
+                elif input_tokens.shape[1] >= self.max_seq_len:
+                    reason = "Max sequence length reached"
+                    break
+        return input_tokens, reason
 
 class Vector_VQVAE(nn.Module):
     """
