@@ -4,6 +4,10 @@ from models import BaseVAE
 from torch import nn
 from torch.nn import functional as F
 from typing import List, Union
+import matplotlib.pyplot as plt
+from PIL import Image
+import io
+import wandb
 
 class VectorQuantizer(nn.Module):
     """
@@ -22,7 +26,28 @@ class VectorQuantizer(nn.Module):
         self.embedding = nn.Embedding(self.K, self.D)
         self.embedding.weight.data.uniform_(-1 / self.K, 1 / self.K)
 
-    def forward(self, latents: Tensor) -> Tensor:
+    def tensor_to_histogram_image(self, tensor):
+        # Create a histogram plot
+        plt.hist(tensor, bins=self.K)
+        plt.title('Codebook usage histogram')
+        
+        # Save the plot to a BytesIO object
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png')
+        buf.seek(0)
+
+        # Create a PIL image from the BytesIO object
+        image = Image.open(buf).copy()
+
+        # Close the buffer
+        buf.close()
+
+        return image
+
+    def forward(self, latents: Tensor, **kwargs) -> list:
+        """
+        returns [quantized latents, vq_loss, logging_dict]
+        """
         latents = latents.permute(0, 2, 3, 1).contiguous()  # [B x D x H x W] -> [B x H x W x D]
         latents_shape = latents.shape
         flat_latents = latents.view(-1, self.D)  # [BHW x D]
@@ -53,7 +78,12 @@ class VectorQuantizer(nn.Module):
         # Add the residue back to the latents
         quantized_latents = latents + (quantized_latents - latents).detach()
 
-        return quantized_latents.permute(0, 3, 1, 2).contiguous(), vq_loss  # [B x D x H x W]
+        if "logging" in kwargs and kwargs["logging"]:
+            logging_dict = {"codebook_histogram":wandb.Image(self.tensor_to_histogram_image(encoding_inds.flatten().detach().cpu()))}
+        else:
+            logging_dict = {}
+
+        return [quantized_latents.permute(0, 3, 1, 2).contiguous(), vq_loss, logging_dict]  # [B x D x H x W]
 
 class ResidualLayer(nn.Module):
 

@@ -11,7 +11,7 @@ from models.simple_vector_decoder import SimpleVectorDecoder
 from models.mlp_vector_head import MLPVectorHeadFixed, MLPRasterHead
 from models.mlp import MultiLayerPerceptron
 import kornia
-from utils import log_all_images
+from thesis.utils import log_all_images
 
 class PositionalEncoding(nn.Module):
     """

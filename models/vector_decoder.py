@@ -9,7 +9,7 @@ from torch.nn import functional as F
 from PIL import Image
 from typing import List
 
-from utils import fig2data, make_tensor
+from thesis.utils import fig2data, make_tensor
 import pydiffvg
 import math
 import numpy as np

@@ -9,7 +9,473 @@ from PIL import Image
 import glob
 import pandas as pd
 import numpy as np
+import string
+from thesis.utils import svg2paths2, disvg, raster, get_single_paths, get_similar_length_paths, check_for_continouity, get_rasterized_segments, all_paths_to_max_diff, Path
+import copy
+import random
+import math
 
+class VQDataset(Dataset):
+    def __init__(self, csv_path:str, context_length: int,train:bool = True):
+        self.split = pd.read_csv(csv_path)
+        self.train = train
+        self.context_length = context_length
+        if self.train:
+            self.data: np.ndarray = np.load(self.split[self.split["split"] == "train"]["file_path"].iloc[0])
+        else:
+            self.data: np.ndarray = np.load(self.split[self.split["split"] == "test"]["file_path"].iloc[0])
+        print(f"Loaded dataset with shape {self.data.shape} and dtype: {self.data.dtype}")
+        print("Processing...")
+
+        self.data = np.split(self.data, np.where(self.data == 0)[0])[1:]  # as 0 is the <SOS> token
+        self.data = [x for x in self.data if len(x) < self.context_length - 1]  # -1 so we can shift one position for the target
+        for i, array in enumerate(self.data):
+            if len(array) < self.context_length:
+                self.data[i] = np.append(array, np.zeros(self.context_length - len(array), dtype=np.ushort) + 2)
+        self.data = np.stack(self.data)
+        # TODO shift by one!
+        print("Finished processing dataset.")
+        print(f"Dataset now with shape {self.data.shape} and dtype: {self.data.dtype}")
+
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx:int):
+        row = self.data[idx]
+        inputs = torch.from_numpy(row.astype(np.int32)).long()
+        targets = torch.from_numpy(np.roll(row, -1).astype(np.int32)).long()
+        targets[-1] = 2  # <PAD> token
+        return inputs, targets
+    
+class VQDataModule(LightningDataModule):
+    def __init__(
+        self,
+        csv_path: str,
+        context_length: int,
+        train_batch_size: int,
+        val_batch_size: int,
+        num_workers: int = 0,
+        **kwargs,
+    ):
+        super().__init__()
+
+        self.csv_path = csv_path
+        self.train_batch_size = train_batch_size
+        self.val_batch_size = val_batch_size
+        self.num_workers = num_workers
+        self.context_length = context_length
+
+    def setup(self, stage: Optional[str] = None) -> None:
+        self.train_dataset = VQDataset(
+            self.csv_path,
+            context_length=self.context_length,
+            train=True,
+        )
+
+        self.val_dataset = VQDataset(
+            self.csv_path,
+            context_length=self.context_length,
+            train=False,
+        )
+
+    #       ===============================================================
+
+    def collate_fn(self, batch):
+        # sequences = zip(*batch)
+        sequences = torch.concat(batch)
+        return sequences
+
+    def train_dataloader(self) -> DataLoader:
+        return DataLoader(
+            self.train_dataset,
+            batch_size=self.train_batch_size,
+            num_workers=self.num_workers,
+            shuffle=True,
+            pin_memory=False,
+            # collate_fn=self.collate_fn
+        )
+
+    def val_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
+        return DataLoader(
+            self.val_dataset,
+            batch_size=self.val_batch_size,
+            num_workers=self.num_workers,
+            shuffle=False,
+            pin_memory=False,
+            # collate_fn=self.collate_fn
+        )
+
+    def test_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
+        return DataLoader(
+            self.val_dataset,
+            batch_size=16,
+            num_workers=self.num_workers,
+            shuffle=False,
+            pin_memory=False,
+            # collate_fn=self.collate_fn
+        )
+
+class CenterShapeLayersFromSVGDataset(Dataset):
+    """
+    This dataset takes SVG files and preprocesses them into rasterized centered shape layers.
+
+    Args:
+        - csv_path: path to csv file with the following columns:
+            - file_path: full path to svg file
+            - class: class label
+            - split: "train" or "test"
+        - channels: number of channels for the rasterized images
+        - width: width/height of the rasterized images
+        - train: whether to use the train or test split
+        - individual_min_length: minimum length of a path segment to qualify for being a single shape layer
+        - individual_max_length: maximum length of a path segment, everything longer than this will be cropped into multiple segments
+        - stroke_width: stroke width for rasterization
+        - max_shapes_per_svg: maximum number of shape layers per svg file, can be tuned for VRAM savings
+    """
+
+    def __init__(self, 
+                 csv_path: str,
+                 channels: int,
+                 width: int,
+                 train: bool = True,
+                 individual_min_length: float = 1.,
+                 individual_max_length: float = 10.,
+                 stroke_width: float = 0.3,
+                 max_shapes_per_svg: int = 64,
+                 **kwargs):
+        super(CenterShapeLayersFromSVGDataset, self)
+        self.csv_path = csv_path
+        self.individual_min_length = individual_min_length
+        self.individual_max_length = individual_max_length
+        self.stroke_width = stroke_width
+        self.max_shapes_per_svg = max_shapes_per_svg
+        self.channels = channels
+        self.width = width
+        self.train = train
+        self.split = pd.read_csv(self.csv_path)
+        if train is not None:
+            self.split = self.split[self.split["split"] == ("train" if self.train else "test")]
+        else:
+            print("[WARNING] Using the whole dataset! Train was None.")
+
+    def crop_path_into_segments(self, path:Path, length:float = 5.):
+        """
+        a single input path is cropped into segments of approx length `length`. I say "approx" because we divide the path into same length segments, which will not be exactly `length` long.
+        """
+        segments = []
+        num_iters = math.ceil(path.length() / length)
+        for i in range(num_iters):
+            cropped_segment = path.cropped(i/num_iters, (i+1)/num_iters)
+            segments.append(cropped_segment)
+
+        return segments
+
+    def get_similar_length_paths(self, single_paths, max_length: float = 5.):
+        similar_length_paths = []
+        for path in single_paths:
+            if path.length() < self.individual_min_length:
+                continue
+            try:
+                segments = self.crop_path_into_segments(path, length=max_length)
+                similar_length_paths.extend(segments)
+            except AssertionError:
+                print("Error while cropping path into segments, skipping...")
+                continue
+        return similar_length_paths
+    
+    def get_similar_length_paths_from_index(self, index, max_length: float = 5.):
+        svg_path = self.split.iloc[index]["file_path"]
+        paths, attributes, svg_attributes = svg2paths2(svg_path)
+        single_paths = get_single_paths(paths)
+        sim_length_paths = self.get_similar_length_paths(single_paths, max_length=max_length)
+        return sim_length_paths
+
+    def __getitem__(self, index) -> tuple:
+        svg_path = self.split.iloc[index]["file_path"]
+        label = self.split.iloc[index]["class"]
+        label = string.printable.index(label)
+        paths, attributes, svg_attributes = svg2paths2(svg_path)
+        single_paths = get_single_paths(paths)
+        # queue = copy.deepcopy(single_paths)
+        sim_length_paths = self.get_similar_length_paths(single_paths, self.individual_max_length)
+        assert check_for_continouity(sim_length_paths), "paths are not continous"
+        # select a random slice of the paths of length max_shapes_per_svg
+        if len(sim_length_paths) > self.max_shapes_per_svg:
+            start_idx = random.randint(0, len(sim_length_paths) - self.max_shapes_per_svg)
+            sim_length_paths = sim_length_paths[start_idx:start_idx+self.max_shapes_per_svg]
+        rasterized_segments, centers = get_rasterized_segments(sim_length_paths, self.stroke_width, self.individual_max_length, svg_attributes, centered=True, height=self.width, width=self.width)
+        imgs = torch.stack(rasterized_segments)  # (n_shapes, channels, width, width)
+        centers = torch.tensor(centers)  # (n_shapes, 2)
+        labels = torch.ones(imgs.size(0)) * label
+        return imgs, labels, centers
+    
+    def _get_full_svg_drawing(self, index, width:int = 720):
+        svg_path = self.split.iloc[index]["file_path"]
+        paths, attributes, svg_attributes = svg2paths2(svg_path)
+        single_paths = get_single_paths(paths)
+        return disvg(single_paths, paths2Drawing=True, stroke_widths=[self.stroke_width]*len(single_paths), viewbox = svg_attributes["viewBox"],dimensions=(width, width))
+
+    def __len__(self):
+        return len(self.split)
+
+class CenterShapeLayersFromSVGDataModule(LightningDataModule):
+    def __init__(
+        self,
+        csv_path: str,
+        train_batch_size: int,
+        val_batch_size: int,
+        channels: int,
+        width: int,
+        individual_max_length: float = 10.,
+        num_workers: int = 0,
+        stroke_width: float = 0.3,
+        **kwargs,
+    ):
+        super().__init__()
+
+        self.train_batch_size = train_batch_size
+        self.val_batch_size = val_batch_size
+        self.num_workers = num_workers
+        self.csv_path = csv_path
+        self.channels = channels
+        self.width = width
+        self.num_workers = num_workers
+        self.stroke_width = stroke_width
+        self.individual_max_length = individual_max_length
+
+    def setup(self, stage: Optional[str] = None) -> None:
+        self.train_dataset = CenterShapeLayersFromSVGDataset(
+            self.csv_path,
+            self.channels,
+            self.width,
+            train=True,
+            individual_max_length=self.individual_max_length,
+            stroke_width=self.stroke_width
+        )
+
+        self.val_dataset = CenterShapeLayersFromSVGDataset(
+            self.csv_path,
+            self.channels,
+            self.width,
+            train=False,
+            individual_max_length=self.individual_max_length,
+            stroke_width=self.stroke_width
+        )
+
+    #       ===============================================================
+
+    def collate_fn(self, batch):
+        imgs, labels, centers = zip(*batch)
+        imgs = torch.concat(imgs)
+        labels = torch.concat(labels)
+        centers = torch.concat(centers)
+        return imgs, labels, centers
+
+    def train_dataloader(self) -> DataLoader:
+        return DataLoader(
+            self.train_dataset,
+            batch_size=self.train_batch_size,
+            num_workers=self.num_workers,
+            shuffle=True,
+            pin_memory=False,
+            collate_fn=self.collate_fn
+        )
+
+    def val_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
+        return DataLoader(
+            self.val_dataset,
+            batch_size=self.val_batch_size,
+            num_workers=self.num_workers,
+            shuffle=False,
+            pin_memory=False,
+            collate_fn=self.collate_fn
+        )
+
+    def test_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
+        return DataLoader(
+            self.val_dataset,
+            batch_size=16,
+            num_workers=self.num_workers,
+            shuffle=False,
+            pin_memory=False,
+            collate_fn=self.collate_fn
+        )
+
+class NewCausalSVGDataset(Dataset):
+    """
+    New FIGR8 dataset from a root directory for causal svg generation.
+    Has:
+        - centered images for prediction and visual MSE loss
+        - absolute images for merged input
+        - absolute and relative start/end points
+        - stop signal vector
+
+
+     ClassName
+     |
+     |
+     |---I{svg_id}_{num_segments}_Segments_images_absolute.npy 
+     |---I{svg_id}_{num_segments}_Segments_images_centered.npy 
+     |---I{svg_id}_{num_segments}_Segments_positions.npy  
+     |---split.csv
+    """
+
+    def __init__(self, root_path: str, context_length: int, channels: int, width: int, subset: List[str], **kwargs):
+        super(NewCausalSVGDataset, self)
+        self.context_length = context_length
+        self.channels = channels
+        self.width = width  # TODO: can we remove this?
+        self.root_path = root_path
+        self.subset = subset
+        self.split = pd.read_csv(os.path.join(self.root_path, "split.csv"))
+        before = len(self.split)
+        self.split = self.split[self.split["segments"] < context_length]
+        self.split = self.split[self.split["segments"] > 15]
+        after = len(self.split)
+        print(f"Removed {np.round((before - after) / before * 100, decimals=2)}% of samples because they have more segments than the context length.")
+        if self.subset and len(self.subset) > 0:
+            self.split = self.split[self.split['class'].isin(self.subset)]
+        self.split = self.split[self.split["split"] == ("train" if kwargs["train"] else "test")]
+
+    def __getitem__(self, index) -> tuple:
+        centered_filename = self.split.iloc[index]["raster_filename_centered"]
+        absolute_filename = self.split.iloc[index]["raster_filename_absolute"]
+        positions_filename = self.split.iloc[index]["position_filename"]
+        curr_class = self.split.iloc[index]["class"]
+
+        centered_images = torch.from_numpy(np.load(os.path.join(self.root_path, curr_class, centered_filename)))
+        absolute_images = torch.from_numpy(np.load(os.path.join(self.root_path, curr_class, absolute_filename)))
+        positions = torch.from_numpy(np.load(os.path.join(self.root_path, curr_class, positions_filename))).to(torch.float32)
+        # TODO test if this correct (expected: should extract start/end point of bezier in relative coordinates)
+        positions = torch.flatten(positions[:, [2,3], :], start_dim=-2) # (t, 4, 2) -> (t, 4)
+
+        num_timesteps = centered_images.shape[0]
+        if centered_images.max() > 1:
+            centered_images = centered_images / 255  # shift to [0-1] (imgs stored as uint8)
+        if absolute_images.max() > 1:
+            absolute_images = absolute_images / 255  # shift to [0-1] (imgs stored as uint8)
+
+        # padding images with fewer features than CL
+        pad_len = self.context_length - num_timesteps
+        assert pad_len > 0, "context length must be greater than number of features of the dataset, did you set the context length correctly in the config?"
+        pad = torch.ones(pad_len, *centered_images.shape[1:])  # 1 -> white -> no features
+        
+        centered_shape_layers = torch.concat((centered_images, pad), dim=0)  # Ground truth
+        absolute_shape_layers = torch.concat((absolute_images, pad), dim=0)  # Ground truth
+        
+        position_pad = torch.ones(pad_len, *positions.shape[1:])
+        positions = torch.concat((positions, position_pad), dim=0)
+
+        # adding channel (Dataset is gray-scale, if you use 3 channels those are replicated)
+        centered_shape_layers = centered_shape_layers[:, None].repeat((1, self.channels, 1, 1))
+        absolute_shape_layers = absolute_shape_layers[:, None].repeat((1, self.channels, 1, 1))
+
+        # merges absolute layers for full-image input
+        merged_layers = absolute_shape_layers[0].unsqueeze(dim=0)
+        for t in range(1 + 1, absolute_shape_layers.shape[0] + 1):
+            merged_layers_t = torch.min(absolute_shape_layers[:t], dim = 0).values
+            merged_layers = torch.cat((merged_layers, merged_layers_t.unsqueeze(dim=0)), dim=0)
+
+        # input is all shifted one place to the right and starts with white canvas
+        input_absolute_shape_layers = torch.concat((torch.ones(1, self.channels, *absolute_shape_layers.shape[-2:]), absolute_shape_layers[:-1]))
+        input_centered_shape_layers = torch.concat((torch.ones(1, self.channels, *centered_shape_layers.shape[-2:]), centered_shape_layers[:-1]))
+        input_merged_images = torch.concat((torch.ones(1, self.channels, *merged_layers.shape[-2:]), merged_layers[:-1]))
+        
+        # input is all shifted one place to the right and starts with pos (0, 0, 0, 0)
+        input_positions = torch.concat((torch.zeros((1, 4)), positions[:-1]))
+
+        # only take the positions of the first point as gt supervision signal
+        gt_positions = positions[:,:2]
+
+        # creating stop ground truth with 0: no stop, 1: stop, -1: padding
+        stop_pad_len = pad_len - 1  # stop signals require one less padding than images
+        stop_signals = torch.zeros(self.context_length)
+        stop_signals[num_timesteps] = 1.
+        if stop_pad_len >= 1:
+            stop_signals[-stop_pad_len:] = -1.
+        caption = f"black and white icon of a {self.split.iloc[index]['class']}"
+        return input_absolute_shape_layers, input_centered_shape_layers, input_merged_images, stop_signals, caption, centered_shape_layers, input_positions, gt_positions
+
+    def __len__(self):
+        return len(self.split)
+
+class NewCausalSVGDataModule(LightningDataModule):
+    def __init__(
+        self,
+        data_path: str,
+        train_batch_size: int,
+        val_batch_size: int,
+        context_length: int,
+        channels: int,
+        width: int,
+        num_workers: int = 0,
+        subset: List = None,
+        **kwargs,
+    ):
+        super().__init__()
+
+        self.train_batch_size = train_batch_size
+        self.val_batch_size = val_batch_size
+        self.num_workers = num_workers
+        self.root_path = data_path
+        self.context_length = context_length
+        self.channels = channels
+        self.width = width
+        self.num_workers = num_workers
+        self.subset = subset
+        if subset:
+            print(f"Using subset of original dataset: {self.subset}")
+        else:
+            print("Executing on the whole dataset!")
+
+    def setup(self, stage: Optional[str] = None) -> None:
+        self.train_dataset = NewCausalSVGDataset(
+            self.root_path,
+            self.context_length,
+            self.channels,
+            self.width,
+            subset=self.subset,
+            train=True,
+        )
+
+        self.val_dataset = NewCausalSVGDataset(
+            self.root_path,
+            self.context_length,
+            self.channels,
+            self.width,
+            subset=self.subset,
+            train=False,
+        )
+
+    #       ===============================================================
+
+    def train_dataloader(self) -> DataLoader:
+        return DataLoader(
+            self.train_dataset,
+            batch_size=self.train_batch_size,
+            num_workers=self.num_workers,
+            shuffle=True,
+            pin_memory=False,
+        )
+
+    def val_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
+        return DataLoader(
+            self.val_dataset,
+            batch_size=self.val_batch_size,
+            num_workers=self.num_workers,
+            shuffle=False,
+            pin_memory=False,
+        )
+
+    def test_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
+        return DataLoader(
+            self.val_dataset,
+            batch_size=64,
+            num_workers=self.num_workers,
+            shuffle=False,
+            pin_memory=False,
+        )
 
 # Add your custom dataset class here
 class MyDataset(Dataset):

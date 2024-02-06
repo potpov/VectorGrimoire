@@ -205,7 +205,8 @@ class SimpleVectorDecoder(nn.Module):
         return all_points
 
 
-    def forward(self, z: Tensor, verbose: bool=False) -> List[Tensor]:
+    def forward(self, z: Tensor, verbose: bool=False, **kwargs) -> List[Tensor]:
+        # TODO implement passthrough of the points for later generation
         all_points = self.decode(z)
         output = self.raster(all_points, white_background=True, verbose=verbose)
         return  [output, z, -1.0, -1.0]

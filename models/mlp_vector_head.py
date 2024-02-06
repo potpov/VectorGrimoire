@@ -4,7 +4,7 @@ from torch import nn
 from torch.nn import functional as F
 from typing import List
 import pydiffvg
-
+import wandb
 
 class MLPVectorHead(nn.Module):
     """
@@ -178,6 +178,7 @@ class MLPVectorHeadFixed(nn.Module):
         super(MLPVectorHeadFixed, self).__init__()
 
         self.stroke_width = max_stroke_width
+        self.min_stroke_width = 0.3
         self.imsize = imsize
         self.segments = segments
         self.latent_dim = latent_dim
@@ -214,12 +215,17 @@ class MLPVectorHeadFixed(nn.Module):
                 nn.Sigmoid()
             )
 
-    def forward(self, z, **kwargs):
+    def forward(self, z, primitive: str = "cubic", **kwargs):
+        logging_dict = {}
         bs = z.shape[0]
 
         feats = z
         all_points = self.point_predictor(feats)
         all_widths = self.stroke_predictor(feats) * self.stroke_width
+        all_widths = torch.max(all_widths, torch.ones_like(all_widths)*self.min_stroke_width)  # enforce min stroke width
+
+        # logging_dict["stroke_width"] = wandb.Histogram(all_widths.detach().cpu().flatten())
+        logging_dict["mean_stroke_width"] = all_widths.detach().mean()
 
         if self.color_predictor:
             all_colors = self.color_predictor(feats)
@@ -241,12 +247,13 @@ class MLPVectorHeadFixed(nn.Module):
 
         output, scenes = self.bezier_render(all_points, all_widths, all_alphas,
                                          colors=all_colors,
-                                         canvas_size=self.imsize)
+                                         canvas_size=self.imsize,
+                                         primitive = primitive)
 
         # map to [-1, 1]
         # output = output*2.0 - 1.0
 
-        return output, scenes
+        return [output, scenes, all_points, all_widths], logging_dict
     def render(self,
                 canvas_width, 
                 canvas_height, 
@@ -265,7 +272,7 @@ class MLPVectorHeadFixed(nn.Module):
         return img
 
     def bezier_render(self, all_points: Tensor, all_widths: Tensor, all_alphas: Tensor,
-                    canvas_size=32, colors=None, white_background=True):
+                    canvas_size=32, primitive: str = "cubic", colors=None, white_background=True):
         device = all_points.device
 
         # all_points = 0.5*(all_points + 1.0) * canvas_size
@@ -285,9 +292,19 @@ class MLPVectorHeadFixed(nn.Module):
             shapes = []
             shape_groups = []
             for p in range(num_strokes):
-                points = all_points[batch, p].contiguous()
-                # bezier
-                num_ctrl_pts = torch.zeros(num_segments, dtype=torch.int32) + 2
+                points = all_points[batch, p].contiguous()  # (num_pts, 2)
+                if primitive == "cubic":
+                    num_ctrl_pts = torch.zeros(num_segments, dtype=torch.int32) + 2
+                elif primitive == "linear":
+                    if num_segments > 1:
+                        raise NotImplementedError("Linear primitive only supports 1 segment atm")
+                    num_ctrl_pts = torch.zeros(num_segments, dtype=torch.int32)
+                    points = points[[0, 3]]
+                elif primitive == "quadratic":
+                    num_ctrl_pts = torch.zeros(num_segments, dtype=torch.int32) + 1
+                    points = points[[0, 1, 3]]
+                else:
+                    raise NotImplementedError(f"Primitive {primitive} not implemented")
                 width = all_widths[batch, p]
                 alpha = all_alphas[batch, p]
                 if colors is not None:

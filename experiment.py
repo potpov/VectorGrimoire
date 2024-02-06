@@ -1,20 +1,531 @@
 import gc
-import os
-import math
 import random
 import torch
 from torch import Tensor
 from torch import optim
-from models import BaseVAE, VectorVAEnLayers, VectorGPT
+import wandb
+from models import BaseVAE, VectorVAEnLayers, VectorGPT, VectorGPTv2, Vector_VQVAE, VQ_Transformer
 import pytorch_lightning as pl
-from torchvision import transforms
-import torchvision.utils as vutils
-from torchvision.datasets import CelebA
-from torch.utils.data import DataLoader
 from utils import log_images
 from torchmetrics.image.fid import FrechetInceptionDistance
 from torchmetrics.multimodal.clip_score import CLIPScore
+import torch.nn.functional as F
 
+class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
+    def __init__(self,
+                 model: VQ_Transformer,
+                 checkpoint_path:str,
+                 lr: float = 0.0003,
+                 weight_decay: float = 0.0,
+                 scheduler_gamma: float = 0.99,
+                 train_log_interval: int = 30,
+                 manual_seed: int = 42,
+                 wandb: bool = True,
+                 **kwargs) -> None:
+        super(SVG_VQVAE_Stage2_Experiment, self).__init__()
+
+        self.model = model
+        self.checkpoint_path = checkpoint_path
+        self.lr = lr
+        self.weight_decay = weight_decay
+        self.scheduler_gamma = scheduler_gamma
+        self.train_log_interval = train_log_interval
+        self.manual_seed = manual_seed
+        self.curr_device = None
+        self.wandb = wandb
+
+        # state_dict = torch.load(self.checkpoint_path)["state_dict"]
+        # try:
+        #     self.model.load_state_dict(state_dict)
+        #     print("Loaded weights.")
+        # except:
+        #     self.model.load_state_dict({k.replace("model.", ""): v for k, v in state_dict.items()})
+        #     print("Loaded weights.")
+
+        # self.model = self.model.eval()
+    
+
+    def forward(self, input_tokens: Tensor, logging=False, **kwargs) -> list:
+        out, logging_dict = self.model.forward(input_tokens, logging=logging, **kwargs)
+        return out, logging_dict
+    
+    def training_step(self, batch, batch_idx, optimizer_idx=0):
+        inputs, targets = batch
+        self.curr_device = inputs.device
+
+        if batch_idx % self.train_log_interval == 0 and self.wandb:
+            out, logging_dict = self.forward(inputs, logging=True)
+        else:
+            out, logging_dict = self.forward(inputs, logging=False)  # out is [reconstructions, input, all_points, vq_loss]
+        
+        pred_logits = out  # (b, seq_len)
+        
+        # one_hot_gt = F.one_hot(tokens, num_classes=self.model.num_tokens)  # (b, seq_len, num_tokens)
+
+        # reshape pred and targets to (b*seq_len, context_length)
+        pred_logits = pred_logits.view(-1, pred_logits.shape[-1])
+        targets = targets.view(-1)
+
+        loss_dict = self.model.loss_function(
+            targets=targets,
+            pred_probabilities=pred_logits,
+        )
+    
+        # always log the first batch and variable amount of timesteps up to 10
+        # if batch_idx % self.train_log_interval == 0 and self.wandb:
+        #     logging_dict = {f"train/{key}": value for key, value in logging_dict.items()}
+        #     wandb.log(logging_dict)
+        
+        self.log_dict(loss_dict)
+        return loss_dict["loss"]
+
+    def on_train_epoch_end(self):
+        # gc.collect()
+        # torch.cuda.empty_cache()
+        return {}
+
+    def validation_step(self, batch, batch_idx, optimizer_idx=0):
+
+        inputs, targets = batch
+        self.curr_device = inputs.device
+
+        with torch.no_grad():
+            if batch_idx % self.train_log_interval == 0 and self.wandb:
+                out, logging_dict = self.forward(inputs, logging=True)
+            else:
+                out, logging_dict = self.forward(inputs, logging=False)  # out is [reconstructions, input, all_points, vq_loss]
+        
+        pred_logits = out  # (b, seq_len)
+
+        # reshape pred to (b*seq_len, context_length)
+        pred_logits = pred_logits.view(-1, pred_logits.shape[-1])
+        # and targets to (b*seq_len)
+        targets = targets.view(-1)
+
+        
+        loss_dict = self.model.loss_function(
+            targets=targets,
+            pred_probabilities=pred_logits,
+        )
+
+        self.log("val_loss", loss_dict["loss"])
+        return loss_dict["loss"]
+
+    def on_validation_end(self) -> None:
+        # if self.wandb:
+        #     self.sample_images()
+        # gc.collect()
+        # torch.cuda.empty_cache()
+        return {}
+    
+    def configure_optimizers(self):
+
+        optims = []
+        scheds = []
+
+        param_group_1 = {'params': self.model.parameters(), 'lr': self.lr}
+        param_groups = [param_group_1]
+
+        if not self.weight_decay:
+            optimizer = optim.AdamW(
+                param_groups,
+                lr=self.lr,
+                weight_decay=self.weight_decay
+            )
+        else:
+            # learning rates should be explicitly specified in the param_groups
+            optimizer = optim.Adam(param_groups)
+        optims.append(optimizer)
+        
+        try:
+            if self.scheduler_gamma is not None:
+                scheduler = optim.lr_scheduler.ExponentialLR(optims[0],
+                                                             gamma = self.scheduler_gamma)
+                scheds.append(scheduler)
+
+                return optims, scheds
+        except:
+            pass
+        return optims
+
+class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
+    """
+    Vector quantized pre-training of an autoencoder for SVG primitives.
+    
+    Input/Output are shape layers and positions.
+    """
+
+    def __init__(self,
+                 model: Vector_VQVAE,
+                 vector_decoder_model: str = "raster_conv",  # or mlp
+                 lr: float = 0.0003,
+                 weight_decay: float = 0.0,
+                 scheduler_gamma: float = 0.99,
+                 train_log_interval: int = 30,
+                 manual_seed: int = 42,
+                 wandb: bool = True,
+                 **kwargs) -> None:
+        super(VectorVQVAE_Experiment_Stage1, self).__init__()
+
+        self.model = model
+        self.vector_decoder_model = vector_decoder_model
+        self.lr = lr
+        self.weight_decay = weight_decay
+        self.scheduler_gamma = scheduler_gamma
+        self.train_log_interval = train_log_interval
+        self.manual_seed = manual_seed
+        self.curr_device = None
+        self.wandb = wandb
+
+    def forward(self, input_images: Tensor, logging=False,**kwargs) -> list:
+        out, logging_dict = self.model.forward(input_images, logging=logging, **kwargs)
+        return out, logging_dict
+    
+    def training_step(self, batch, batch_idx, optimizer_idx=0):
+        all_center_shapes, labels, centers = batch
+        self.curr_device = all_center_shapes.device
+        bs = all_center_shapes.shape[0]
+        channels = all_center_shapes.shape[1]
+        if batch_idx % self.train_log_interval == 0 and self.wandb:
+            out, logging_dict = self.forward(all_center_shapes, logging=True)
+        else:
+            out, logging_dict = self.forward(all_center_shapes, logging=False)  # out is [reconstructions, input, all_points, vq_loss]
+        reconstructions=out[0]
+        inputs = all_center_shapes
+        # all_points = out[2]
+        vq_loss=out[3]
+
+        loss_dict = self.model.loss_function(
+            reconstructions=reconstructions[:,:channels,:,:],
+            gt_images=inputs,
+            vq_loss=vq_loss,
+        )
+    
+        # always log the first batch and variable amount of timesteps up to 10
+        if batch_idx % self.train_log_interval == 0 and self.wandb:
+            logging_dict = {f"train/{key}": value for key, value in logging_dict.items()}
+            wandb.log(logging_dict)
+            if reconstructions.shape[0] > 10:
+                log_amount = 10
+            else:
+                log_amount = reconstructions.shape[0]
+
+            # Log input against prediction
+            log_images(
+                reconstructions[:log_amount],
+                inputs[:log_amount],
+                log_key="train/reconstruction",
+                captions="input (left) vs. reconstruction (right)"
+            )
+
+        self.log_dict(loss_dict)
+        return loss_dict["loss"]
+
+    def on_train_epoch_end(self):
+        # gc.collect()
+        # torch.cuda.empty_cache()
+        return {}
+
+    def validation_step(self, batch, batch_idx, optimizer_idx=0):
+
+        all_center_shapes, label, centers = batch
+        self.curr_device = all_center_shapes.device
+        bs = all_center_shapes.shape[0]
+        channels = all_center_shapes.shape[1]
+
+        out, logging_dict = self.forward(all_center_shapes)
+        reconstructions=out[0]
+        inputs = all_center_shapes
+        vq_loss=out[2]
+
+        loss_dict = self.model.loss_function(
+            reconstructions=reconstructions[:,:channels,:,:],
+            gt_images=inputs,
+            vq_loss=vq_loss,
+        )
+
+        if batch_idx % self.train_log_interval == 0 and self.wandb:
+            logging_dict = {f"val/{key}": value for key, value in logging_dict.items()}
+            wandb.log(logging_dict)
+            if reconstructions.shape[0] > 10:
+                log_amount = 10
+            else:
+                log_amount = reconstructions.shape[0]
+
+            # Log input against prediction
+            log_images(
+                reconstructions[:log_amount],
+                inputs[:log_amount],
+                log_key="val/reconstruction",
+                captions="input (left) vs. reconstruction (right)"
+            )
+
+        self.log("val_loss", loss_dict["loss"])
+        return loss_dict["loss"]
+
+    def on_validation_end(self) -> None:
+        # if self.wandb:
+        #     self.sample_images()
+        # gc.collect()
+        # torch.cuda.empty_cache()
+        return {}
+    
+    def configure_optimizers(self):
+
+        optims = []
+        scheds = []
+
+        param_group_1 = {'params': self.model.parameters(), 'lr': self.lr}
+        param_groups = [param_group_1]
+
+        if not self.weight_decay:
+            optimizer = optim.AdamW(
+                param_groups,
+                lr=self.lr,
+                weight_decay=self.weight_decay
+            )
+        else:
+            # learning rates should be explicitly specified in the param_groups
+            optimizer = optim.Adam(param_groups)
+        optims.append(optimizer)
+        
+        try:
+            if self.scheduler_gamma is not None:
+                scheduler = optim.lr_scheduler.ExponentialLR(optims[0],
+                                                             gamma = self.scheduler_gamma)
+                scheds.append(scheduler)
+
+                return optims, scheds
+        except:
+            pass
+        return optims
+
+
+class VectorGPTExperimentv2(pl.LightningModule):
+    def __init__(self,
+                 vector_gpt_model: VectorGPTv2,
+                 input_mode: str = "layer",
+                 lr: float = 0.0003,
+                 stroke_lr: float = None,
+                 weight_decay: float = 0.0,
+                 scheduler_gamma: float = 0.99,
+                 train_log_interval: int = 250,
+                 manual_seed: int = 42,
+                 wandb: bool = True,
+                 **kwargs) -> None:
+        super(VectorGPTExperimentv2, self).__init__()
+
+        assert input_mode in ["absolute_layer", "centered_layer", "absolute_merged"], "please choose valid input mode in the experiment settings"
+        self.model = vector_gpt_model
+        self.input_mode = input_mode
+        self.lr = lr
+        self.stroke_lr = stroke_lr
+        self.weight_decay = weight_decay
+        self.scheduler_gamma = scheduler_gamma
+        self.train_log_interval = train_log_interval
+        self.manual_seed = manual_seed
+        self.curr_device = None
+        self.wandb = wandb
+
+    def forward(self, input_images: Tensor, positions: Tensor, **kwargs) -> Tensor:
+        return self.model(input_images, positions, **kwargs)
+    
+    def training_step(self, batch, batch_idx, optimizer_idx=0):
+        input_absolute_shape_layers, input_centered_shape_layers, input_merged_images, stop_signals, captions, target_centered_shape_layers, positions, gt_positions = batch
+        self.curr_device = input_absolute_shape_layers.device
+        bs = input_absolute_shape_layers.shape[0]
+
+        if self.input_mode == "absolute_layer":
+            predicted_shapes, stop_preds, _, pos_preds = self.forward(input_absolute_shape_layers, positions, drop_alpha_channel=False)
+        if self.input_mode == "centered_layer":
+            predicted_shapes, stop_preds, _, pos_preds = self.forward(input_centered_shape_layers, positions, drop_alpha_channel=False)
+        elif self.input_mode == "absolute_merged":
+            predicted_shapes, stop_preds, _, pos_preds = self.forward(input_merged_images, positions, drop_alpha_channel=False)
+
+        train_loss, recons_loss, stop_prediction_loss, position_loss = self.model.loss_function(
+            gt_shape_layers=target_centered_shape_layers,
+            pred_images=predicted_shapes,
+            gt_stop_signals=stop_signals,
+            stop_signals=stop_preds,
+            gt_merged_targets = None,
+            merged_preds = None,
+            position_predictions = pos_preds,
+            gt_positions = gt_positions,
+            optimizer_idx=optimizer_idx,
+            batch_idx=batch_idx,
+            log_loss = batch_idx % self.train_log_interval == 0 and self.wandb
+        )
+
+        # always log the first batch and variable amount of timesteps up to 10
+        if batch_idx % self.train_log_interval == 0 and self.wandb:
+            if predicted_shapes[0].shape[0] > 10:
+                log_amount = 10
+                stop_idx = len(stop_signals[0][stop_signals[0]==0])
+                start_idx = torch.randint(0, stop_idx - log_amount, (1,)).item()
+            else:
+                log_amount = predicted_shapes[0].shape[0]
+                start_idx = 0
+
+            # Log input against prediction
+            if self.input_mode == "absolute_layer":
+                log_images(
+                    predicted_shapes[0][start_idx:start_idx+log_amount],
+                    input_absolute_shape_layers[0][start_idx:start_idx+log_amount],
+                    log_key="input (left) vs. prediction (right)",
+                    captions=captions[0] + f" from T={start_idx} to T={start_idx+log_amount}"
+                )
+            elif self.input_mode == "centered_layer":
+                log_images(
+                    predicted_shapes[0][start_idx:start_idx+log_amount],
+                    input_centered_shape_layers[0][start_idx:start_idx+log_amount],
+                    log_key="input (left) vs. prediction (right)",
+                    captions=captions[0] + f" from T={start_idx} to T={start_idx+log_amount}"
+                )
+            elif self.input_mode == "absolute_merged":
+                log_images(
+                    predicted_shapes[0][start_idx:start_idx+log_amount],
+                    input_merged_images[0][start_idx:start_idx+log_amount],
+                    log_key="input (left) vs. prediction (right)",
+                    captions=captions[0] + f" from T={start_idx} to T={start_idx+log_amount}"
+                )
+
+            # log shape prediction against target
+            # if merged_preds is not None:  # merged_preds is not None if loss mode is "merged"
+            #     log_images(
+            #         merged_preds[0][:log_amount],
+            #         merged_target[0][:log_amount],
+            #         log_key="training merged predictions",
+            #         captions=captions[0]
+            #     )
+            
+            # always log the pred shapes and target shapes
+            log_images(
+                predicted_shapes[0][start_idx:start_idx+log_amount],
+                target_centered_shape_layers[0][start_idx:start_idx+log_amount],
+                log_key="training predictions",
+                captions=captions[0] + f" from T={start_idx} to T={start_idx+log_amount}"
+            )
+
+
+        self.log_dict({"train_loss": train_loss, 
+                       "train_recons_loss": recons_loss,
+                       "train_stop_prediction_loss": stop_prediction_loss,
+                       "position_loss":position_loss}, sync_dist=True, prog_bar=True,
+                       batch_size=bs)
+
+        return train_loss
+
+    def on_train_epoch_end(self):
+        # gc.collect()
+        # torch.cuda.empty_cache()
+        return {}
+
+    def validation_step(self, batch, batch_idx, optimizer_idx=0):
+
+        input_absolute_shape_layers, input_centered_shape_layers, input_merged_images, stop_signals, captions, target_centered_shape_layers, positions, gt_positions = batch
+        self.curr_device = input_absolute_shape_layers.device
+
+        if self.input_mode == "absolute_layer":
+            predicted_shapes, stop_preds, _, pos_preds = self.forward(input_absolute_shape_layers, positions)
+        elif self.input_mode == "centered_layer":
+            predicted_shapes, stop_preds, _, pos_preds = self.forward(input_centered_shape_layers, positions)
+        elif self.input_mode == "absolute_merged":
+            predicted_shapes, stop_preds, _, pos_preds = self.forward(input_merged_images, positions)
+
+        val_loss, _, _, position_loss = self.model.loss_function(
+            gt_shape_layers=target_centered_shape_layers,
+            pred_images=predicted_shapes,
+            gt_stop_signals=stop_signals,
+            stop_signals=stop_preds,
+            gt_merged_targets = None,
+            merged_preds = None,
+            position_predictions = pos_preds,
+            gt_positions = gt_positions,
+            optimizer_idx=optimizer_idx,
+            batch_idx=batch_idx
+        )
+
+
+        self.log_dict({"val_loss": val_loss}, sync_dist=True, prog_bar=True)
+        return val_loss
+
+    def on_validation_end(self) -> None:
+        if self.wandb:
+            self.sample_images()
+        # gc.collect()
+        # torch.cuda.empty_cache()
+        return {}
+    
+    def sample_images(self, num_of_samples = 2):
+        input_absolute_shape_layers, input_centered_shape_layers, input_merged_images, stop_signals, captions, target_centered_shape_layers, positions, gt_positions = next(iter(self.trainer.datamodule.val_dataloader()))
+        input_absolute_shape_layers = input_absolute_shape_layers[:num_of_samples].to(self.curr_device)
+        input_centered_shape_layers = input_centered_shape_layers[:num_of_samples].to(self.curr_device)
+        input_merged_images = input_merged_images[:num_of_samples].to(self.curr_device)[:, :, :3, :, :]
+        target_centered_shape_layers = target_centered_shape_layers[:num_of_samples].to(self.curr_device)[:, :, :3, :, :]
+        positions = positions[:num_of_samples].to(self.curr_device)
+
+        with torch.no_grad():
+            if self.input_mode == "absolute_layer":
+                predicted_shapes, _, _, _ = self.forward(input_absolute_shape_layers, positions, drop_alpha_channel = True, verbose = True)
+            elif self.input_mode == "centered_layer":
+                predicted_shapes, _, _, _ = self.forward(input_centered_shape_layers, positions, drop_alpha_channel = True, verbose = True)
+            elif self.input_mode == "absolute_merged":
+                predicted_shapes, _, _, _ = self.forward(input_merged_images, positions, drop_alpha_channel = True, verbose = True)
+
+            # make sure there are no small negative numbers for rendering
+            dummy = torch.nn.ReLU()
+            predicted_shapes = dummy(predicted_shapes)
+        
+        log_images(predicted_shapes[0], target_centered_shape_layers[0], log_key="val_preds", captions=captions[0])
+    
+    def configure_optimizers(self):
+
+        optims = []
+        scheds = []
+
+        param_groups = []
+
+        if self.stroke_lr is not None:
+            print(f"[INFO] using separate stroke LR of {self.stroke_lr} instead of {self.lr}")
+            stroke_params = []
+            other_params = []
+            # Separate parameters for the 'stroke_predictor' and other model parameters
+            for name, param in self.model.named_parameters():
+                if("stroke_predictor" in name):
+                    stroke_params.append(param)
+                else:
+                    other_params.append(param)
+
+            # Set different learning rates for different parameter groups
+            param_group_1 = {'params': other_params, 'lr': self.lr}
+            param_group_2 = {'params': stroke_params, 'lr': self.stroke_lr}
+
+            param_groups = [param_group_1, param_group_2]
+        else:
+            param_group_1 = {'params': self.model.parameters(), 'lr': self.lr}
+            param_groups = [param_group_1]
+
+        if not self.weight_decay:
+            optimizer = optim.AdamW(
+                param_groups,
+                lr=self.lr,
+                weight_decay=self.weight_decay
+            )
+        else:
+            # learning rates should be explicitly specified in the param_groups
+            optimizer = optim.Adam(param_groups)
+        optims.append(optimizer)
+        
+        try:
+            if self.scheduler_gamma is not None:
+                scheduler = optim.lr_scheduler.ExponentialLR(optims[0],
+                                                             gamma = self.scheduler_gamma)
+                scheds.append(scheduler)
+
+                return optims, scheds
+        except:
+            pass
+        return optims
 
 class VectorGPTExperiment(pl.LightningModule):
     def __init__(self,

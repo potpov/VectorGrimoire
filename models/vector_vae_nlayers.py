@@ -8,7 +8,7 @@ from typing import List
 import wandb
 
 from .vector_vae import VectorVAE
-from utils import make_tensor
+from thesis.utils import make_tensor
 import pydiffvg
 import math
 import numpy as np

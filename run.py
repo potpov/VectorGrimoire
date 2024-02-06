@@ -3,14 +3,14 @@ import yaml
 import argparse
 import numpy as np
 from pathlib import Path
-from experiment import VAEXperiment, VectorGPTExperiment
 import torch.backends.cudnn as cudnn
 from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import WandbLogger, TensorBoardLogger
 from pytorch_lightning import seed_everything
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, LearningRateFinder, EarlyStopping
-from dataset import MNISTDataset, MNISTppDataset, NounProjectDataset, EmojiDataset, MNISTDatasetCSVG, CausalSVGDataModule
-from models import VAEctorGen, VectorGPT, VanillaVAE, VectorVAEnLayers
+from dataset import MNISTDataset, MNISTppDataset, NounProjectDataset, EmojiDataset, MNISTDatasetCSVG, CausalSVGDataModule, NewCausalSVGDataModule, CenterShapeLayersFromSVGDataModule, VQDataModule
+from models import VAEctorGen, VectorGPT, VanillaVAE, VectorVAEnLayers, VectorGPTv2, Vector_VQVAE, VQ_Transformer
+from experiment import VAEXperiment, VectorGPTExperiment, VectorGPTExperimentv2, VectorVQVAE_Experiment_Stage1, SVG_VQVAE_Stage2_Experiment
 import wandb
 from utils import get_rank
 import torch
@@ -19,11 +19,14 @@ torch.set_float32_matmul_precision('high')
 
 DATASETMAP = {
     "causalSVG": CausalSVGDataModule,
+    "causalSVGv2": NewCausalSVGDataModule,
     "emoji": EmojiDataset,
     "nounproject": NounProjectDataset,
     "mnistpp": MNISTppDataset,
     "mnist": MNISTDataset,
-    "mnistCSVG": MNISTDatasetCSVG
+    "mnistCSVG": MNISTDatasetCSVG,
+    "centeredShapeLayers" : CenterShapeLayersFromSVGDataModule,
+    "tokens" : VQDataModule,
 }
 
 MODELS = {
@@ -31,6 +34,9 @@ MODELS = {
     "VAEctorGen": VAEctorGen,
     "VectorVAEnLayers": VectorVAEnLayers,
     "VectorGPT": VectorGPT,
+    "VectorGPTv2": VectorGPTv2,
+    "SVG_VAQVAE": Vector_VQVAE,
+    "VQ_Transformer" : VQ_Transformer,
   }
 
 
@@ -59,13 +65,17 @@ if args.debug:
 current_process_rank = get_rank()
 
 if args.wandb:
+    if "entity" not in config['logging_params']:
+        entity = "mfeuer"
+    else:
+        entity = config['logging_params']['entity']
     wandb_logger = WandbLogger(
         name=config['logging_params']['name'],
         save_dir=config['logging_params']['save_dir'],
         tags=[config['logging_params']['author']],
         project=config["logging_params"]["project"],
         log_model=True,
-        entity="aiis-chair",
+        entity=entity,
         mode="disabled" if args.debug else "online",
     )
     if current_process_rank == 0:
@@ -81,17 +91,27 @@ seed_everything(config['exp_params']['manual_seed'], True)
 
 if args.wandb:
     model = MODELS[config['model_params']['name']](**config['model_params'], wandb_logging=True)
-    wandb_logger.watch(model, log="gradients", log_freq=500, log_graph=False)
+    # wandb_logger.watch(model, log="gradients", log_freq=500, log_graph=False)
     # wandb.watch(model, log='all', log_freq=100)  # can be "all"
 else:
     model = MODELS[config['model_params']['name']](**config['model_params'])
 
 if config['model_params']['name'] == "VectorGPT":
     experiment = VectorGPTExperiment(model, **config['exp_params'], wandb = args.wandb)
-else:    
+    data = DATASETMAP[config["data_params"]["dataset"]](**config["data_params"])
+elif config['model_params']['name'] == "VectorGPTv2":
+    experiment = VectorGPTExperimentv2(model, **config['exp_params'], wandb = args.wandb)
+    data = DATASETMAP[config["data_params"]["dataset"]](**config["data_params"])
+elif config['model_params']['name'] == "SVG_VAQVAE":
+    experiment = VectorVQVAE_Experiment_Stage1(model, **config['exp_params'], wandb = args.wandb)
+    data = DATASETMAP[config["data_params"]["dataset"]](**config["data_params"])
+elif config['model_params']['name'] == "VQ_Transformer":
+    experiment = SVG_VQVAE_Stage2_Experiment(model, **config['exp_params'], wandb = args.wandb)
+    data = DATASETMAP[config["data_params"]["dataset"]](**config["data_params"], context_length = config["model_params"]["max_seq_len"])
+else:
     experiment = VAEXperiment(model, config['exp_params'])
+    data = DATASETMAP[config["data_params"]["dataset"]](**config["data_params"])
 
-data = DATASETMAP[config["data_params"]["dataset"]](**config["data_params"], pin_memory=True)
 
 data.setup()
 runner = Trainer(
@@ -100,15 +120,15 @@ runner = Trainer(
     callbacks=[
         LearningRateMonitor(logging_interval="epoch", log_momentum=True),
         #  LearningRateFinder(early_stop_threshold=None, num_training_steps=200),
-        #  EarlyStopping("val_loss", 0.002, 3),
-
-        ModelCheckpoint(save_top_k=1,
+        EarlyStopping("val_loss", 0.005, 50, verbose=True),
+        ModelCheckpoint(save_top_k=2,
                         dirpath =os.path.join(config['logging_params']['save_dir'], "checkpoints"),
                         monitor= "val_loss",
                         save_last= True),
     ],
     #  overfit_batches=20,
-     log_every_n_steps=max(int(config['exp_params']["train_log_interval"] / 10), 5),
+    log_every_n_steps=max(int(config['exp_params']["train_log_interval"] / 10), 5),
+    profiler="simple",
     **config['trainer_params']
 )
 

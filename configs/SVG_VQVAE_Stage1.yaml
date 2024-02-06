@@ -1,0 +1,40 @@
+model_params:
+  name: "SVG_VAQVAE"  # always keep this "VectorGPT"
+  vector_decoder_model: "mlp" # "mlp" or "raster_conv"
+  quantized_dim: 256
+  codebook_size: 128  # will be ignored for FSQ
+  image_loss: "mse"  # "pyramid" or "mse"
+  single_code_representation: true
+  vq_method: "fsq"  # "vqvae", "FSQ", "vqtorch"
+  fsq_levels: [8,5,5,5]  # will determine codebook_size, see Table 1 of FSQ paper
+
+data_params:
+  dataset: "centeredShapeLayers"  # must be in the DATASETMAP in run.py
+  csv_path: "/scratch2/moritz_data/glyphazzn/B_simplified/split.csv"  # root path for CausalSVGDataModule in dataset.py
+  channels: 3  # use 3
+  width: 128  # KEEP THIS SYNC WITH make_causal_svg_dateset
+  train_batch_size: 2
+  val_batch_size:  8
+  num_workers: 8
+  individual_max_length : 7.5  # max length of a single stroke, decides the width/height of rendered shapes
+  stroke_width: 0.7  # IMPORTANT: this must scale with individiual_max_length as they together define the image
+
+exp_params:
+  lr: 0.00002  # 0.00002
+  weight_decay: 1.e-4  # specify positive float to enable, start experimenting with 1.e-4/1.e-3
+  scheduler_gamma: 0.98  # 0.95 is a good starting value
+  train_log_interval: 100 # len(dataset) / train_batch_size / desired_logging_frequency
+  manual_seed: 1265
+
+trainer_params:
+  devices: -1  # always keep at -1 as this takes all available GPUs specified through CUDA_VISIBLE_DEVICES
+  max_epochs: 250  # dsnt matter too much, got early stopping implemented
+  # accumulate_grad_batches: 2
+
+logging_params:
+  # entity: "aiis-chair"  # comment to use default wandb entity "mfeuer"
+  project: "test"  # your wandb project name
+  save_dir: "/scratch2/moritz_logs/SVG_VQVAE/Stage1/glyphazzn_B_simplified_single_code"
+  name: "SVG_VQVAE glyphazzn_B Stage1 MLP MSE, similar length, single code representation"  # name of the run in wandb
+  version: 0
+  author: "Moritz"  # will be a tag in wandb
