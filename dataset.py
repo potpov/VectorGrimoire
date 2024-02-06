@@ -33,7 +33,6 @@ class VQDataset(Dataset):
             if len(array) < self.context_length:
                 self.data[i] = np.append(array, np.zeros(self.context_length - len(array), dtype=np.ushort) + 2)
         self.data = np.stack(self.data)
-        # TODO shift by one!
         print("Finished processing dataset.")
         print(f"Dataset now with shape {self.data.shape} and dtype: {self.data.dtype}")
 
@@ -115,6 +114,132 @@ class VQDataModule(LightningDataModule):
             pin_memory=False,
             # collate_fn=self.collate_fn
         )
+    
+class GlyphazznStage1Dataset(Dataset):
+    """
+    Glyphazzn dataset that requires already normalized SVGs. Yields patches, positions, and labels. The label is the index of string.printable -> label = string.printable.index(label)
+
+    Requires the following structure:
+    top_level_dir
+    |____________________
+    |                   |
+    train               test
+    |                   |
+    0-9, a-z, A-Z       0-9, a-z, A-Z
+    |                   |
+    *.svg               *.svg
+
+    Args:
+        - top_level_dir: path to the top level directory of all SVGs
+        - channels: number of channels for the rasterized images
+        - width: width/height of the rasterized images
+        - train: whether to use the train or test split
+        - subset: "all", "numbers", "letters", "lowercase", or "uppercase"
+        - individual_min_length: minimum length of a path segment to qualify for being a single shape layer
+        - individual_max_length: maximum length of a path segment, everything longer than this will be cropped into multiple segments
+        - stroke_width: stroke width for rasterization
+        - max_shapes_per_svg: maximum number of shape layers per svg file, can be tuned for VRAM savings
+    """
+
+    def __init__(self,
+                 top_level_dir: str,
+                 channels: int,
+                 width: int,
+                 train: bool = True,
+                 subset:str = "all",
+                 individual_min_length: float = 1.,
+                 individual_max_length: float = 10.,
+                 stroke_width: float = 0.3,
+                 max_shapes_per_svg: int = 64,
+                 **kwargs):
+        super(GlyphazznStage1Dataset, self)
+        self.top_level_dir = top_level_dir
+        self.individual_min_length = individual_min_length
+        self.individual_max_length = individual_max_length
+        self.stroke_width = stroke_width
+        self.max_shapes_per_svg = max_shapes_per_svg
+        self.channels = channels
+        self.width = width
+        self.train = train
+        self.subset = subset
+        
+        if train is not None:
+            self.split = glob.glob(os.path.join(top_level_dir, f"{'train' if self.train else 'test'}/**/*.svg"), recursive=True)
+        else:
+            self.split = glob.glob(os.path.join(top_level_dir, "**/*.svg"), recursive=True)
+            print("[WARNING] Using the whole dataset! Train was None.")
+        if self.subset == "all":
+            self.split = self.split
+        elif self.subset == "numbers":
+            self.split = [x for x in self.split if x.split("/")[-2] in [str(i) for i in range(10)]]
+        elif self.subset == "letters":
+            self.split = [x for x in self.split if x.split("/")[-2] in string.ascii_letters]
+        elif self.subset == "lowercase":
+            self.split = [x for x in self.split if x.split("/")[-2] in string.ascii_lowercase]
+        elif self.subset == "uppercase":
+            self.split = [x for x in self.split if x.split("/")[-2] in string.ascii_uppercase]
+        else:
+            raise ValueError(f"Subset {self.subset} not recognized.")
+
+    def crop_path_into_segments(self, path:Path, length:float = 5.):
+        """
+        a single input path is cropped into segments of approx length `length`. I say "approx" because we divide the path into same length segments, which will not be exactly `length` long.
+        """
+        segments = []
+        num_iters = math.ceil(path.length() / length)
+        for i in range(num_iters):
+            cropped_segment = path.cropped(i/num_iters, (i+1)/num_iters)
+            segments.append(cropped_segment)
+
+        return segments
+
+    def get_similar_length_paths(self, single_paths, max_length: float = 5.):
+        similar_length_paths = []
+        for path in single_paths:
+            if path.length() < self.individual_min_length:
+                continue
+            try:
+                segments = self.crop_path_into_segments(path, length=max_length)
+                similar_length_paths.extend(segments)
+            except AssertionError:
+                print("Error while cropping path into segments, skipping...")
+                continue
+        return similar_length_paths
+    
+    def get_similar_length_paths_from_index(self, index, max_length: float = 5.):
+        svg_path = self.split[index]
+        paths, attributes, svg_attributes = svg2paths2(svg_path)
+        single_paths = get_single_paths(paths)
+        sim_length_paths = self.get_similar_length_paths(single_paths, max_length=max_length)
+        return sim_length_paths
+
+    def __getitem__(self, index) -> tuple:
+        svg_path = self.split[index]
+        label = svg_path.split("/")[-2]
+        label = string.printable.index(label)
+        paths, attributes, svg_attributes = svg2paths2(svg_path)
+        single_paths = get_single_paths(paths)
+        # queue = copy.deepcopy(single_paths)
+        sim_length_paths = self.get_similar_length_paths(single_paths, self.individual_max_length)
+        assert check_for_continouity(sim_length_paths), "paths are not continous"
+        # select a random slice of the paths of length max_shapes_per_svg
+        if len(sim_length_paths) > self.max_shapes_per_svg:
+            start_idx = random.randint(0, len(sim_length_paths) - self.max_shapes_per_svg)
+            sim_length_paths = sim_length_paths[start_idx:start_idx+self.max_shapes_per_svg]
+        rasterized_segments, centers = get_rasterized_segments(sim_length_paths, self.stroke_width, self.individual_max_length, svg_attributes, centered=True, height=self.width, width=self.width)
+        imgs = torch.stack(rasterized_segments)  # (n_shapes, channels, width, width)
+        centers = torch.tensor(centers)  # (n_shapes, 2)
+        labels = torch.ones(imgs.size(0)) * label
+        return imgs, labels, centers
+    
+    def _get_full_svg_drawing(self, index, width:int = 720):
+        svg_path = self.split[index]
+        paths, attributes, svg_attributes = svg2paths2(svg_path)
+        single_paths = get_single_paths(paths)
+        return disvg(single_paths, paths2Drawing=True, stroke_widths=[self.stroke_width]*len(single_paths), viewbox = svg_attributes["viewBox"],dimensions=(width, width))
+
+    def __len__(self):
+        return len(self.split)
 
 class CenterShapeLayersFromSVGDataset(Dataset):
     """
