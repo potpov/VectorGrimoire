@@ -10,6 +10,40 @@ from torchvision.utils import make_grid
 from torchvision.transforms import Resize
 from svgwrite import Drawing
 from svgpathtools import disvg, CubicBezier
+import cairosvg
+from PIL import Image
+from io import BytesIO
+from torchvision.transforms import ToTensor
+
+def svg_string_to_tensor(svg_string):
+    # Convert SVG string to PNG bytes
+    png_bytes = cairosvg.svg2png(bytestring=svg_string, background_color="white")
+    
+    # Convert PNG bytes to PIL Image
+    image = Image.open(BytesIO(png_bytes))
+    
+    # Ensure the image is in RGB mode
+    image = image.convert("RGB")
+    
+    # Convert the PIL Image to a PyTorch tensor with three channels
+    tensor = ToTensor()(image)
+    
+    return tensor
+
+def svg_to_tensor(file_path):
+    # Convert SVG to PNG using cairosvg
+    png_data = cairosvg.svg2png(url=file_path, background_color="white")
+    
+    # Load the PNG data into PIL Image
+    image = Image.open(BytesIO(png_data))
+    
+    # Ensure the image is in RGB mode
+    image = image.convert("RGB")
+    
+    # Convert the PIL Image to a PyTorch tensor with three channels
+    tensor = ToTensor()(image)
+    
+    return tensor
 
 def calculate_global_positions(local_positions: Tensor, local_viewbox_width:float, global_center_positions: Tensor):
     """
