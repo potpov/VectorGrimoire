@@ -8,7 +8,7 @@ from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import WandbLogger, TensorBoardLogger
 from pytorch_lightning import seed_everything
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, LearningRateFinder, EarlyStopping
-from dataset import MNISTDataset, MNISTppDataset, NounProjectDataset, EmojiDataset, MNISTDatasetCSVG, CausalSVGDataModule, NewCausalSVGDataModule, CenterShapeLayersFromSVGDataModule, VQDataModule
+from dataset import MNISTDataset, MNISTppDataset, NounProjectDataset, EmojiDataset, MNISTDatasetCSVG, CausalSVGDataModule, NewCausalSVGDataModule, CenterShapeLayersFromSVGDataModule, VQDataModule, GlyphazznStage1Datamodule
 from models import VAEctorGen, VectorGPT, VanillaVAE, VectorVAEnLayers, VectorGPTv2, Vector_VQVAE, VQ_Transformer
 from experiment import VAEXperiment, VectorGPTExperiment, VectorGPTExperimentv2, VectorVQVAE_Experiment_Stage1, SVG_VQVAE_Stage2_Experiment
 import wandb
@@ -27,6 +27,7 @@ DATASETMAP = {
     "mnistCSVG": MNISTDatasetCSVG,
     "centeredShapeLayers" : CenterShapeLayersFromSVGDataModule,
     "tokens" : VQDataModule,
+    "stage1" : GlyphazznStage1Datamodule,
 }
 
 MODELS = {
@@ -88,14 +89,14 @@ else:
 
 # For reproducibility
 seed_everything(config['exp_params']['manual_seed'], True)
-
+print("Loading model...")
 if args.wandb:
     model = MODELS[config['model_params']['name']](**config['model_params'], wandb_logging=True)
     # wandb_logger.watch(model, log="gradients", log_freq=500, log_graph=False)
     # wandb.watch(model, log='all', log_freq=100)  # can be "all"
 else:
     model = MODELS[config['model_params']['name']](**config['model_params'])
-
+print("Loading dataset...")
 if config['model_params']['name'] == "VectorGPT":
     experiment = VectorGPTExperiment(model, **config['exp_params'], wandb = args.wandb)
     data = DATASETMAP[config["data_params"]["dataset"]](**config["data_params"])
@@ -112,19 +113,21 @@ else:
     experiment = VAEXperiment(model, config['exp_params'])
     data = DATASETMAP[config["data_params"]["dataset"]](**config["data_params"])
 
-
+print("Setting up data...")
 data.setup()
+print("Setting up trainer...")
 runner = Trainer(
     logger=wandb_logger,
     # strategy='ddp_find_unused_parameters_true',
     callbacks=[
         LearningRateMonitor(logging_interval="epoch", log_momentum=True),
         #  LearningRateFinder(early_stop_threshold=None, num_training_steps=200),
-        EarlyStopping("val_loss", 0.005, 50, verbose=True),
+        EarlyStopping("val_loss", 0.005, 5, verbose=True),
         ModelCheckpoint(save_top_k=2,
-                        dirpath =os.path.join(config['logging_params']['save_dir'], "checkpoints"),
-                        monitor= "val_loss",
-                        save_last= True),
+                        dirpath=os.path.join(config['logging_params']['save_dir'], "checkpoints"),
+                        monitor="val_loss",
+                        save_last=True,
+                        every_n_train_steps=5000),
     ],
     #  overfit_batches=20,
     log_every_n_steps=max(int(config['exp_params']["train_log_interval"] / 10), 5),

@@ -10,7 +10,7 @@ import glob
 import pandas as pd
 import numpy as np
 import string
-from thesis.utils import svg2paths2, disvg, raster, get_single_paths, get_similar_length_paths, check_for_continouity, get_rasterized_segments, all_paths_to_max_diff, Path
+from thesis.utils import svg2paths2, disvg, raster, get_single_paths, get_similar_length_paths, check_for_continouity, get_rasterized_segments, all_paths_to_max_diff, Path, svg_string_to_tensor
 import copy
 import random
 import math
@@ -150,8 +150,7 @@ class GlyphazznStage1Dataset(Dataset):
                  individual_min_length: float = 1.,
                  individual_max_length: float = 10.,
                  stroke_width: float = 0.3,
-                 max_shapes_per_svg: int = 64,
-                 **kwargs):
+                 max_shapes_per_svg: int = 64):
         super(GlyphazznStage1Dataset, self)
         self.top_level_dir = top_level_dir
         self.individual_min_length = individual_min_length
@@ -230,16 +229,111 @@ class GlyphazznStage1Dataset(Dataset):
         imgs = torch.stack(rasterized_segments)  # (n_shapes, channels, width, width)
         centers = torch.tensor(centers)  # (n_shapes, 2)
         labels = torch.ones(imgs.size(0)) * label
-        return imgs, labels, centers
+        return imgs, labels.int(), centers
     
-    def _get_full_svg_drawing(self, index, width:int = 720):
+    def _get_full_svg_drawing(self, index, width:int = 720, as_tensor:bool = False):
         svg_path = self.split[index]
         paths, attributes, svg_attributes = svg2paths2(svg_path)
         single_paths = get_single_paths(paths)
-        return disvg(single_paths, paths2Drawing=True, stroke_widths=[self.stroke_width]*len(single_paths), viewbox = svg_attributes["viewBox"],dimensions=(width, width))
+        drawing = disvg(single_paths, paths2Drawing=True, stroke_widths=[self.stroke_width]*len(single_paths), viewbox = svg_attributes["viewBox"],dimensions=(width, width))
+        if as_tensor:
+            return svg_string_to_tensor(drawing.tostring())
+        else:
+            return drawing
 
     def __len__(self):
         return len(self.split)
+
+class GlyphazznStage1Datamodule(LightningDataModule):
+    def __init__(
+        self,
+        top_level_dir: str,
+        train_batch_size: int,
+        val_batch_size: int,
+        channels: int,
+        width: int,
+        individual_max_length: float = 10.,
+        max_shapes_per_svg:int=64,
+        num_workers: int = 0,
+        stroke_width: float = 0.3,
+        subset:str = "all",
+        **kwargs,
+    ):
+        super().__init__()
+
+        self.train_batch_size = train_batch_size
+        self.val_batch_size = val_batch_size
+        self.num_workers = num_workers
+        self.top_level_dir = top_level_dir
+        self.channels = channels
+        self.width = width
+        self.num_workers = num_workers
+        self.stroke_width = stroke_width
+        self.individual_max_length = individual_max_length#
+        self.subset = subset
+        self.max_shapes_per_svg = max_shapes_per_svg
+
+    def setup(self, stage: Optional[str] = None) -> None:
+        self.train_dataset = GlyphazznStage1Dataset(
+            self.top_level_dir,
+            self.channels,
+            self.width,
+            train=True,
+            subset=self.subset,
+            individual_max_length=self.individual_max_length,
+            stroke_width=self.stroke_width,
+            max_shapes_per_svg=self.max_shapes_per_svg,
+        )
+
+        self.val_dataset = GlyphazznStage1Dataset(
+            self.top_level_dir,
+            self.channels,
+            self.width,
+            train=False,
+            subset=self.subset,
+            individual_max_length=self.individual_max_length,
+            stroke_width=self.stroke_width,
+            max_shapes_per_svg=self.max_shapes_per_svg,
+        )
+
+    #       ===============================================================
+
+    def collate_fn(self, batch):
+        imgs, labels, centers = zip(*batch)
+        imgs = torch.concat(imgs)
+        labels = torch.concat(labels)
+        centers = torch.concat(centers)
+        return imgs, labels, centers
+
+    def train_dataloader(self) -> DataLoader:
+        return DataLoader(
+            self.train_dataset,
+            batch_size=self.train_batch_size,
+            num_workers=self.num_workers,
+            shuffle=True,
+            pin_memory=False,
+            collate_fn=self.collate_fn
+        )
+
+    def val_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
+        return DataLoader(
+            self.val_dataset,
+            batch_size=self.val_batch_size,
+            num_workers=self.num_workers,
+            shuffle=False,
+            pin_memory=False,
+            collate_fn=self.collate_fn
+        )
+
+    def test_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
+        return DataLoader(
+            self.val_dataset,
+            batch_size=16,
+            num_workers=self.num_workers,
+            shuffle=False,
+            pin_memory=False,
+            collate_fn=self.collate_fn
+        )
 
 class CenterShapeLayersFromSVGDataset(Dataset):
     """
