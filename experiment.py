@@ -236,7 +236,9 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
         out, logging_dict = self.forward(all_center_shapes)
         reconstructions=out[0]
         inputs = all_center_shapes
-        vq_loss=out[2]
+        # all_points = out[2]
+        vq_loss=out[3]
+        assert vq_loss.dim() <= 1, f"vq_loss should be a 1D tensor, but got {vq_loss.dim()}"
 
         loss_dict = self.model.loss_function(
             reconstructions=reconstructions[:,:channels,:,:],
