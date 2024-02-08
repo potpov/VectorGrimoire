@@ -7,23 +7,14 @@ import pandas as pd
 from fontTools.ttLib import TTFont
 import os
 from glob import glob
-
-
-################
-#   DAFONT CONFIG
-DAFONT_SAVEDIR = "/scratch/datasets/svg/dafont/files"
-DAFONT_SESSION_COOKIE = "umsrnppiovo3q158ps1omv5pr5"  # check out this session value in your browser
-
-################
-#   ALL_FREE_FONT CONFIG
-FREE_FONT_SAVEDIR = "/scratch/datasets/svg/allfreefonts/files"
-FREE_FONT_AIADB_COOKIE = "dcdbbcce"  # check out this session value in your browser to avoid firecloud block
+from tqdm import tqdm
+import yaml
 
 
 def extract_and_delete(download_link, download_name, final_name, session):
     wget_command = f'wget ' \
                    f'--header="User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" --header="Cookie: {session}" ' \
-                   f'-O {download_name} "{download_link}"'
+                   f'-q -O {download_name} "{download_link}"'
     subprocess.run(wget_command, shell=True)
 
     # unzip
@@ -64,17 +55,19 @@ def convert_folder_to_ttf(main_dir):
                 print(f"TTF file {output_path} already exists. Skipping.")
     print(f"{counter} fonts converted into ttf")
 
-def scrape_allfreefonts():
+
+def scrape_allfreefonts(params):
     # even the homepage because we are greedy!
     pages = ["https://www.allfreefonts.co/"] + [f"https://www.allfreefonts.co/page/{i}/" for i in range(1, 815)]
+
     headers = {
         'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Cookie': f'aiADB={FREE_FONT_AIADB_COOKIE}'
+        'Cookie': f'aiADB={params["aiadb_cookie"]}'
     }
     counter = 0
     skipped = []
     metadata = []
-    for page in pages:
+    for page in tqdm(pages, total=len(pages)):
         response = requests.get(page, headers=headers)
         html_content = response.content
 
@@ -94,40 +87,55 @@ def scrape_allfreefonts():
             font_page_link = article.find("a", class_="entry-title-link")["href"]
             article_soup = BeautifulSoup(requests.get(font_page_link, headers=headers).content, 'html.parser')
             breadcrumb_div = article_soup.find('div', class_='breadcrumb')
+
             # removing last (font name) and first one ("Home")
-            tags = [a.lower().strip() for a in breadcrumb_div.text.split("›")[1:-1]]
             try:
-                download_link = download_link['href']
-                extract_and_delete(
-                    download_link=download_link,
-                    download_name=os.path.join(FREE_FONT_SAVEDIR, f"{counter}_{font_name}.zip"),
-                    final_name=os.path.join(FREE_FONT_SAVEDIR, f"{counter}_{font_name}"),
-                    session=f'aiADB={FREE_FONT_AIADB_COOKIE}'
-                )
-                time.sleep(0.3)  # lil delay to not piss the firewall off
+                tags = [a.lower().strip() for a in breadcrumb_div.text.split("›")[1:-1]]
             except Exception as e:
-                skipped.append(font_name)
-                continue
+                tags = []
+
+            if not os.path.exists(os.path.join(params['fonts_dir'], f"{counter}_{font_name}")):
+                try:
+                    download_link = download_link['href']
+                    extract_and_delete(
+                        download_link=download_link,
+                        download_name=os.path.join(params['fonts_dir'], f"{counter}_{font_name}.zip"),
+                        final_name=os.path.join(params['fonts_dir'], f"{counter}_{font_name}"),
+                        session=f'aiADB={params["aiadb_cookie"]}'
+                    )
+                    time.sleep(1)  # lil delay to not piss the firewall off
+                except Exception as e:
+                    skipped.append(font_name)
+                    continue
+            else:
+                print(os.path.join(params['fonts_dir'], f"{counter}_{font_name}") + " already exists")
+
             counter += 1
             metadata.append({
                 "filename": f"{counter}_{font_name}",
                 "tags": tags
             })
 
-    print("skipped: ", skipped)
-    print("Check sub-zip folders with \"find *.zip\"")
+    print("Skipped: ", {skipped})
+    print("Saving metadata...")
+    df = pd.DataFrame(metadata)
+    df.to_csv(os.path.join(params['fonts_dir'], "metadata.csv"), index=False)
+    print("Thats' all folks!")
 
 
-def scrape_dafont():
+def scrape_dafont(params):
+
     headers = {
         'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Cookie': f'PHPSESSID={DAFONT_SESSION_COOKIE}'
+        'Cookie': f'PHPSESSID={params["session_cookie"]}'
     }
     counter = 0
     metadata = []
     skipped = []
+
+
     pages = ["https://www.dafont.com/new.php?nup=3"] + [f"https://www.dafont.com/new.php?page={i}&nup=3" for i in range(1, 409)]
-    for page in pages:
+    for page in tqdm(pages, total=len(pages)):
         response = requests.get(page, headers=headers)
         html_content = response.content
 
@@ -138,21 +146,20 @@ def scrape_dafont():
             font_name = preview_div.find('a')['href'].split('=')[-1].replace(".font", "")
             download_link = "https:" + div.find_next('div', class_='dlbox').find('a', class_='dl')['href']
             tags = [a.text for a in div.find_all('a')]
-            filename = f"{counter}_{font_name}.zip"
 
             try:
                 extract_and_delete(
                     download_link=download_link,
-                    download_name=os.path.join(DAFONT_SAVEDIR, f"{counter}_{font_name}.zip"),
-                    final_name=os.path.join(DAFONT_SAVEDIR, f"{counter}_{font_name}"),
-                    session=f"PHPSESSID={DAFONT_SESSION_COOKIE}"
+                    download_name=os.path.join(params['fonts_dir'], f"{counter}_{font_name}.zip"),
+                    final_name=os.path.join(params['fonts_dir'], f"{counter}_{font_name}"),
+                    session=f'PHPSESSID={params["session_cookie"]}'
                 )
             except Exception as e:
                 skipped.append(font_name)
                 continue
 
             metadata.append({
-                "filename": filename,
+                "filename": "{counter}_{font_name}",
                 "tags": tags
             })
             counter += 1
@@ -160,16 +167,21 @@ def scrape_dafont():
     print("Skipped: ", {skipped})
     print("Saving metadata...")
     df = pd.DataFrame(metadata)
-    df.to_csv(os.path.join(DAFONT_SAVEDIR, "metadata.csv"), index=False)
+    df.to_csv(os.path.join(params['fonts_dir'], "metadata.csv"), index=False)
     print("Thats' all folks!")
 
 
 if __name__ == '__main__':
+    with open("font_paths.yaml", "r") as stream:
+        config = yaml.safe_load(stream)["fonts"]
+
     print("scraping www.allfreefonts.co *evil smile*")
-    scrape_allfreefonts()
-    unzip_and_remove(FREE_FONT_SAVEDIR)  # some files in allfreefonts have zip with bonus fonts inside
-    convert_folder_to_ttf(FREE_FONT_SAVEDIR)
+    params = config["allfonts"]
+    scrape_allfreefonts(params)
+    unzip_and_remove(params['fonts_dir'])  # some files in allfreefonts have zip with bonus fonts inside
+    convert_folder_to_ttf(params['fonts_dir'])
 
     print("scraping dafont.com *evil smile*")
-    # scrape_dafont()
-    convert_folder_to_ttf(DAFONT_SAVEDIR)
+    params = config["dafont"]
+    scrape_dafont(params)
+    convert_folder_to_ttf(params['fonts_dir'])

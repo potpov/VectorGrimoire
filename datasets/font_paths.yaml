@@ -1,0 +1,15 @@
+fonts:
+#  google:
+#    fonts_dir: "/scratch/datasets/svg/fonts"
+#    svg_dir: "/scratch/datasets/svg/fonts/svg"
+#  glyphazzn:
+#    fonts_dir: "/scratch/datasets/svg/glyphazzn/font_files"
+#    svg_dir: "/scratch/datasets/svg/glyphazzn/svgs"
+#  allfonts:
+#    fonts_dir: "/scratch/datasets/svg/allfreefonts/files"
+#    svg_dir: "/scratch/datasets/svg/allfreefonts/svg"
+#     aiadb_cookie: "dcdbbcce"
+  dafont:
+    fonts_dir: "/scratch/datasets/svg/dafont/files"
+    svg_dir: "/scratch/datasets/svg/dafont/svg"
+    session_cookie: "umsrnppiovo3q158ps1omv5pr5"
