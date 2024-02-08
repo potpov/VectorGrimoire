@@ -14,6 +14,7 @@ from experiment import VAEXperiment, VectorGPTExperiment, VectorGPTExperimentv2,
 import wandb
 from utils import get_rank
 import torch
+from pytorch_lightning.profilers import SimpleProfiler
 
 torch.set_float32_matmul_precision('high')
 
@@ -116,6 +117,7 @@ else:
 print("Setting up data...")
 data.setup()
 print("Setting up trainer...")
+profiler = SimpleProfiler(dirpath=os.path.join(config['logging_params']['save_dir']))
 runner = Trainer(
     logger=wandb_logger,
     # strategy='ddp_find_unused_parameters_true',
@@ -131,7 +133,7 @@ runner = Trainer(
     ],
     #  overfit_batches=20,
     log_every_n_steps=max(int(config['exp_params']["train_log_interval"] / 10), 5),
-    profiler="simple",
+    profiler=profiler,
     **config['trainer_params']
 )
 
@@ -141,4 +143,18 @@ Path(f"{wandb_logger.save_dir}/Reconstructions").mkdir(exist_ok=True, parents=Tr
 
 
 print(f"======= Training {config['model_params']['name']} =======")
-runner.fit(experiment, datamodule=data)
+try:
+    # Start training
+    runner.fit(experiment, datamodule=data)
+    profiler.describe()
+    print(profiler.summary())
+    with open("profiler_results.txt", "w") as f:
+        f.write(profiler.summary())
+except KeyboardInterrupt:
+    # Handle the interrupt and save the profiling results
+    print("Training interrupted by user.")
+    profiler.describe()
+    print(profiler.summary())
+    with open("profiler_results.txt", "w") as f:
+        f.write(profiler.summary())
+
