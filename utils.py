@@ -71,7 +71,7 @@ def shapes_to_drawing(shapes:Tensor, stroke_width:float, w=128) -> Drawing:
     all_shapes = []
     for shape in shapes:
         all_shapes.append(stroke_points_to_bezier(shape))
-    drawing = disvg(all_shapes, stroke_widths=[stroke_width]*len(all_shapes), paths2Drawing=True, viewbox=f"0 0 {w} {w}")
+    drawing = disvg(all_shapes, stroke_widths=[stroke_width]*len(all_shapes), paths2Drawing=True, viewbox=f"0 0 72 72", dimensions=(w, w))  # I think the 72 comes from the simplified svg files
     return drawing
 
 def fig2data(fig):
