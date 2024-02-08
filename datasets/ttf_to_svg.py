@@ -24,6 +24,9 @@ from tqdm import tqdm
 import os
 from numpy.random import choice
 import pandas as pd
+import yaml
+import ast
+
 
 class TtfSvgConverter:
     VERBOSE = False
@@ -105,73 +108,83 @@ class TtfSvgConverter:
             wsvg(paths=path, colors=['#000000'], svg_attributes=attr, stroke_widths=[self.STROKE_WIDTHS], filename=output)
             break # Only handle the first character.
 
+
 if __name__ == "__main__":
     # can be generated with import string; string.printable[:62]
     ALL_CHARS = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
     columns = ["char", "font_path", "font_name", "output_string", "split", "output_path", "conversion_skipped"]
     df = pd.DataFrame(columns=columns)
 
-    # this controls which dataset is generated
-    idx = 1
-    
-    TOP_LEVEL_DIR = ["/scratch2/moritz_data/fonts_ttf/fonts-main", "/scratch2/moritz_data/glyphazzn/font_files"][idx]
-    BASE_OUT_PATH = ["/scratch2/moritz_data/fonts/svg", "/scratch2/moritz_data/glyphazzn/svgs"][idx]
-    DATASET = ["fonts-main", "glyphazzn"][idx]
-    
-    all_files = glob(TOP_LEVEL_DIR + "/**/*.ttf", recursive=True)
-    
-    total_skip = 0
-    total_iterations_df = 0
-    for i, font_path in tqdm(enumerate(all_files), total=len(all_files)):
-        converter = TtfSvgConverter(ttfPath=font_path)
-        for char in ALL_CHARS:
-            conversion_skipped = "no"
-            font_name = font_path.split("/")[-1].split(".")[0]
-            if DATASET == "fonts-main":
-                output_string = re.sub(r'\[.*?\]', '', font_name)
-            elif DATASET == "glyphazzn":
-                output_string = font_name
+    with open("font_paths.yaml", "r") as stream:
+        config = yaml.safe_load(stream)
 
-            # output = f'/scratch2/moritz_data/fonts/svg/{char}/{char}_{output_string}.svg'
+    for dataset, params in config["fonts"].items():
 
-            split = choice(["train", "test"], p=[0.8, 0.2])
-            output_folder = os.path.join(BASE_OUT_PATH, split, char)
-            if not os.path.exists(output_folder):
-                os.makedirs(output_folder)
-            output = os.path.join(output_folder, f"{char}_{output_string}.svg")
-            # the splitting is not seeded, so we need to check if the file already exists in any split
-            if os.path.exists(output) or os.path.exists(output.replace("test", "train")) or os.path.exists(output.replace("test", "train")):
-                continue
-            try:
-                converter.generate(char, output)
-            except Exception as e:
-                conversion_skipped = "yes"
-                if isinstance(e, KeyboardInterrupt):
-                    break
+        all_files = glob(params["fonts_dir"] + "/**/*.ttf", recursive=True)
+        print(f"converting {dataset} to SVG, processing {len(all_files)} files")
+
+        if dataset in ["allfonts", "dafont"]:
+            metadata = pd.read_csv(os.path.join(params["fonts_dir"], "metadata.csv"))
+
+        total_skip = 0
+        total_iterations_df = 0
+        for i, font_path in tqdm(enumerate(all_files), total=len(all_files)):
+            converter = TtfSvgConverter(ttfPath=font_path)
+            tags = []
+            for char in ALL_CHARS:
+                conversion_skipped = "no"
+                font_name = font_path.split("/")[-1].split(".")[0]
+                if dataset == "fonts-main":
+                    output_string = re.sub(r'\[.*?\]', '', font_name)
+                elif dataset == "glyphazzn":
+                    output_string = font_name
+                elif dataset in ["allfonts", "dafont"]:
+                    output_string = font_name.strip().replace(" ", "_").lower()
+                    parent_dir = os.path.basename(os.path.dirname(font_path))
+                    tags_str = metadata.loc[metadata['filename'] == parent_dir, 'tags'].iloc[0]  # try to get classes for this font
+                    tags = ast.literal_eval(tags_str)  # don't really need that here
                 else:
-                    total_skip += 1
-                    print(f"skipped {font_path}")
-            # add to dataframe
-            new_row = pd.DataFrame({
-                "char": [char],
-                "font_path": [font_path],
-                "font_name": [font_name],
-                "output_string": [output_string],
-                "split": [split],
-                "output_path": [output],
-                "conversion_skipped": [conversion_skipped]
-            })
+                    raise Exception(f"unknown dataset {dataset}")
 
-            df = pd.concat([df, new_row], ignore_index=True)
+                split = choice(["train", "test"], p=[0.8, 0.2])
+                output_folder = os.path.join(params["svg_dir"], split, char)
+                if not os.path.exists(output_folder):
+                    os.makedirs(output_folder)
+                output = os.path.join(output_folder, f"{char}_{output_string}.svg")
+                # the splitting is not seeded, so we need to check if the file already exists in any split
+                if os.path.exists(output) or os.path.exists(output.replace("test", "train")) or os.path.exists(output.replace("test", "train")):
+                    continue
+                try:
+                    converter.generate(char, output)
+                except Exception as e:
+                    conversion_skipped = "yes"
+                    if isinstance(e, KeyboardInterrupt):
+                        break
+                    else:
+                        total_skip += 1
+                        print(f"skipped {font_path}")
+                # add to dataframe
+                new_row = pd.DataFrame({
+                    "char": [char],
+                    "font_path": [font_path],
+                    "font_name": [font_name],
+                    "output_string": [output_string],
+                    "split": [split],
+                    "output_path": [output],
+                    "conversion_skipped": [conversion_skipped],
+                    "tags": [tags]
+                })
 
-        if i % 2000 == 0:
-            out_df_path = os.path.join(BASE_OUT_PATH, f"split_{total_iterations_df}th_iteration.csv")
-            while os.path.exists(out_df_path):
-                total_iterations_df = total_iterations_df + 1
-                out_df_path = os.path.join(BASE_OUT_PATH, f"split_{total_iterations_df}th_iteration.csv")
-            df.to_csv(out_df_path, index=False)
-            total_iterations_df += 1
-            df = pd.DataFrame(columns=columns)
-        else:
-            df.to_csv(os.path.join(BASE_OUT_PATH, f"split_{total_iterations_df}th_iteration.csv"), index=False)
-    print(f"total skipped: {total_skip}")
+                df = pd.concat([df, new_row], ignore_index=True)
+
+            if i % 2000 == 0:
+                out_df_path = os.path.join(params["svg_dir"], f"split_{total_iterations_df}th_iteration.csv")
+                while os.path.exists(out_df_path):
+                    total_iterations_df = total_iterations_df + 1
+                    out_df_path = os.path.join(params["svg_dir"], f"split_{total_iterations_df}th_iteration.csv")
+                df.to_csv(out_df_path, index=False)
+                total_iterations_df += 1
+                df = pd.DataFrame(columns=columns)
+            else:
+                df.to_csv(os.path.join(params["svg_dir"], f"split_{total_iterations_df}th_iteration.csv"), index=False)
+        print(f"total skipped: {total_skip}")
