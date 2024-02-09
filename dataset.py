@@ -21,17 +21,32 @@ class VQDataset(Dataset):
         self.train = train
         self.context_length = context_length
         if self.train:
-            self.data: np.ndarray = np.load(self.split[self.split["split"] == "train"]["file_path"].iloc[0])
+            self.vq_data: np.ndarray = np.load(self.split[self.split["split"] == "train"]["vq_token_path"].iloc[0])
+            self.text_data: np.ndarray = np.load(self.split[self.split["split"] == "train"]["text_token_path"].iloc[0])
         else:
-            self.data: np.ndarray = np.load(self.split[self.split["split"] == "test"]["file_path"].iloc[0])
-        print(f"Loaded dataset with shape {self.data.shape} and dtype: {self.data.dtype}")
+            self.vq_data: np.ndarray = np.load(self.split[self.split["split"] == "test"]["vq_token_path"].iloc[0])
+            self.text_data: np.ndarray = np.load(self.split[self.split["split"] == "test"]["text_token_path"].iloc[0])
+        print(f"Loaded datasets. \nVQ data shape: {self.vq_data.shape} and dtype: {self.vq_data.dtype}\nText data shape: {self.text_data.shape} and dtype: {self.text_data.dtype}")
         print("Processing...")
 
-        self.data = np.split(self.data, np.where(self.data == 0)[0])[1:]  # as 0 is the <SOS> token
-        self.data = [x for x in self.data if len(x) < self.context_length - 1]  # -1 so we can shift one position for the target
+        cls_token = 101
+        sos_token = 0
+        bos_token = 1
+        eos_token = 2
+        pad_token = 3
+
+        self.text_data = np.split(self.text_data, np.where(self.text_data == cls_token)[0])[1:]  # as 101 is the <CLS> token
+
+        self.vq_data = np.split(self.vq_data, np.where(self.vq_data == bos_token)[0])[1:]  # as 1 is the <BOS> token
+        self.vq_data = [x for x in self.vq_data if len(x) < self.context_length - 1 - 15]  # -1 so we can shift one position for the target, -15 because this is the max of text token amount
+        assert len(self.vq_data) == len(self.text_data), "VQ and text data should have the same length."
+        self.data = [np.append(x, y) for x, y in zip(self.vq_data, self.text_data)]
+        # now add the SOS at index=0 and EOS token at last index to each sequence
+        self.data = [np.append(np.insert(array, 0, sos_token), eos_token) for array in self.data]
+
         for i, array in enumerate(self.data):
             if len(array) < self.context_length:
-                self.data[i] = np.append(array, np.zeros(self.context_length - len(array), dtype=np.ushort) + 2)
+                self.data[i] = np.append(array, np.zeros(self.context_length - len(array), dtype=np.ushort) + pad_token)
         self.data = np.stack(self.data)
         print("Finished processing dataset.")
         print(f"Dataset now with shape {self.data.shape} and dtype: {self.data.dtype}")
@@ -42,6 +57,7 @@ class VQDataset(Dataset):
 
     def __getitem__(self, idx:int):
         row = self.data[idx]
+        # TODO this might need to be changed so the targets are SVG only and inputs are SVG + text
         inputs = torch.from_numpy(row.astype(np.int32)).long()
         targets = torch.from_numpy(np.roll(row, -1).astype(np.int32)).long()
         targets[-1] = 2  # <PAD> token
@@ -121,9 +137,9 @@ class GlyphazznStage1Dataset(Dataset):
 
     Requires the following structure:
     top_level_dir
-    |____________________
-    |                   |
-    train               test
+    |________________________________________
+    |                   |                   |
+    train               test                split.csv (with columns: file_path, class, split, description)
     |                   |
     0-9, a-z, A-Z       0-9, a-z, A-Z
     |                   |
@@ -150,8 +166,10 @@ class GlyphazznStage1Dataset(Dataset):
                  individual_min_length: float = 1.,
                  individual_max_length: float = 10.,
                  stroke_width: float = 0.3,
-                 max_shapes_per_svg: int = 64):
+                 max_shapes_per_svg: int = 64,
+                 **kwargs):
         super(GlyphazznStage1Dataset, self)
+        print(f"[INFO] These keywords were provided but are not used: {kwargs.keys()}")
         self.top_level_dir = top_level_dir
         self.individual_min_length = individual_min_length
         self.individual_max_length = individual_max_length
@@ -161,6 +179,9 @@ class GlyphazznStage1Dataset(Dataset):
         self.width = width
         self.train = train
         self.subset = subset
+        df = pd.read_csv(os.path.join(top_level_dir, "split.csv"))
+        self.df = df[df["split"] == ("train" if self.train else "test")].reset_index(drop=True)
+
         
         if train is not None:
             self.split = glob.glob(os.path.join(top_level_dir, f"{'train' if self.train else 'test'}/**/*.svg"), recursive=True)
@@ -230,6 +251,26 @@ class GlyphazznStage1Dataset(Dataset):
         centers = torch.tensor(centers)  # (n_shapes, 2)
         labels = torch.ones(imgs.size(0)) * label
         return imgs, labels.int(), centers
+    
+    def _get_full_item(self, index:int) -> List[Tensor]:
+        """
+        This function is intended to be used by the tokenization process.
+        """
+        svg_path = self.df.iloc[index]["file_path"]
+        label = self.df.iloc[index]["class"]
+        label = string.printable.index(label)
+        description = self.df.iloc[index]["description"]
+
+        paths, attributes, svg_attributes = svg2paths2(svg_path)
+        single_paths = get_single_paths(paths)
+        # queue = copy.deepcopy(single_paths)
+        sim_length_paths = self.get_similar_length_paths(single_paths, self.individual_max_length)
+        assert check_for_continouity(sim_length_paths), "paths are not continous"
+        rasterized_segments, centers = get_rasterized_segments(sim_length_paths, self.stroke_width, self.individual_max_length, svg_attributes, centered=True, height=self.width, width=self.width)
+        imgs = torch.stack(rasterized_segments)  # (n_shapes, channels, width, width)
+        centers = torch.tensor(centers)  # (n_shapes, 2)
+        labels = torch.ones(imgs.size(0)) * label
+        return imgs, labels.int(), centers, description
     
     def _get_full_svg_drawing(self, index, width:int = 720, as_tensor:bool = False):
         svg_path = self.split[index]
@@ -311,7 +352,7 @@ class GlyphazznStage1Datamodule(LightningDataModule):
             batch_size=self.train_batch_size,
             num_workers=self.num_workers,
             shuffle=True,
-            pin_memory=False,
+            pin_memory=True,
             collate_fn=self.collate_fn
         )
 
