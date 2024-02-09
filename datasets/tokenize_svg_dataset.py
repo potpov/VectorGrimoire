@@ -53,8 +53,8 @@ def main():
     train_text_tokens = []
     print("Processing training set..")
     for i in tqdm(range(len(ds_train))):
-        imgs, label, centers = ds_train._get_full_item(i)
-        start_token, text_tokens, vq_tokens, end_token = tokenizer.tokenize(imgs, centers, text=label, return_np_uint16=True)
+        imgs, label, centers, description = ds_train._get_full_item(i)
+        start_token, text_tokens, vq_tokens, end_token = tokenizer.tokenize(imgs, centers, text=description, return_np_uint16=True)
         train_vq_tokens.append(vq_tokens)
         train_text_tokens.append(text_tokens)
         if i % 100 == 0:
@@ -69,8 +69,8 @@ def main():
     test_text_tokens = []
     print("Processing test set..")
     for i in tqdm(range(len(ds_test))):
-        imgs, label, centers = ds_test._get_full_item(i)
-        start_token, text_tokens, vq_tokens, end_token = tokenizer.tokenize(imgs, centers, text=label, return_np_uint16=True)
+        imgs, label, centers, description = ds_test._get_full_item(i)
+        start_token, text_tokens, vq_tokens, end_token = tokenizer.tokenize(imgs, centers, text=description, return_np_uint16=True)
         test_vq_tokens.append(vq_tokens)
         test_text_tokens.append(text_tokens)
         if i % 100 == 0:
