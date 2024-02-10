@@ -105,14 +105,15 @@ class VQTokenizer:
             - positions (Tensor): Tensor of shape (num_pos, 2)
             - text (str): conditional text
             - return_np_uint16 (bool, optional): Whether to return the tokens as np.uint16. Defaults to False.
+            - batched (bool, optional): Whether the input is batched or not.
 
         Returns:
             - start_token: [<SOS>], either Tensor or np.ndarray
             - text_tokens: [<CLS>, ...text..., <SEP>], no padding, CLS and SEP come from text tokenizer, either Tensor or np.ndarray
-            - vq_tokens: [patch_tokens, pos_token, patch_tokens, pos_token, ..., <EOS>], no padding, either Tensor or np.ndarray
+            - vq_tokens: [<BOS>, patch_tokens, pos_token, patch_tokens, pos_token, ...], no padding, either Tensor or np.ndarray
             - end_token: [<EOS>], either Tensor or np.ndarray
         """
-        patch_tokens = self.tokenize_patches(patches)
+        patch_tokens = self.tokenize_patches(patches).cpu()
         pos_tokens = self.tokenize_positions(positions)
         text_tokens = self.tokenize_text(text)
         if self.tokens_per_patch == 1:

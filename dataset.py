@@ -38,11 +38,12 @@ class VQDataset(Dataset):
         self.text_data = np.split(self.text_data, np.where(self.text_data == cls_token)[0])[1:]  # as 101 is the <CLS> token
 
         self.vq_data = np.split(self.vq_data, np.where(self.vq_data == bos_token)[0])[1:]  # as 1 is the <BOS> token
-        self.vq_data = [x for x in self.vq_data if len(x) < self.context_length - 1 - 15]  # -1 so we can shift one position for the target, -15 because this is the max of text token amount
-        assert len(self.vq_data) == len(self.text_data), "VQ and text data should have the same length."
+        # self.vq_data = [x for x in self.vq_data if len(x) < self.context_length - 1]  # -1 so we can shift one position for the target
+        assert len(self.vq_data) == len(self.text_data), f"VQ ({len(self.vq_data)}) and text {len(self.text_data)} data should have the same length."
         self.data = [np.append(x, y) for x, y in zip(self.vq_data, self.text_data)]
         # now add the SOS at index=0 and EOS token at last index to each sequence
         self.data = [np.append(np.insert(array, 0, sos_token), eos_token) for array in self.data]
+        self.data = [x for x in self.data if len(x) < self.context_length - 1]  # remove sequences that are too long
 
         for i, array in enumerate(self.data):
             if len(array) < self.context_length:
@@ -169,7 +170,7 @@ class GlyphazznStage1Dataset(Dataset):
                  max_shapes_per_svg: int = 64,
                  **kwargs):
         super(GlyphazznStage1Dataset, self)
-        print(f"[INFO] These keywords were provided but are not used: {kwargs.keys()}")
+        print(f"[INFO] These keywords were provided in GlyphazznStage1Dataset but are not used: {kwargs.keys()}")
         self.top_level_dir = top_level_dir
         self.individual_min_length = individual_min_length
         self.individual_max_length = individual_max_length
@@ -179,6 +180,7 @@ class GlyphazznStage1Dataset(Dataset):
         self.width = width
         self.train = train
         self.subset = subset
+        print("[GlyphazznStage1Dataset] loading df...")
         df = pd.read_csv(os.path.join(top_level_dir, "split.csv"))
         self.df = df[df["split"] == ("train" if self.train else "test")].reset_index(drop=True)
 
@@ -215,9 +217,8 @@ class GlyphazznStage1Dataset(Dataset):
 
     def get_similar_length_paths(self, single_paths, max_length: float = 5.):
         similar_length_paths = []
+        single_paths = [x for x in single_paths if x.length() >= self.individual_min_length]
         for path in single_paths:
-            if path.length() < self.individual_min_length:
-                continue
             try:
                 segments = self.crop_path_into_segments(path, length=max_length)
                 similar_length_paths.extend(segments)
@@ -234,7 +235,11 @@ class GlyphazznStage1Dataset(Dataset):
         return sim_length_paths
 
     def __getitem__(self, index) -> tuple:
-        svg_path = self.split[index]
+        svg_path = self.df.iloc[index]["file_path"]
+        label = self.df.iloc[index]["class"]
+        label = string.printable.index(label)
+        description = self.df.iloc[index]["description"]
+
         label = svg_path.split("/")[-2]
         label = string.printable.index(label)
         paths, attributes, svg_attributes = svg2paths2(svg_path)
@@ -250,7 +255,7 @@ class GlyphazznStage1Dataset(Dataset):
         imgs = torch.stack(rasterized_segments)  # (n_shapes, channels, width, width)
         centers = torch.tensor(centers)  # (n_shapes, 2)
         labels = torch.ones(imgs.size(0)) * label
-        return imgs, labels.int(), centers
+        return imgs, labels.int(), centers, description
     
     def _get_full_item(self, index:int) -> List[Tensor]:
         """
@@ -262,7 +267,7 @@ class GlyphazznStage1Dataset(Dataset):
         description = self.df.iloc[index]["description"]
 
         paths, attributes, svg_attributes = svg2paths2(svg_path)
-        single_paths = get_single_paths(paths)
+        single_paths = get_single_paths(paths)  # cannot be further optimized
         # queue = copy.deepcopy(single_paths)
         sim_length_paths = self.get_similar_length_paths(single_paths, self.individual_max_length)
         assert check_for_continouity(sim_length_paths), "paths are not continous"
@@ -340,11 +345,11 @@ class GlyphazznStage1Datamodule(LightningDataModule):
     #       ===============================================================
 
     def collate_fn(self, batch):
-        imgs, labels, centers = zip(*batch)
+        imgs, labels, centers, descriptions = zip(*batch)
         imgs = torch.concat(imgs)
         labels = torch.concat(labels)
         centers = torch.concat(centers)
-        return imgs, labels, centers
+        return imgs, labels, centers, descriptions
 
     def train_dataloader(self) -> DataLoader:
         return DataLoader(

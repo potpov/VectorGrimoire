@@ -238,11 +238,9 @@ def get_flattened_paths(paths):
     return flattened_paths
 
 def get_single_paths(paths, filter_zero_length = True):
-    flattened_paths = get_flattened_paths(paths)
-    single_paths = [Path(element) for element in flattened_paths]
+    single_paths = [Path(segment) for path in paths for segment in path._segments]
     if filter_zero_length:
         single_paths = [path for path in single_paths if path.length() > 0.]
-        
     return single_paths
 
 def calc_max_diff(single_paths):
@@ -295,10 +293,11 @@ def get_viewbox(single_path, total_max_diff, offset: float = 1.0):
 
 def get_rasterized_segments(single_paths:list, stroke_width:float, total_max_diff: float, svg_attributes, centered = False, height: int = 128, width: int = 128) -> List:
     if centered:
-        out = [get_viewbox(my_path, total_max_diff) for my_path in single_paths if my_path.length() > 0.]
+        single_paths = [my_path for my_path in single_paths if my_path.length() > 0.]
+        out = [get_viewbox(my_path, total_max_diff) for my_path in single_paths]
         viewboxes = [x[0] for x in out]
         centers = [x[1] for x in out]
-        rasterized_segments = [raster(disvg(my_path, paths2Drawing=True, stroke_widths=[stroke_width] * len(my_path), viewbox=viewboxes[i]), out_h = height, out_w = width) for i, my_path in enumerate(single_paths) if my_path.length() > 0.]
+        rasterized_segments = [raster(disvg(my_path, paths2Drawing=True, stroke_widths=[stroke_width] * len(my_path), viewbox=viewboxes[i]), out_h = height, out_w = width) for i, my_path in enumerate(single_paths)]
         return rasterized_segments, centers
     else:
         viewbox=svg_attributes["viewBox"]
