@@ -18,40 +18,29 @@ def mycollate(batch):
 
 def get_latest_data_checkpoint(dir):
     existing_files = os.listdir(dir)
-    trainvq_pattern = r"train_vq_tokens_(\d+)\.npy"
-    traintext_pattern = r"train_text_tokens_(\d+)\.npy"
-    testvq_pattern = r"test_vq_tokens_(\d+)\.npy"
-    testtext_pattern = r"test_text_tokens_(\d+)\.npy"
-    train_vq_checkpoint = None
-    train_text_checkpoint = None
-    test_vq_checkpoint = None
-    test_text_checkpoint = None
-    for filename in existing_files:
-        match1 = re.search(trainvq_pattern, filename)
-        match2 = re.search(traintext_pattern, filename)
-        match3 = re.search(testvq_pattern, filename)
-        match4 = re.search(testtext_pattern, filename)
-        if match1:
-            train_vq_checkpoint = int(match1.group(1))
-        if match2:
-            train_text_checkpoint = int(match2.group(1))
-        if match3:
-            test_vq_checkpoint = int(match3.group(1))
-        if match4:
-            test_text_checkpoint = int(match4.group(1))
-    
-    if train_vq_checkpoint is None or train_text_checkpoint is None:
-        if test_vq_checkpoint is None or test_text_checkpoint is None:
-            return 0, 0
-        else:
-            return 0, min(test_vq_checkpoint, test_text_checkpoint)
-    else:
-        assert train_vq_checkpoint == train_text_checkpoint, "Train vq and text tokens are not in sync"
-        if test_vq_checkpoint is None or test_text_checkpoint is None:
-            return min(train_vq_checkpoint, train_text_checkpoint), 0
-        else:
-            assert test_vq_checkpoint == test_text_checkpoint, "Test vq and text tokens are not in sync"
-            return min(train_vq_checkpoint, train_text_checkpoint), min(test_vq_checkpoint, test_text_checkpoint)
+    file_string = " ".join(existing_files)
+
+    try:
+        train_vq_checkpoint = sorted([int(x) for x in re.findall(r"train_vq_tokens_(\d+)\.npy", file_string)])[-1]
+    except IndexError:
+        train_vq_checkpoint = 0
+    try:
+        train_text_checkpoint = sorted([int(x) for x in re.findall(r"train_text_tokens_(\d+)\.npy", file_string)])[-1]
+    except IndexError:
+        train_text_checkpoint = 0
+    try:
+        test_vq_checkpoint = sorted([int(x) for x in re.findall(r"test_vq_tokens_(\d+)\.npy", file_string)])[-1]
+    except IndexError:
+        test_vq_checkpoint = 0
+    try:
+        test_text_checkpoint = sorted([int(x) for x in re.findall(r"test_text_tokens_(\d+)\.npy", file_string)])[-1]
+    except IndexError:
+        test_text_checkpoint = 0
+
+    assert test_text_checkpoint == test_vq_checkpoint, f"Test vq ({test_vq_checkpoint}) and text tokens ({test_text_checkpoint}) are not in sync"
+    assert train_text_checkpoint == train_vq_checkpoint, f"Train vq ({train_vq_checkpoint}) and text tokens ({train_text_checkpoint}) are not in sync"
+
+    return train_vq_checkpoint, test_vq_checkpoint
 
 class SkipDataset(torch.utils.data.Dataset):
     def __init__(self, original_dataset, start_index):
@@ -160,9 +149,9 @@ def main():
         if i % 100 == 0 and i < 1000:
             print(f"Average dataloader time: {round(sum(get_item_times) / len(get_item_times), 2)} seconds")
             print(f"Average tokenization time: {round(sum(tokenization_times) / len(tokenization_times), 2)} seconds")
-        if i % 1000 == 0:
+        if i % 2000 == 0 and i > 0:
             np.save(os.path.join(OUT_DIR, f"train_vq_tokens_{i*BATCH_SIZE + train_checkpoint}.npy"), np.concatenate(train_vq_tokens))
-            np.save(os.path.join(OUT_DIR, f"train_text_tokens_{i*BATCH_SIZE + train_checkpoint}_.npy"), np.concatenate(train_text_tokens))
+            np.save(os.path.join(OUT_DIR, f"train_text_tokens_{i*BATCH_SIZE + train_checkpoint}.npy"), np.concatenate(train_text_tokens))
             train_vq_tokens=[]
             train_text_tokens=[]
     train_vq_tokens = np.concatenate(train_vq_tokens)
@@ -179,11 +168,11 @@ def main():
             start_token, text_tokens, vq_tokens, end_token = tokenizer.tokenize(img, center, text=description, return_np_uint16=True)
             test_vq_tokens.append(vq_tokens)
             test_text_tokens.append(text_tokens)
-        if i % 1000 == 0:
+        if i % 2000 == 0 and i > 0:
             np.save(os.path.join(OUT_DIR, f"test_vq_tokens_{i*BATCH_SIZE + test_checkpoint}.npy"), np.concatenate(test_vq_tokens))
             np.save(os.path.join(OUT_DIR, f"test_text_tokens_{i*BATCH_SIZE + test_checkpoint}.npy"), np.concatenate(test_text_tokens))
-            train_vq_tokens=[]
-            train_text_tokens=[]
+            test_vq_tokens=[]
+            test_text_tokens=[]
     test_vq_tokens = np.concatenate(test_vq_tokens)
     test_text_tokens = np.concatenate(test_text_tokens)
     np.save(os.path.join(OUT_DIR, "test_vq_tokens_last.npy"), test_vq_tokens)

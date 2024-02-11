@@ -294,6 +294,9 @@ def get_viewbox(single_path, total_max_diff, offset: float = 1.0):
 def get_rasterized_segments(single_paths:list, stroke_width:float, total_max_diff: float, svg_attributes, centered = False, height: int = 128, width: int = 128) -> List:
     if centered:
         single_paths = [my_path for my_path in single_paths if my_path.length() > 0.]
+        if len(single_paths) == 0:
+            print("[INFO] tried to rasterize an empty path")
+            return [torch.zeros((3, height, width)), torch.zeros((3, height, width))], [[width/2,height/2], [width/2,height/2]]
         out = [get_viewbox(my_path, total_max_diff) for my_path in single_paths]
         viewboxes = [x[0] for x in out]
         centers = [x[1] for x in out]
