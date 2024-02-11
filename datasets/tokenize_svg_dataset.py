@@ -132,7 +132,6 @@ def main():
     get_item_times = []
     tokenization_times = []
 
-
     print("Processing training set..")
     for i, batch in tqdm(enumerate(dl_train), total=len(dl_train)):
         start_time = time.time()
@@ -165,7 +164,7 @@ def main():
     for i, batch in tqdm(enumerate(dl_train), total=len(dl_test)):
         imgs, labels, centers, descriptions = batch
         for img, label, center, description in zip(imgs, labels, centers, descriptions):
-            start_token, text_tokens, vq_tokens, end_token = tokenizer.tokenize(img, center, text=description, return_np_uint16=True)
+            start_token, text_tokens, vq_tokens, end_token = tokenizer.tokenize(img.to(device), center, text=description, return_np_uint16=True)
             test_vq_tokens.append(vq_tokens)
             test_text_tokens.append(text_tokens)
         if i % 2000 == 0 and i > 0:
