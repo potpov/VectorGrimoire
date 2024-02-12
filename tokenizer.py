@@ -2,7 +2,7 @@ from typing import Iterable, List, Tuple, Union
 from thesis.utils import calculate_global_positions, shapes_to_drawing
 
 import numpy as np
-from models import Vector_VQVAE
+from thesis.models.svg_vqvae import Vector_VQVAE
 import torch
 from torch import Tensor
 from svgwrite import Drawing
@@ -170,6 +170,19 @@ class VQTokenizer:
         positions = torch.stack([tokens % self.full_image_res, tokens // self.full_image_res], dim=1)
         return positions
     
+    def decode_text(self, tokens: Tensor) -> str:
+        """
+        Decodes the text from the tokens.
+
+        Args:
+            tokens (Tensor): Tensor of shape (num_tokens)
+
+        Returns:
+            str: Decoded text
+        """
+        text = self.text_tokenizer.decode(tokens, skip_special_tokens=True)
+        return text
+    
     def decode(self, tokens: Tensor, ignore_eos: bool = False):
         """
         Decodes the patches and positions from the tokens.
@@ -185,7 +198,7 @@ class VQTokenizer:
 
         assert tokens.ndim == 1, f"Tokens should be 1D, got shape {tokens.shape}"
         assert tokens.size(0) > 3, f"Tokens should have at least 4 elements, got {tokens.size(0)}"
-        assert tokens[0] == self.special_token_mapping["<SOS>"], f"First token should be <SOS>, got {tokens[0]}"
+        assert tokens[0] == self.special_token_mapping["<BOS>"], f"First token should be <BOS>, got {tokens[0]}"
         if not ignore_eos:
             assert tokens[-1] == self.special_token_mapping["<EOS>"], f"Last token should be <EOS>, got {tokens[-1]}"
         tokens = tokens[1:-1]
