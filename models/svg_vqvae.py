@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 import wandb
-from thesis.utils import log_all_images, tensor_to_histogram_image, calculate_global_positions, shapes_to_drawing, svg_string_to_tensor
+from utils import log_all_images, tensor_to_histogram_image
 from models.resnet import ResNet, BasicBlock
 from models.vq_vae import VectorQuantizer
 from models.mlp_vector_head import MLPVectorHeadFixed
@@ -143,6 +143,7 @@ class VQ_Transformer(nn.Module):
                     reason = "Max sequence length reached"
                     break
         return input_tokens, reason
+
 
 class Vector_VQVAE(nn.Module):
     """
