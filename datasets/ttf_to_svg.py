@@ -112,8 +112,6 @@ class TtfSvgConverter:
 if __name__ == "__main__":
     # can be generated with import string; string.printable[:62]
     ALL_CHARS = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-    columns = ["char", "font_path", "font_name", "output_string", "split", "output_path", "conversion_skipped"]
-    df = pd.DataFrame(columns=columns)
 
     with open("font_paths.yaml", "r") as stream:
         config = yaml.safe_load(stream)
@@ -123,12 +121,22 @@ if __name__ == "__main__":
         all_files = glob(params["fonts_dir"] + "/**/*.ttf", recursive=True)
         print(f"converting {dataset} to SVG, processing {len(all_files)} files")
 
-        if dataset in ["allfonts", "dafont"]:
+        columns = ["char", "font_path", "font_name", "output_string", "split", "output_path", "conversion_skipped"]
+        df = pd.DataFrame(columns=columns)
+
+        csv_files = [file for file in os.listdir(params["svg_dir"]) if file.startswith('split_') and file.endswith('.csv')]
+
+        start_from = 0
+        total_iterations_df = 0
+        metadata = None
+        if os.path.exists(os.path.join(params["fonts_dir"], "metadata.csv")):
             metadata = pd.read_csv(os.path.join(params["fonts_dir"], "metadata.csv"))
 
         total_skip = 0
-        total_iterations_df = 0
+
         for i, font_path in tqdm(enumerate(all_files), total=len(all_files)):
+            if i < start_from:
+                continue
             converter = TtfSvgConverter(ttfPath=font_path)
             tags = []
             for char in ALL_CHARS:
@@ -140,9 +148,14 @@ if __name__ == "__main__":
                     output_string = font_name
                 elif dataset in ["allfonts", "dafont"]:
                     output_string = font_name.strip().replace(" ", "_").lower()
-                    parent_dir = os.path.basename(os.path.dirname(font_path))
-                    tags_str = metadata.loc[metadata['filename'] == parent_dir, 'tags'].iloc[0]  # try to get classes for this font
-                    tags = ast.literal_eval(tags_str)  # don't really need that here
+                    tags = []
+                    if metadata:
+                        try:
+                            parent_dir = os.path.basename(os.path.dirname(font_path))
+                            tags_str = metadata.loc[metadata['filename'] == parent_dir, 'tags'].iloc[0]  # try to get classes for this font
+                            tags = ast.literal_eval(tags_str)  # don't really need that here
+                        except Exception as e:
+                            pass
                 else:
                     raise Exception(f"unknown dataset {dataset}")
 
@@ -163,6 +176,7 @@ if __name__ == "__main__":
                     else:
                         total_skip += 1
                         print(f"skipped {font_path}")
+
                 # add to dataframe
                 new_row = pd.DataFrame({
                     "char": [char],
