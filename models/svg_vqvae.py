@@ -6,13 +6,16 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 import wandb
-from thesis.utils import log_all_images, tensor_to_histogram_image
+from thesis.utils import log_all_images, tensor_to_histogram_image, calculate_global_positions, shapes_to_drawing, svg_string_to_tensor
 from models.resnet import ResNet, BasicBlock
 from models.vq_vae import VectorQuantizer
 from models.mlp_vector_head import MLPVectorHeadFixed
 from models.mlp import MultiLayerPerceptron
 from vector_quantize_pytorch import FSQ
 from x_transformers import TransformerWrapper, Decoder
+from transformers import BertModel
+from svgwrite import Drawing
+
 class DeconvResNet(nn.Module):
     def __init__(self):
         super(DeconvResNet, self).__init__()
@@ -53,6 +56,7 @@ class VQ_Transformer(nn.Module):
                 dim: int = 512,
                 depth: int = 12,
                 heads: int = 8,
+                text_encoder_str: str = "bert-base-uncased",
                  **kwargs) -> None:
         
         super(VQ_Transformer, self).__init__()
@@ -62,6 +66,8 @@ class VQ_Transformer(nn.Module):
         self.dim = dim
         self.depth = depth
         self.heads = heads
+        self.text_encoder_str = text_encoder_str
+        self.text_encoder = BertModel.from_pretrained(self.text_encoder_str)
 
         self.model = TransformerWrapper(
             num_tokens = self.num_tokens,
@@ -153,9 +159,9 @@ class Vector_VQVAE(nn.Module):
                  vector_decoder_model: str = "mlp",
                  quantized_dim: int = 256,
                  codebook_size: int = 512,
-                 image_loss: str = "pyramid",
+                 image_loss: str = "mse",
                  single_code_representation: bool = True,
-                 vq_method:str = "vqvae",
+                 vq_method:str = "fsq",
                  fsq_levels:list =[8,5,5,5],
                  **kwargs) -> None:
         super(Vector_VQVAE, self).__init__()
@@ -326,10 +332,6 @@ class Vector_VQVAE(nn.Module):
                 'Reconstruction_Loss': recons_loss,
                 'VQ_Loss':vq_loss}
     
-    def sample(self,
-               num_samples: int,
-               current_device: Union[int, str], **kwargs) -> Tensor:
-        raise Warning('VQVAE sampler is not implemented.')
 
     def generate(self, x: Tensor, **kwargs) -> Tensor:
         """
@@ -340,8 +342,23 @@ class Vector_VQVAE(nn.Module):
 
         return self.forward(x)[0]
     
-    def _assemble_svg(self, svg_predictions: Tensor, center_positions: Tensor):
+    def reconstruct(self, patches: Tensor, gt_center_positions: Tensor, padded_individual_max_length: float, stroke_width: float, rendered_w = 128.) -> Union[Drawing, Tensor]:
         """
-        Assembles the SVG prediction from the transformer into a single SVG.
+        Reconstructs the input patches and uses gt positions to assemble them into a full SVG. Can be used to observe quality degradation of the quantization process.
+        TODO currently does not use the predicted stroke width but the GT one.
+        
+        Args:
+            - patches (Tensor): Input patches to be reconstructed
+            - gt_center_positions (Tensor): Ground truth center positions of the patches
+            - padded_individual_max_length (float): Padded individual max length of the patches, usually is individual_max_length+2
+            - stroke_width (float): Stroke width of the patches
+
+        Returns:
+            - reconstructed_drawing (Drawing): Reconstructed drawing (use to save svg)
+            - rasterized_reconstructions (Tensor): Rasterized reconstructions
         """
-        raise NotImplementedError("Not implemented yet.")
+        [reconstructions, input, all_points, vq_loss], logging_dict = self.forward(patches)
+        global_shapes = calculate_global_positions(all_points, padded_individual_max_length, gt_center_positions)[:,0]
+        reconstructed_drawing = shapes_to_drawing(global_shapes, stroke_width=stroke_width, w=rendered_w)
+        rasterized_reconstructions = svg_string_to_tensor(reconstructed_drawing.tostring())
+        return reconstructed_drawing, rasterized_reconstructions
