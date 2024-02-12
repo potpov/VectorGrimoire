@@ -107,7 +107,6 @@ def main():
     ds_test = SkipDataset(GlyphazznStage1Dataset(train=False, **config['data_params']), start_index = test_checkpoint)
     print(f"Starting from datapoint {train_checkpoint} for train and {test_checkpoint} for test.")
     print(f"That is {round(train_checkpoint / (len(ds_train) + train_checkpoint), 2)} of the train dataset and {round(test_checkpoint / (len(ds_test) + test_checkpoint), 2)} of the test dataset.")
-    input("Press Enter to continue...")
     dl_train = DataLoader(ds_train,
         batch_size=BATCH_SIZE,
         num_workers=16,
@@ -123,6 +122,13 @@ def main():
         collate_fn=mycollate,
     )
 
+    if "train_vq_tokens_last.npy" in os.listdir(OUT_DIR) and "train_text_tokens_last.npy" in os.listdir(OUT_DIR):
+        print(f"NVM, Found train_vq_tokens_last.npy in {OUT_DIR}, skipping generating training data..")
+        dl_train = []
+    if "test_vq_tokens_last.npy" in os.listdir(OUT_DIR) and "test_text_tokens_last" in os.listdir(OUT_DIR):
+        print(f"NVM, Found test_vq_tokens_last.npy in {OUT_DIR}, skipping generating test data..")
+        dl_test = []
+
     elapsed_time = time.time() - start_time
     print(f"Datasets loaded in {elapsed_time} seconds")
     print("Number of Tokens: ",tokenizer.num_tokens)
@@ -131,6 +137,7 @@ def main():
     train_text_tokens = []
     get_item_times = []
     tokenization_times = []
+    input("Press Enter to continue...")
 
     print("Processing training set..")
     for i, batch in tqdm(enumerate(dl_train), total=len(dl_train)):
@@ -153,15 +160,16 @@ def main():
             np.save(os.path.join(OUT_DIR, f"train_text_tokens_{i*BATCH_SIZE + train_checkpoint}.npy"), np.concatenate(train_text_tokens))
             train_vq_tokens=[]
             train_text_tokens=[]
-    train_vq_tokens = np.concatenate(train_vq_tokens)
-    train_text_tokens = np.concatenate(train_text_tokens)
-    np.save(os.path.join(OUT_DIR, "train_vq_tokens_last.npy"), train_vq_tokens)
-    np.save(os.path.join(OUT_DIR, "train_text_tokens_last.npy"), train_text_tokens)
+    if len(train_vq_tokens) > 0 and len(train_text_tokens) > 0:
+        train_vq_tokens = np.concatenate(train_vq_tokens)
+        train_text_tokens = np.concatenate(train_text_tokens)
+        np.save(os.path.join(OUT_DIR, "train_vq_tokens_last.npy"), train_vq_tokens)
+        np.save(os.path.join(OUT_DIR, "train_text_tokens_last.npy"), train_text_tokens)
 
     test_vq_tokens = []
     test_text_tokens = []
     print("Processing test set..")
-    for i, batch in tqdm(enumerate(dl_train), total=len(dl_test)):
+    for i, batch in tqdm(enumerate(dl_test), total=len(dl_test)):
         imgs, labels, centers, descriptions = batch
         for img, label, center, description in zip(imgs, labels, centers, descriptions):
             start_token, text_tokens, vq_tokens, end_token = tokenizer.tokenize(img.to(device), center, text=description, return_np_uint16=True)
@@ -172,10 +180,11 @@ def main():
             np.save(os.path.join(OUT_DIR, f"test_text_tokens_{i*BATCH_SIZE + test_checkpoint}.npy"), np.concatenate(test_text_tokens))
             test_vq_tokens=[]
             test_text_tokens=[]
-    test_vq_tokens = np.concatenate(test_vq_tokens)
-    test_text_tokens = np.concatenate(test_text_tokens)
-    np.save(os.path.join(OUT_DIR, "test_vq_tokens_last.npy"), test_vq_tokens)
-    np.save(os.path.join(OUT_DIR, "test_text_tokens_last.npy"), test_text_tokens)
+    if len(test_vq_tokens) > 0 and len(test_text_tokens) > 0:
+        test_vq_tokens = np.concatenate(test_vq_tokens)
+        test_text_tokens = np.concatenate(test_text_tokens)
+        np.save(os.path.join(OUT_DIR, "test_vq_tokens_last.npy"), test_vq_tokens)
+        np.save(os.path.join(OUT_DIR, "test_text_tokens_last.npy"), test_text_tokens)
 
 if __name__ == '__main__':
     # print(get_latest_data_checkpoint("/scratch2/moritz_data/glyphazzn"))
