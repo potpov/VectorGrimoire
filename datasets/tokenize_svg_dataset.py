@@ -1,6 +1,6 @@
-from thesis.tokenizer import VQTokenizer
-from thesis.dataset import GlyphazznStage1Dataset
-from thesis.models import Vector_VQVAE
+from tokenizer import VQTokenizer
+from dataset import CenterShapeLayersFromSVGDataset
+from models import Vector_VQVAE
 import numpy as np
 import torch
 from glob import glob

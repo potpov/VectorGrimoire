@@ -1,6 +1,6 @@
-from thesis.models import VQ_Transformer, Vector_VQVAE
-from thesis.tokenizer import VQTokenizer
-from thesis.dataset import VQDataset
+from models import VQ_Transformer, Vector_VQVAE
+from tokenizer import VQTokenizer
+from dataset import VQDataset
 import torch
 from torch import Tensor
 import numpy as np

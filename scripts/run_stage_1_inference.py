@@ -2,7 +2,7 @@ import os
 import torch
 from models import Vector_VQVAE
 from dataset import CenterShapeLayersFromSVGDataset
-from thesis.utils import calculate_global_positions, shapes_to_drawing
+from utils import calculate_global_positions, shapes_to_drawing
 import argparse
 import random
 
