@@ -6,7 +6,6 @@ from tqdm import tqdm
 import glob
 import pandas as pd
 import yaml
-# from deepsvg.svglib.svg import SVG
 from svglib.svg import SVG
 
 
@@ -18,7 +17,8 @@ def preprocess_svg(char_path):
     for i, svg_path in enumerate(svg_files):
         if i % (len(svg_files) // 10) == 0:
             print(f"Processed {round((i / len(svg_files)) * 100)}% of {char_path}")
-        new_filename = svg_path.replace("/svg/", "/svg_simplified/")
+        parts = svg_path.rsplit("/svg/", maxsplit=1)
+        new_filename = os.path.join(parts[0], "svg_simplified", parts[1]) if len(parts) > 1 else path
         if not os.path.exists(os.path.dirname(new_filename)):
             os.makedirs(os.path.dirname(new_filename))
         try:
