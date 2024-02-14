@@ -53,7 +53,8 @@ stage2 = VQ_SVG_Stage2(tokenizer = tokenizer,
                        max_seq_len=256,
                        dim=512,
                        depth = 6,
-                       heads = 4).to(device)
+                       heads = 4,
+                       use_alibi_positional_bias= False).to(device)
 
 # ----------------------------------
 text_tokens, attention_mask, vq_tokens, vq_targets = train_ds[0]

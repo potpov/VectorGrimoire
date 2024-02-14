@@ -16,10 +16,11 @@ import random
 import math
 
 class VQDataset(Dataset):
-    def __init__(self, csv_path:str, context_length: int,train:bool = True):
+    def __init__(self, csv_path:str, context_length: int, min_context_length: int = 10,train:bool = True):
         self.split = pd.read_csv(csv_path)
         self.train = train
         self.context_length = context_length
+        self.min_context_length = min_context_length
         if self.train:
             vq_data: np.ndarray = np.load(self.split[self.split["split"] == "train"]["vq_token_path"].iloc[0])
             text_data: np.ndarray = np.load(self.split[self.split["split"] == "train"]["text_token_path"].iloc[0])
@@ -44,12 +45,15 @@ class VQDataset(Dataset):
         # pad the text_data to the same length
         self.text_tokens = []
         self.vq_tokens = []
+        skipped = 0
         for i, _ in enumerate(text_data):
-            if len(vq_data[i]) + self.max_text_length + 2 <= self.context_length:  # +2 for <SOS> and <EOS>
+            if len(vq_data[i]) + self.max_text_length + 2 <= self.context_length and len(vq_data[i]) >= self.min_context_length:  # +2 for <SOS> and <EOS>
                 padded_text = np.append(text_data[i], np.zeros(self.max_text_length - len(text_data[i]), dtype=np.ushort) + bert_pad_token)
                 padded_vq = np.append(vq_data[i], np.zeros(self.context_length - self.max_text_length - len(vq_data[i]) - 2, dtype=np.ushort) + self.pad_token)
                 self.text_tokens.append(padded_text)
                 self.vq_tokens.append(padded_vq)
+            else:
+                skipped += 1
         
         self.text_tokens = np.stack(self.text_tokens)
         self.vq_tokens = np.stack(self.vq_tokens)
@@ -62,6 +66,7 @@ class VQDataset(Dataset):
 
         print("Finished processing dataset.")
         print(f"Dataset now with shape {self.vq_tokens.shape} and dtype: {self.vq_tokens.dtype}")
+        print(f"[INFO] Skipped {skipped} samples because they were too long or too short. That is {np.round(skipped / len(self.text_tokens) * 100, decimals=2)}% of the dataset.")
 
 
     def __len__(self):
@@ -75,9 +80,11 @@ class VQDataset(Dataset):
         vq_tokens = torch.from_numpy(self.vq_tokens[idx].astype(np.int32)).long()
         vq_targets = torch.roll(vq_tokens, -1)
         vq_targets[-1] = self.pad_token
+        if vq_targets.dim() == 1:
+            vq_targets = vq_targets.unsqueeze(0)
         attention_mask = torch.from_numpy(self.text_attention_masks[idx].astype(np.int32)).long()
 
-        return text_tokens, attention_mask, vq_tokens, vq_targets
+        return text_tokens, attention_mask, vq_tokens, vq_targets, torch.ones(1).to(text_tokens.device)*self.pad_token
     
 class VQDataModule(LightningDataModule):
     def __init__(
@@ -142,7 +149,7 @@ class VQDataModule(LightningDataModule):
     def test_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
         return DataLoader(
             self.val_dataset,
-            batch_size=16,
+            batch_size=self.val_batch_size,
             num_workers=self.num_workers,
             shuffle=False,
             pin_memory=False,

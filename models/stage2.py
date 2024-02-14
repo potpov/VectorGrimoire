@@ -8,25 +8,35 @@ from torch import Tensor
 from x_transformers.x_transformers import TokenEmbedding, AbsolutePositionalEmbedding
 # from thesis.tokenizer import VQTokenizer
 
-class VQ_Transformer(nn.Module):
+class VQ_Decoder(nn.Module):
     def __init__(self,
                 dim: int = 512,
                 depth: int = 12,
                 heads: int = 8,
+                use_alibi_positional_bias: bool = False,
                  **kwargs):
-        super(VQ_Transformer, self).__init__()
+        super(VQ_Decoder, self).__init__()
         self.dim = dim
         self.depth = depth
         self.heads = heads
+        self.use_alibi_positional_bias = use_alibi_positional_bias
 
-        self.model = Decoder(
-                dim = self.dim,
-                depth = self.depth,
-                heads = self.heads,
-                attn_flash = True,
-                alibi_pos_bias = True, # turns on ALiBi positional embedding
-                alibi_num_heads = 4    # only use ALiBi for 4 out of the 8 heads, so other 4 heads can still attend far distances
-            )
+        if use_alibi_positional_bias:
+            self.model = Decoder(
+                    dim = self.dim,
+                    depth = self.depth,
+                    heads = self.heads,
+                    attn_flash = True,
+                    alibi_pos_bias = True, # turns on ALiBi positional embedding
+                    alibi_num_heads = self.heads // 2    # only use ALiBi for 4 out of the 8 heads, so other 4 heads can still attend far distances
+                )
+        else:
+            self.model = Decoder(
+                    dim = self.dim,
+                    depth = self.depth,
+                    heads = self.heads,
+                    attn_flash = True,
+                )
 
     def forward(self, x: Tensor, **kwargs) -> Union[Tensor, dict]:
         batch_size, context_length, embedding_size = x.shape
@@ -41,6 +51,8 @@ class VQ_SVG_Stage2(nn.Module):
                 depth: int = 12,
                 heads: int = 8,
                 text_encoder_str: str = "bert-base-uncased",
+                use_alibi_positional_bias = True,
+                device = "cpu",
                  **kwargs):
         super(VQ_SVG_Stage2, self).__init__()
 
@@ -49,13 +61,16 @@ class VQ_SVG_Stage2(nn.Module):
         self.special_token_mapping : dict = tokenizer.special_token_mapping
         self.patch_idx_range : Tuple[int, int] = tokenizer._get_patch_idx_range()
         self.pos_idx_range : Tuple[int, int] = tokenizer._get_pos_idx_range()
+        self.device = device
 
         self.dim = dim
         self.depth = depth
         self.heads = heads
         self.max_seq_len = max_seq_len
+        self.use_alibi_positional_bias = use_alibi_positional_bias
 
-        self.pos_emb = AbsolutePositionalEmbedding(self.dim, max_seq_len)
+        if not self.use_alibi_positional_bias:
+            self.pos_emb = AbsolutePositionalEmbedding(self.dim, max_seq_len)
         self.vq_embedding = TokenEmbedding(dim, self.vq_vocab_size)
         self.text_embedder: BertModel = BertModel.from_pretrained(text_encoder_str)
         if self.text_embedder.config.hidden_size != self.dim:
@@ -63,19 +78,25 @@ class VQ_SVG_Stage2(nn.Module):
         else:
             self.mapping_layer = nn.Identity()
 
-        self.transformer = VQ_Transformer(
+        self.transformer = VQ_Decoder(
             dim=self.dim,
             depth=self.depth,
-            heads=self.heads
+            heads=self.heads,
+            use_alibi_positional_bias=self.use_alibi_positional_bias
         )
 
         self.final_linear = nn.Linear(self.dim, self.vq_vocab_size)
 
-    def loss_function(self, targets: Tensor, pred_probabilities: Tensor, **kwargs) -> dict:
-        loss = F.cross_entropy(pred_probabilities,targets)
+    def loss_function(self, targets: Tensor, pred_logits: Tensor, **kwargs) -> dict:
+        loss = F.cross_entropy(pred_logits,targets)
         return {'loss': loss}
 
     def _combine_text_and_vq(self, text_tokens: Tensor,text_attn_mask:Tensor, vq_tokens: Tensor) -> Tensor:
+        """
+        returns an embedded version of [<SOS>, <CLS>, text, <SEP>, <T_PAD>*, <BOS>, vq, <EOS>, <V_PAD>*]
+
+        requires text_attn_mask for the BERT encoder
+        """
         bs = text_tokens.shape[0]
         device = text_tokens.device
         with torch.no_grad():
@@ -90,23 +111,31 @@ class VQ_SVG_Stage2(nn.Module):
         stacked_embeddings = torch.cat([sos_embedding, text_embedding, vq_embeddings, eos_embedding], dim=1)
         if stacked_embeddings.shape[1] > self.max_seq_len:
             print(f"[WARN] Input sequence length ({stacked_embeddings.shape[1]}) exceeds maximum sequence length ({self.max_seq_len}). Truncating input sequence.")
-            stacked_embeddings = torch.cat([stacked_embeddings[:, :, :self.max_seq_len-1], eos_embedding], dim=1)
-        stacked_embeddings = stacked_embeddings + self.pos_emb.forward(stacked_embeddings)
+            stacked_embeddings = torch.cat([stacked_embeddings[:, :self.max_seq_len-1, :], eos_embedding], dim=1)
+        if not self.use_alibi_positional_bias:
+            stacked_embeddings = stacked_embeddings + self.pos_emb.forward(stacked_embeddings)
+
         return stacked_embeddings
 
-    def forward(self, text_tokens: Tensor, text_attn_mask:Tensor, vq_tokens: Tensor, **kwargs):
+    def forward(self, text_tokens: Tensor, text_attn_mask:Tensor, vq_tokens: Tensor, **kwargs) -> Tuple[Tensor, dict]:
         stacked_embeddings = self._combine_text_and_vq(text_tokens,text_attn_mask, vq_tokens)
         # TODO the attention mask should here also be used to zero out attention of the decoder to the text padding tokens
-        out = self.transformer.forward(stacked_embeddings, **kwargs)
+        out = self.transformer.forward(stacked_embeddings)
         out = self.final_linear.forward(out)
-        return out
+        out = out[:, text_tokens.shape[-1] + 2:]  # remove the text and special tokens from the output
+        return out, {}
     
     def generate(self,
                  text_tokens: Tensor,
                  attention_mask: Tensor,
-                 vq_tokens: Tensor) -> Tensor:
-        assert self.pos_idx_range[0] >= self.patch_idx_range[1], "pos_idx_range must start after patch_idx_range ends"
+                 vq_tokens: Tensor) -> Union[Tensor, str]:
+        """
+        Returns the generated sequence of VQ tokens and the reason for stopping the generation.
+        """
         
+        assert self.pos_idx_range[0] >= self.patch_idx_range[1], "pos_idx_range must start after patch_idx_range ends"
+        assert vq_tokens.ndim == 2 and vq_tokens.size(0) == 1, "VQ_Tokens must be of shape (1, sequence_length) and contain at least the <BOS> token"
+
         if (vq_tokens[:, -1] >= self.pos_idx_range[0]).all() and (vq_tokens[:, -1] <= self.pos_idx_range[1]).all():
             required_token = "patch"
         elif (vq_tokens[:, -1] >= self.patch_idx_range[0]).all() and (vq_tokens[:, -1] <= self.patch_idx_range[1]).all():
@@ -135,7 +164,7 @@ class VQ_SVG_Stage2(nn.Module):
                 if last_token.item() == self.special_token_mapping["<EOS>"]:
                     reason = "EOS token reached"
                     break
-                elif vq_tokens.shape[1] >= self.max_seq_len:
+                elif text_tokens.shape[1] + vq_tokens.shape[1] + 2 >= self.max_seq_len:
                     reason = "Max sequence length reached"
                     break
         return vq_tokens, reason
