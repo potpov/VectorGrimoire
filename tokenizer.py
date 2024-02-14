@@ -1,5 +1,5 @@
 from typing import Iterable, List, Tuple, Union
-from thesis.utils import calculate_global_positions, shapes_to_drawing
+from thesis.utils import calculate_global_positions, shapes_to_drawing, drawing_to_tensor
 
 import numpy as np
 from thesis.models.svg_vqvae import Vector_VQVAE
@@ -19,13 +19,14 @@ class VQTokenizer:
         - text_encoder_str (str): huggingface string of the BERT text encoder to use, default: bert-base-uncased
     """
 
-    def __init__(self, vq_model: Vector_VQVAE, full_image_res: int, tokens_per_patch:int, text_encoder_str: str = "bert-base-uncased") -> None:
-        self.vq_model = vq_model
+    def __init__(self, vq_model: Vector_VQVAE, full_image_res: int, tokens_per_patch:int, text_encoder_str: str = "bert-base-uncased", device = "cpu", **kwargs) -> None:
         self.text_encoder_str = text_encoder_str
         self.full_image_res = full_image_res
-        self.codebook_size = self.vq_model.codebook_size
         self.tokens_per_patch = tokens_per_patch
         self.max_num_pos_tokens = self.full_image_res ** 2  # for now this is just resolution squared, could be quantized to a smaller number of positions later
+        self.device = device
+        self.vq_model = vq_model.to(device)
+        self.codebook_size = self.vq_model.codebook_size
         
         self.text_tokenizer: PreTrainedTokenizerBase = BertTokenizer.from_pretrained(self.text_encoder_str)
         assert self.text_tokenizer.vocab_size < 65535, "VQTokenizer only supports 16-bit np.ushort encoded tokens, but the text tokenizer exceeds that."
@@ -66,7 +67,7 @@ class VQTokenizer:
         """
         with torch.no_grad():
             _, indices = self.vq_model.encode(patches, quantize=True)
-        indices = indices.flatten()
+        indices = indices.flatten().to(self.device)
         return indices + self.start_of_patch_token_idx
     
     def tokenize_positions(self, positions: Tensor) -> Tensor:
@@ -93,7 +94,7 @@ class VQTokenizer:
         Returns:
             Tensor: Tensor of shape (num_tokens) without any padding but with special tokens [CLS] and [SEP]
         """
-        tokens = torch.tensor(self.text_tokenizer.encode(text, add_special_tokens=True))
+        tokens = torch.tensor(self.text_tokenizer.encode(text, add_special_tokens=True), device = self.device)
         return tokens
         
     def tokenize(self, patches: Tensor, positions: Tensor, text:str, return_np_uint16:bool = False) -> Union[Tensor, Tensor] | Union[np.ndarray, np.ndarray]:
@@ -183,12 +184,13 @@ class VQTokenizer:
         text = self.text_tokenizer.decode(tokens, skip_special_tokens=True)
         return text
     
-    def decode(self, tokens: Tensor, ignore_eos: bool = False):
+    def decode(self, tokens: Tensor, ignore_special_tokens: bool = False):
         """
         Decodes the patches and positions from the tokens.
 
         Args:
             tokens (Tensor): Tensor of shape (num_tokens)
+            ignore_special_tokens (bool, optional): Whether to ignore the required special tokens like BOS and EOS. Defaults to False.
 
         Returns:
             Tuple[Tensor, Tensor]: Tuple of tensors of shape (num_patches, channels, patch_res, patch_res) and (num_pos, 2)
@@ -198,10 +200,16 @@ class VQTokenizer:
 
         assert tokens.ndim == 1, f"Tokens should be 1D, got shape {tokens.shape}"
         assert tokens.size(0) > 3, f"Tokens should have at least 4 elements, got {tokens.size(0)}"
-        assert tokens[0] == self.special_token_mapping["<BOS>"], f"First token should be <BOS>, got {tokens[0]}"
-        if not ignore_eos:
+        if not ignore_special_tokens:
+            assert tokens[0] == self.special_token_mapping["<BOS>"], f"First token should be <BOS>, got {tokens[0]}"
             assert tokens[-1] == self.special_token_mapping["<EOS>"], f"Last token should be <EOS>, got {tokens[-1]}"
-        tokens = tokens[1:-1]
+        if tokens[-1] == self.special_token_mapping["<EOS>"]:
+            tokens = tokens[:-1]
+        if tokens[0] == self.special_token_mapping["<BOS>"]:
+            tokens = tokens[1:]
+        if self._is_patch(tokens[-1]):
+            print("[INFO] Last token is a patch token, removing it.")
+            tokens = tokens[:-1]
         if self.tokens_per_patch == 1:
             assert tokens.size(0) % 2 == 0, f"Number of tokens should be even, got {tokens.size(0)}"
         patch_tokens = tokens[::2]
@@ -210,7 +218,12 @@ class VQTokenizer:
         positions = self.decode_positions(pos_tokens)
         return bezier_points, positions
     
-    def assemble_svg(self, bezier_points: Tensor, center_positions: Tensor, padded_individual_max_length: float, stroke_width: float) -> Drawing:
+    def assemble_svg(self, bezier_points: Tensor, center_positions: Tensor, padded_individual_max_length: float, stroke_width: float, w=128.) -> Drawing:
         global_shapes = calculate_global_positions(bezier_points, padded_individual_max_length, center_positions)[:,0]
-        reconstructed_drawing = shapes_to_drawing(global_shapes, stroke_width=stroke_width, w=72.)
+        reconstructed_drawing = shapes_to_drawing(global_shapes, stroke_width=stroke_width, w=w)
         return reconstructed_drawing
+    
+    def _tokens_to_image_tensor(self, tokens:Tensor):
+        bezier_points, positions = self.decode(tokens, ignore_special_tokens=True)
+        drawing = self.assemble_svg(bezier_points, positions, 9.5, 0.7, w=480)
+        return drawing_to_tensor(drawing)
