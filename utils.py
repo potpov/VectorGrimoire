@@ -30,6 +30,9 @@ def svg_string_to_tensor(svg_string):
     
     return tensor
 
+def drawing_to_tensor(drawing: Drawing):
+    return svg_string_to_tensor(drawing.tostring())
+
 def svg_to_tensor(file_path):
     # Convert SVG to PNG using cairosvg
     png_data = cairosvg.svg2png(url=file_path, background_color="white")
@@ -108,9 +111,9 @@ def log_all_images(images: List[Tensor], log_key="validation", caption="Captions
     common_size = images[0].shape[-2:]
     resizer = Resize(common_size, antialias=True)
 
-    image_result = make_grid(images[0], nrow=4, padding=5, pad_value=0.2)
+    image_result = make_grid(images[0], nrow=4, padding=5, pad_value=0.5)
     for image in images[1:]:
-        image_result = torch.concat((image_result, make_grid(resizer(image), nrow=4, padding=5, pad_value=0.2)), dim=-1)
+        image_result = torch.concat((image_result, make_grid(resizer(image), nrow=4, padding=5, pad_value=0.5)), dim=-1)
 
     wandb.log({log_key: wandb.Image(image_result, caption=caption)})
 
