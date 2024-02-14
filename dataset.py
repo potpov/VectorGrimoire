@@ -16,53 +16,77 @@ import random
 import math
 
 class VQDataset(Dataset):
-    def __init__(self, csv_path:str, context_length: int,train:bool = True):
+    def __init__(self, csv_path:str, context_length: int, min_context_length: int = 10,train:bool = True):
         self.split = pd.read_csv(csv_path)
         self.train = train
         self.context_length = context_length
+        self.min_context_length = min_context_length
         if self.train:
-            self.vq_data: np.ndarray = np.load(self.split[self.split["split"] == "train"]["vq_token_path"].iloc[0])
-            self.text_data: np.ndarray = np.load(self.split[self.split["split"] == "train"]["text_token_path"].iloc[0])
+            vq_data: np.ndarray = np.load(self.split[self.split["split"] == "train"]["vq_token_path"].iloc[0])
+            text_data: np.ndarray = np.load(self.split[self.split["split"] == "train"]["text_token_path"].iloc[0])
         else:
-            self.vq_data: np.ndarray = np.load(self.split[self.split["split"] == "test"]["vq_token_path"].iloc[0])
-            self.text_data: np.ndarray = np.load(self.split[self.split["split"] == "test"]["text_token_path"].iloc[0])
-        print(f"Loaded datasets. \nVQ data shape: {self.vq_data.shape} and dtype: {self.vq_data.dtype}\nText data shape: {self.text_data.shape} and dtype: {self.text_data.dtype}")
+            vq_data: np.ndarray = np.load(self.split[self.split["split"] == "test"]["vq_token_path"].iloc[0])
+            text_data: np.ndarray = np.load(self.split[self.split["split"] == "test"]["text_token_path"].iloc[0])
+        print(f"Loaded datasets. \nVQ data shape: {vq_data.shape} and dtype: {vq_data.dtype}\nText data shape: {text_data.shape} and dtype: {text_data.dtype}")
         print("Processing...")
 
-        cls_token = 101
+        bert_cls_token = 101
+        bert_sep_token = 102
+        bert_pad_token = 0
         sos_token = 0
         bos_token = 1
-        eos_token = 2
-        pad_token = 3
+        self.eos_token = 2
+        self.pad_token = 3  # needed in getitem method
 
-        self.text_data = np.split(self.text_data, np.where(self.text_data == cls_token)[0])[1:]  # as 101 is the <CLS> token
+        text_data = np.split(text_data, np.where(text_data == bert_cls_token)[0])[1:]
+        vq_data = np.split(vq_data, np.where(vq_data == bos_token)[0])[1:]
+        self.max_text_length = max([len(x) for x in text_data])
+        
+        # pad the text_data to the same length
+        self.text_tokens = []
+        self.vq_tokens = []
+        skipped = 0
+        for i, _ in enumerate(text_data):
+            if len(vq_data[i]) + self.max_text_length + 2 <= self.context_length and len(vq_data[i]) >= self.min_context_length:  # +2 for <SOS> and <EOS>
+                padded_text = np.append(text_data[i], np.zeros(self.max_text_length - len(text_data[i]), dtype=np.ushort) + bert_pad_token)
+                vq_with_eos = np.append(vq_data[i], np.zeros(1, dtype=np.ushort) + self.eos_token)
+                final_padded_vq = np.append(vq_with_eos, np.zeros(self.context_length - self.max_text_length - len(vq_with_eos) - 1, dtype=np.ushort) + self.pad_token)  # -1 because SOS token is prefixed to the sequence later
+                self.text_tokens.append(padded_text)
+                self.vq_tokens.append(final_padded_vq)
+            else:
+                skipped += 1
+        
+        self.text_tokens = np.stack(self.text_tokens)
+        self.vq_tokens = np.stack(self.vq_tokens)
+        self.text_attention_masks = (self.text_tokens != 0).astype(np.int64)
 
-        self.vq_data = np.split(self.vq_data, np.where(self.vq_data == bos_token)[0])[1:]  # as 1 is the <BOS> token
-        # self.vq_data = [x for x in self.vq_data if len(x) < self.context_length - 1]  # -1 so we can shift one position for the target
-        assert len(self.vq_data) == len(self.text_data), f"VQ ({len(self.vq_data)}) and text {len(self.text_data)} data should have the same length."
-        self.data = [np.append(x, y) for x, y in zip(self.vq_data, self.text_data)]
-        # now add the SOS at index=0 and EOS token at last index to each sequence
-        self.data = [np.append(np.insert(array, 0, sos_token), eos_token) for array in self.data]
-        self.data = [x for x in self.data if len(x) < self.context_length - 1]  # remove sequences that are too long
+        assert len(self.text_tokens) == len(self.vq_tokens), "Text and VQ tokens should have the same shape."
+        assert self.text_tokens[0,0] == bert_cls_token, "First token in text tokens should be the BERT CLS token."
+        assert self.vq_tokens[0,0] == bos_token, "First token in VQ tokens should be the BOS token."
+        assert self.text_attention_masks[0,0] == 1, "First token in text attention masks should be 1."
 
-        for i, array in enumerate(self.data):
-            if len(array) < self.context_length:
-                self.data[i] = np.append(array, np.zeros(self.context_length - len(array), dtype=np.ushort) + pad_token)
-        self.data = np.stack(self.data)
         print("Finished processing dataset.")
-        print(f"Dataset now with shape {self.data.shape} and dtype: {self.data.dtype}")
+        print(f"Dataset now with shape {self.vq_tokens.shape} and dtype: {self.vq_tokens.dtype}")
+        print(f"[INFO] Skipped {skipped} samples because they were too long or too short. That is {np.round(skipped / len(self.text_tokens) * 100, decimals=2)}% of the dataset.")
 
 
     def __len__(self):
-        return len(self.data)
+        return len(self.vq_tokens)
 
     def __getitem__(self, idx:int):
-        row = self.data[idx]
-        # TODO this might need to be changed so the targets are SVG only and inputs are SVG + text
-        inputs = torch.from_numpy(row.astype(np.int32)).long()
-        targets = torch.from_numpy(np.roll(row, -1).astype(np.int32)).long()
-        targets[-1] = 2  # <PAD> token
-        return inputs, targets
+        """
+        IMPORTANT
+        text tokens have their special tokens and padding already included.
+        vq tokens have their special tokens (BOS and EOS) and padding already included.
+        only SOS needs to be prefixed after the data is loaded.
+        """
+        text_tokens = torch.from_numpy(self.text_tokens[idx].astype(np.int32)).long()
+        vq_tokens = torch.from_numpy(self.vq_tokens[idx].astype(np.int32)).long()
+        vq_targets = torch.roll(vq_tokens, -1)
+        vq_targets[-1] = self.pad_token
+        attention_mask = torch.from_numpy(self.text_attention_masks[idx].astype(np.int32)).long()
+
+        return text_tokens, attention_mask, vq_tokens, vq_targets, torch.ones(1).to(text_tokens.device)*self.pad_token
     
 class VQDataModule(LightningDataModule):
     def __init__(
@@ -98,9 +122,11 @@ class VQDataModule(LightningDataModule):
     #       ===============================================================
 
     def collate_fn(self, batch):
-        # sequences = zip(*batch)
-        sequences = torch.concat(batch)
-        return sequences
+        text_tokens, vq_tokens, vq_targets = zip(*batch)
+        # text_tokens = torch.concat(text_tokens)
+        # vq_tokens = torch.concat(vq_tokens)
+        # vq_targets = torch.concat(vq_targets)
+        return text_tokens, vq_tokens, vq_targets
 
     def train_dataloader(self) -> DataLoader:
         return DataLoader(
@@ -125,7 +151,7 @@ class VQDataModule(LightningDataModule):
     def test_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
         return DataLoader(
             self.val_dataset,
-            batch_size=16,
+            batch_size=self.val_batch_size,
             num_workers=self.num_workers,
             shuffle=False,
             pin_memory=False,
