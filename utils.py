@@ -10,6 +10,40 @@ from torchvision.utils import make_grid
 from torchvision.transforms import Resize
 from svgwrite import Drawing
 from svgpathtools import disvg, CubicBezier
+import cairosvg
+from PIL import Image
+from io import BytesIO
+from torchvision.transforms import ToTensor
+
+def svg_string_to_tensor(svg_string):
+    # Convert SVG string to PNG bytes
+    png_bytes = cairosvg.svg2png(bytestring=svg_string, background_color="white")
+    
+    # Convert PNG bytes to PIL Image
+    image = Image.open(BytesIO(png_bytes))
+    
+    # Ensure the image is in RGB mode
+    image = image.convert("RGB")
+    
+    # Convert the PIL Image to a PyTorch tensor with three channels
+    tensor = ToTensor()(image)
+    
+    return tensor
+
+def svg_to_tensor(file_path):
+    # Convert SVG to PNG using cairosvg
+    png_data = cairosvg.svg2png(url=file_path, background_color="white")
+    
+    # Load the PNG data into PIL Image
+    image = Image.open(BytesIO(png_data))
+    
+    # Ensure the image is in RGB mode
+    image = image.convert("RGB")
+    
+    # Convert the PIL Image to a PyTorch tensor with three channels
+    tensor = ToTensor()(image)
+    
+    return tensor
 
 def calculate_global_positions(local_positions: Tensor, local_viewbox_width:float, global_center_positions: Tensor):
     """
@@ -37,7 +71,7 @@ def shapes_to_drawing(shapes:Tensor, stroke_width:float, w=128) -> Drawing:
     all_shapes = []
     for shape in shapes:
         all_shapes.append(stroke_points_to_bezier(shape))
-    drawing = disvg(all_shapes, stroke_widths=[stroke_width]*len(all_shapes), paths2Drawing=True, viewbox=f"0 0 {w} {w}")
+    drawing = disvg(all_shapes, stroke_widths=[stroke_width]*len(all_shapes), paths2Drawing=True, viewbox=f"0 0 72 72", dimensions=(w, w))  # I think the 72 comes from the simplified svg files
     return drawing
 
 def fig2data(fig):
@@ -204,11 +238,9 @@ def get_flattened_paths(paths):
     return flattened_paths
 
 def get_single_paths(paths, filter_zero_length = True):
-    flattened_paths = get_flattened_paths(paths)
-    single_paths = [Path(element) for element in flattened_paths]
+    single_paths = [Path(segment) for path in paths for segment in path._segments]
     if filter_zero_length:
         single_paths = [path for path in single_paths if path.length() > 0.]
-        
     return single_paths
 
 def calc_max_diff(single_paths):
@@ -261,10 +293,14 @@ def get_viewbox(single_path, total_max_diff, offset: float = 1.0):
 
 def get_rasterized_segments(single_paths:list, stroke_width:float, total_max_diff: float, svg_attributes, centered = False, height: int = 128, width: int = 128) -> List:
     if centered:
-        out = [get_viewbox(my_path, total_max_diff) for my_path in single_paths if my_path.length() > 0.]
+        single_paths = [my_path for my_path in single_paths if my_path.length() > 0.]
+        if len(single_paths) == 0:
+            print("[INFO] tried to rasterize an empty path")
+            return [torch.zeros((3, height, width)), torch.zeros((3, height, width))], [[width/2,height/2], [width/2,height/2]]
+        out = [get_viewbox(my_path, total_max_diff) for my_path in single_paths]
         viewboxes = [x[0] for x in out]
         centers = [x[1] for x in out]
-        rasterized_segments = [raster(disvg(my_path, paths2Drawing=True, stroke_widths=[stroke_width] * len(my_path), viewbox=viewboxes[i]), out_h = height, out_w = width) for i, my_path in enumerate(single_paths) if my_path.length() > 0.]
+        rasterized_segments = [raster(disvg(my_path, paths2Drawing=True, stroke_widths=[stroke_width] * len(my_path), viewbox=viewboxes[i]), out_h = height, out_w = width) for i, my_path in enumerate(single_paths)]
         return rasterized_segments, centers
     else:
         viewbox=svg_attributes["viewBox"]

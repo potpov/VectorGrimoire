@@ -1,30 +1,41 @@
 from typing import Tuple
-from thesis.utils import calculate_global_positions, shapes_to_drawing
+from utils import calculate_global_positions, shapes_to_drawing
 
 import numpy as np
 from models import Vector_VQVAE
 import torch
 from torch import Tensor
 from svgwrite import Drawing
+from transformers import BertTokenizer, BertModel,PreTrainedTokenizerBase
 
 class VQTokenizer:
     """
-    Tokenizer for the SVG-VQVAE model. It tokenizes the patches of the rasterized SVGs and their middle positions + some special tokens.
+    Tokenizer for the SVG-VQVAE model. It tokenizes the patches of the rasterized SVGs and their middle positions + some special tokens + text conditioning.
 
+    Args:
+        - vq_model (Vector_VQVAE): VQVAE model to use for patch tokenization
+        - full_image_res (int): Full resolution of the rasterized SVGs
+        - tokens_per_patch (int): Number of tokens per patch
+        - text_encoder_str (str): huggingface string of the BERT text encoder to use, default: bert-base-uncased
     """
 
-    def __init__(self, vq_model: Vector_VQVAE, full_image_res: int, context_length : int, tokens_per_patch:int) -> None:
+    def __init__(self, vq_model: Vector_VQVAE, full_image_res: int, tokens_per_patch:int, text_encoder_str: str = "bert-base-uncased") -> None:
         self.vq_model = vq_model
+        self.text_encoder_str = text_encoder_str
         self.full_image_res = full_image_res
         self.codebook_size = self.vq_model.codebook_size
         self.tokens_per_patch = tokens_per_patch
         self.max_num_pos_tokens = self.full_image_res ** 2  # for now this is just resolution squared, could be quantized to a smaller number of positions later
-        self.context_length = context_length
+        
+        self.text_tokenizer: PreTrainedTokenizerBase = BertTokenizer.from_pretrained(self.text_encoder_str)
+        assert self.text_tokenizer.vocab_size < 65535, "VQTokenizer only supports 16-bit np.ushort encoded tokens, but the text tokenizer exceeds that."
 
+        # CLS and SEP are handled by the text embedding model
         self.special_token_mapping = {
-            "<SOS>": 0,
-            "<EOS>": 1,
-            "<PAD>": 2,
+            "<SOS>": 0,  # start of sequence
+            "<BOS>": 1,  # beginning of SVG, separates text tokens from SVG
+            "<EOS>": 2,  # end of sequence
+            "<PAD>": 3,  # padding
         }
 
         self.start_of_patch_token_idx = len(self.special_token_mapping)
@@ -71,39 +82,61 @@ class VQTokenizer:
         assert positions.mean() > 1., f"Positions should be scaled with the full image resolution already, got mean: {positions.mean()}"
         positions = positions[:, 0].round() + self.full_image_res * positions[:, 1].round()
         return positions + self.start_of_pos_token_idx
-        
-    def tokenize(self, patches: Tensor, positions: Tensor, return_np_uint16:bool = False) -> Tensor | np.ndarray:
+    
+    def tokenize_text(self, text: str) -> Tensor:
         """
-        Tokenizes the patches and positions of the rasterized SVGs.
+        Tokenizes the conditional text.
 
         Args:
-            patches (Tensor): Tensor of shape (num_patches, channels, patch_res, patch_res)
-            positions (Tensor): Tensor of shape (num_pos, 2)
+            text (str): Text to tokenize
 
         Returns:
-            Tensor: Tensor of shape (num_patches + num_pos, self.tokens_per_patch)
-            or
-            np.ndarray: Numpy array of shape (num_patches + num_pos, self.tokens_per_patch) with dtype np.ushort
+            Tensor: Tensor of shape (num_tokens) without any padding but with special tokens [CLS] and [SEP]
         """
-        patch_tokens = self.tokenize_patches(patches)
+        tokens = torch.tensor(self.text_tokenizer.encode(text, add_special_tokens=True))
+        return tokens
+        
+    def tokenize(self, patches: Tensor, positions: Tensor, text:str, return_np_uint16:bool = False) -> Union[Tensor, Tensor] | Union[np.ndarray, np.ndarray]:
+        """
+        Tokenizes the patches and positions of the rasterized SVGs. Padding is done in the dataloader dynamically to avoid requiring a fixed context length during pre-tokenization.
+
+        Args:
+            - patches (Tensor): Tensor of shape (num_patches, channels, patch_res, patch_res)
+            - positions (Tensor): Tensor of shape (num_pos, 2)
+            - text (str): conditional text
+            - return_np_uint16 (bool, optional): Whether to return the tokens as np.uint16. Defaults to False.
+            - batched (bool, optional): Whether the input is batched or not.
+
+        Returns:
+            - start_token: [<SOS>], either Tensor or np.ndarray
+            - text_tokens: [<CLS>, ...text..., <SEP>], no padding, CLS and SEP come from text tokenizer, either Tensor or np.ndarray
+            - vq_tokens: [<BOS>, patch_tokens, pos_token, patch_tokens, pos_token, ...], no padding, either Tensor or np.ndarray
+            - end_token: [<EOS>], either Tensor or np.ndarray
+        """
+        patch_tokens = self.tokenize_patches(patches).cpu()
         pos_tokens = self.tokenize_positions(positions)
+        text_tokens = self.tokenize_text(text)
         if self.tokens_per_patch == 1:
-            alternating_tokens = torch.stack([patch_tokens, pos_tokens], dim=1).reshape(-1, 1).int()
+            vq_tokens = torch.stack([patch_tokens, pos_tokens], dim=1).reshape(-1).int()
         else:
             raise NotImplementedError("Merging not implemented for tokens_per_patch > 1")
         
-        start_token = (self.special_token_mapping["<SOS>"]) * torch.ones(1, 1).int()
-        end_token = (self.special_token_mapping["<EOS>"]) * torch.ones(1, 1).int()
+        # NOTE: this is now done manually in the tokenization script as <SOS> needs to be put before the text tokens but I want to keep text and SVG tokens separate
+        start_token = (self.special_token_mapping["<SOS>"]) * torch.ones(1).int()
+        end_token = (self.special_token_mapping["<EOS>"]) * torch.ones(1).int()
+        bos_token = (self.special_token_mapping["<BOS>"]) * torch.ones(1).int()
 
-        final_tokens = torch.cat([start_token, alternating_tokens, end_token], dim=0)
-        # if final_tokens.size(0) < self.context_length:
-        #     final_tokens = torch.cat([final_tokens, self.special_token_mapping["<PAD>"] * torch.ones(self.context_length - final_tokens.size(0))], dim=0)
-        # else:
-        #     final_tokens = final_tokens[:self.context_length]
+        vq_tokens = torch.cat([bos_token, vq_tokens], dim=0)
+
+        # final_tokens = torch.cat([start_token, vq_tokens, end_token], dim=0)
+
         if return_np_uint16:
-            final_tokens = final_tokens.numpy().astype(np.ushort)
+            vq_tokens = vq_tokens.numpy().astype(np.ushort)
+            text_tokens = text_tokens.numpy().astype(np.ushort)
+            start_token = start_token.numpy().astype(np.ushort)
+            end_token = end_token.numpy().astype(np.ushort)
         
-        return final_tokens
+        return start_token, text_tokens, vq_tokens, end_token
     
     def decode_patches(self, tokens: Tensor, raster:bool = False) -> Tensor:
         """

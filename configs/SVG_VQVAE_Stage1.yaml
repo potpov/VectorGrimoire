@@ -1,23 +1,25 @@
 model_params:
   name: "SVG_VAQVAE"  # always keep this "VectorGPT"
   vector_decoder_model: "mlp" # "mlp" or "raster_conv"
-  quantized_dim: 256
-  codebook_size: 128  # will be ignored for FSQ
+  quantized_dim: 512
+  codebook_size: 4096  # will be ignored for FSQ
   image_loss: "mse"  # "pyramid" or "mse"
   single_code_representation: true
   vq_method: "fsq"  # "vqvae", "FSQ", "vqtorch"
-  fsq_levels: [8,5,5,5]  # will determine codebook_size, see Table 1 of FSQ paper
+  fsq_levels: [7,5,5,5,5]  # will determine codebook_size, see Table 1 of FSQ paper - [7,5,5,5,5] for 4096 (e.g. StrokeNUWA), [8,5,5,5] for 1024
 
 data_params:
-  dataset: "centeredShapeLayers"  # must be in the DATASETMAP in run.py
-  csv_path: "/scratch2/moritz_data/glyphazzn/B_simplified/split.csv"  # root path for CausalSVGDataModule in dataset.py
+  dataset: "stage1"  # must be in the DATASETMAP in run.py
+  top_level_dir: "/scratch2/moritz_data/glyphazzn/svgs_simplified"  # root path for CausalSVGDataModule in dataset.py
   channels: 3  # use 3
-  width: 128  # KEEP THIS SYNC WITH make_causal_svg_dateset
-  train_batch_size: 2
+  width: 128
+  train_batch_size: 8
   val_batch_size:  8
   num_workers: 8
   individual_max_length : 7.5  # max length of a single stroke, decides the width/height of rendered shapes
   stroke_width: 0.7  # IMPORTANT: this must scale with individiual_max_length as they together define the image
+  subset: "all"
+  max_shapes_per_svg: 32
 
 exp_params:
   lr: 0.00002  # 0.00002
@@ -33,8 +35,8 @@ trainer_params:
 
 logging_params:
   # entity: "aiis-chair"  # comment to use default wandb entity "mfeuer"
-  project: "test"  # your wandb project name
-  save_dir: "/scratch2/moritz_logs/SVG_VQVAE/Stage1/glyphazzn_B_simplified_single_code"
-  name: "SVG_VQVAE glyphazzn_B Stage1 MLP MSE, similar length, single code representation"  # name of the run in wandb
+  project: "thesis"  # your wandb project name
+  save_dir: "/scratch2/moritz_logs/SVG_VQVAE/Stage1/glyphazzn_full_single_code"
+  name: "SVG_VQVAE glyphazzn Stage1, single code representation"  # name of the run in wandb
   version: 0
   author: "Moritz"  # will be a tag in wandb

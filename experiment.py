@@ -182,7 +182,7 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
         return out, logging_dict
     
     def training_step(self, batch, batch_idx, optimizer_idx=0):
-        all_center_shapes, labels, centers = batch
+        all_center_shapes, labels, centers, descriptions = batch
         self.curr_device = all_center_shapes.device
         bs = all_center_shapes.shape[0]
         channels = all_center_shapes.shape[1]
@@ -228,7 +228,7 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx, optimizer_idx=0):
 
-        all_center_shapes, label, centers = batch
+        all_center_shapes, label, centers, descriptions = batch
         self.curr_device = all_center_shapes.device
         bs = all_center_shapes.shape[0]
         channels = all_center_shapes.shape[1]
@@ -236,7 +236,9 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
         out, logging_dict = self.forward(all_center_shapes)
         reconstructions=out[0]
         inputs = all_center_shapes
-        vq_loss=out[2]
+        # all_points = out[2]
+        vq_loss=out[3]
+        assert vq_loss.dim() <= 1, f"vq_loss should be a 1D tensor, but got {vq_loss.dim()}"
 
         loss_dict = self.model.loss_function(
             reconstructions=reconstructions[:,:channels,:,:],

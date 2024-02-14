@@ -11,8 +11,8 @@ import glob
 import csv
 import re
 
-from thesis.models.autoencoder import AutoEncoder
-from thesis.dataset import EmojiDataset, CausalSVGDataModule
+from models.autoencoder import AutoEncoder
+from dataset import EmojiDataset, CausalSVGDataModule
 
 OUTPUT_DIR = "/scratch2/moritz_logs/AE_fc_res18"
 CONTINUE_TRAINING = True

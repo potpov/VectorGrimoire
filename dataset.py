@@ -10,7 +10,7 @@ import glob
 import pandas as pd
 import numpy as np
 import string
-from thesis.utils import svg2paths2, disvg, raster, get_single_paths, get_similar_length_paths, check_for_continouity, get_rasterized_segments, all_paths_to_max_diff, Path
+from utils import svg2paths2, disvg, raster, get_single_paths, get_similar_length_paths, check_for_continouity, get_rasterized_segments, all_paths_to_max_diff, Path, svg_string_to_tensor
 import copy
 import random
 import math
@@ -21,19 +21,34 @@ class VQDataset(Dataset):
         self.train = train
         self.context_length = context_length
         if self.train:
-            self.data: np.ndarray = np.load(self.split[self.split["split"] == "train"]["file_path"].iloc[0])
+            self.vq_data: np.ndarray = np.load(self.split[self.split["split"] == "train"]["vq_token_path"].iloc[0])
+            self.text_data: np.ndarray = np.load(self.split[self.split["split"] == "train"]["text_token_path"].iloc[0])
         else:
-            self.data: np.ndarray = np.load(self.split[self.split["split"] == "test"]["file_path"].iloc[0])
-        print(f"Loaded dataset with shape {self.data.shape} and dtype: {self.data.dtype}")
+            self.vq_data: np.ndarray = np.load(self.split[self.split["split"] == "test"]["vq_token_path"].iloc[0])
+            self.text_data: np.ndarray = np.load(self.split[self.split["split"] == "test"]["text_token_path"].iloc[0])
+        print(f"Loaded datasets. \nVQ data shape: {self.vq_data.shape} and dtype: {self.vq_data.dtype}\nText data shape: {self.text_data.shape} and dtype: {self.text_data.dtype}")
         print("Processing...")
 
-        self.data = np.split(self.data, np.where(self.data == 0)[0])[1:]  # as 0 is the <SOS> token
-        self.data = [x for x in self.data if len(x) < self.context_length - 1]  # -1 so we can shift one position for the target
+        cls_token = 101
+        sos_token = 0
+        bos_token = 1
+        eos_token = 2
+        pad_token = 3
+
+        self.text_data = np.split(self.text_data, np.where(self.text_data == cls_token)[0])[1:]  # as 101 is the <CLS> token
+
+        self.vq_data = np.split(self.vq_data, np.where(self.vq_data == bos_token)[0])[1:]  # as 1 is the <BOS> token
+        # self.vq_data = [x for x in self.vq_data if len(x) < self.context_length - 1]  # -1 so we can shift one position for the target
+        assert len(self.vq_data) == len(self.text_data), f"VQ ({len(self.vq_data)}) and text {len(self.text_data)} data should have the same length."
+        self.data = [np.append(x, y) for x, y in zip(self.vq_data, self.text_data)]
+        # now add the SOS at index=0 and EOS token at last index to each sequence
+        self.data = [np.append(np.insert(array, 0, sos_token), eos_token) for array in self.data]
+        self.data = [x for x in self.data if len(x) < self.context_length - 1]  # remove sequences that are too long
+
         for i, array in enumerate(self.data):
             if len(array) < self.context_length:
-                self.data[i] = np.append(array, np.zeros(self.context_length - len(array), dtype=np.ushort) + 2)
+                self.data[i] = np.append(array, np.zeros(self.context_length - len(array), dtype=np.ushort) + pad_token)
         self.data = np.stack(self.data)
-        # TODO shift by one!
         print("Finished processing dataset.")
         print(f"Dataset now with shape {self.data.shape} and dtype: {self.data.dtype}")
 
@@ -43,6 +58,7 @@ class VQDataset(Dataset):
 
     def __getitem__(self, idx:int):
         row = self.data[idx]
+        # TODO this might need to be changed so the targets are SVG only and inputs are SVG + text
         inputs = torch.from_numpy(row.astype(np.int32)).long()
         targets = torch.from_numpy(np.roll(row, -1).astype(np.int32)).long()
         targets[-1] = 2  # <PAD> token
@@ -114,6 +130,255 @@ class VQDataModule(LightningDataModule):
             shuffle=False,
             pin_memory=False,
             # collate_fn=self.collate_fn
+        )
+    
+class GlyphazznStage1Dataset(Dataset):
+    """
+    Glyphazzn dataset that requires already normalized SVGs. Yields patches, positions, and labels. The label is the index of string.printable -> label = string.printable.index(label)
+
+    Requires the following structure:
+    top_level_dir
+    |________________________________________
+    |                   |                   |
+    train               test                split.csv (with columns: file_path, class, split, description)
+    |                   |
+    0-9, a-z, A-Z       0-9, a-z, A-Z
+    |                   |
+    *.svg               *.svg
+
+    Args:
+        - top_level_dir: path to the top level directory of all SVGs
+        - channels: number of channels for the rasterized images
+        - width: width/height of the rasterized images
+        - train: whether to use the train or test split
+        - subset: "all", "numbers", "letters", "lowercase", or "uppercase"
+        - individual_min_length: minimum length of a path segment to qualify for being a single shape layer
+        - individual_max_length: maximum length of a path segment, everything longer than this will be cropped into multiple segments
+        - stroke_width: stroke width for rasterization
+        - max_shapes_per_svg: maximum number of shape layers per svg file, can be tuned for VRAM savings
+    """
+
+    def __init__(self,
+                 top_level_dir: str,
+                 channels: int,
+                 width: int,
+                 train: bool = True,
+                 subset:str = "all",
+                 individual_min_length: float = 1.,
+                 individual_max_length: float = 10.,
+                 stroke_width: float = 0.3,
+                 max_shapes_per_svg: int = 64,
+                 **kwargs):
+        super(GlyphazznStage1Dataset, self)
+        print(f"[INFO] These keywords were provided in GlyphazznStage1Dataset but are not used: {kwargs.keys()}")
+        self.top_level_dir = top_level_dir
+        self.individual_min_length = individual_min_length
+        self.individual_max_length = individual_max_length
+        self.stroke_width = stroke_width
+        self.max_shapes_per_svg = max_shapes_per_svg
+        self.channels = channels
+        self.width = width
+        self.train = train
+        self.subset = subset
+        print("[GlyphazznStage1Dataset] loading df...")
+        df = pd.read_csv(os.path.join(top_level_dir, "split.csv"))
+        self.df = df[df["split"] == ("train" if self.train else "test")].reset_index(drop=True)
+
+        
+        if train is not None:
+            self.split = glob.glob(os.path.join(top_level_dir, f"{'train' if self.train else 'test'}/**/*.svg"), recursive=True)
+        else:
+            self.split = glob.glob(os.path.join(top_level_dir, "**/*.svg"), recursive=True)
+            print("[WARNING] Using the whole dataset! Train was None.")
+        if self.subset == "all":
+            self.split = self.split
+        elif self.subset == "numbers":
+            self.split = [x for x in self.split if x.split("/")[-2] in [str(i) for i in range(10)]]
+        elif self.subset == "letters":
+            self.split = [x for x in self.split if x.split("/")[-2] in string.ascii_letters]
+        elif self.subset == "lowercase":
+            self.split = [x for x in self.split if x.split("/")[-2] in string.ascii_lowercase]
+        elif self.subset == "uppercase":
+            self.split = [x for x in self.split if x.split("/")[-2] in string.ascii_uppercase]
+        else:
+            raise ValueError(f"Subset {self.subset} not recognized.")
+
+    def crop_path_into_segments(self, path:Path, length:float = 5.):
+        """
+        a single input path is cropped into segments of approx length `length`. I say "approx" because we divide the path into same length segments, which will not be exactly `length` long.
+        """
+        segments = []
+        num_iters = math.ceil(path.length() / length)
+        for i in range(num_iters):
+            cropped_segment = path.cropped(i/num_iters, (i+1)/num_iters)
+            segments.append(cropped_segment)
+
+        return segments
+
+    def get_similar_length_paths(self, single_paths, max_length: float = 5.):
+        similar_length_paths = []
+        single_paths = [x for x in single_paths if x.length() >= self.individual_min_length]
+        for path in single_paths:
+            try:
+                segments = self.crop_path_into_segments(path, length=max_length)
+                similar_length_paths.extend(segments)
+            except AssertionError:
+                print("Error while cropping path into segments, skipping...")
+                continue
+        return similar_length_paths
+    
+    def get_similar_length_paths_from_index(self, index, max_length: float = 5.):
+        svg_path = self.split[index]
+        paths, attributes, svg_attributes = svg2paths2(svg_path)
+        single_paths = get_single_paths(paths)
+        sim_length_paths = self.get_similar_length_paths(single_paths, max_length=max_length)
+        return sim_length_paths
+
+    def __getitem__(self, index) -> tuple:
+        svg_path = self.df.iloc[index]["file_path"]
+        label = self.df.iloc[index]["class"]
+        label = string.printable.index(label)
+        description = self.df.iloc[index]["description"]
+
+        label = svg_path.split("/")[-2]
+        label = string.printable.index(label)
+        paths, attributes, svg_attributes = svg2paths2(svg_path)
+        single_paths = get_single_paths(paths)
+        # queue = copy.deepcopy(single_paths)
+        sim_length_paths = self.get_similar_length_paths(single_paths, self.individual_max_length)
+        assert check_for_continouity(sim_length_paths), "paths are not continous"
+        # select a random slice of the paths of length max_shapes_per_svg
+        if len(sim_length_paths) > self.max_shapes_per_svg:
+            start_idx = random.randint(0, len(sim_length_paths) - self.max_shapes_per_svg)
+            sim_length_paths = sim_length_paths[start_idx:start_idx+self.max_shapes_per_svg]
+        rasterized_segments, centers = get_rasterized_segments(sim_length_paths, self.stroke_width, self.individual_max_length, svg_attributes, centered=True, height=self.width, width=self.width)
+        imgs = torch.stack(rasterized_segments)  # (n_shapes, channels, width, width)
+        centers = torch.tensor(centers)  # (n_shapes, 2)
+        labels = torch.ones(imgs.size(0)) * label
+        return imgs, labels.int(), centers, description
+    
+    def _get_full_item(self, index:int) -> List[Tensor]:
+        """
+        This function is intended to be used by the tokenization process.
+        """
+        svg_path = self.df.iloc[index]["file_path"]
+        label = self.df.iloc[index]["class"]
+        label = string.printable.index(label)
+        description = self.df.iloc[index]["description"]
+
+        paths, attributes, svg_attributes = svg2paths2(svg_path)
+        single_paths = get_single_paths(paths)  # cannot be further optimized
+        # queue = copy.deepcopy(single_paths)
+        sim_length_paths = self.get_similar_length_paths(single_paths, self.individual_max_length)
+        assert check_for_continouity(sim_length_paths), "paths are not continous"
+        rasterized_segments, centers = get_rasterized_segments(sim_length_paths, self.stroke_width, self.individual_max_length, svg_attributes, centered=True, height=self.width, width=self.width)
+        imgs = torch.stack(rasterized_segments)  # (n_shapes, channels, width, width)
+        centers = torch.tensor(centers)  # (n_shapes, 2)
+        labels = torch.ones(imgs.size(0)) * label
+        return imgs, labels.int(), centers, description
+    
+    def _get_full_svg_drawing(self, index, width:int = 720, as_tensor:bool = False):
+        svg_path = self.df.iloc[index]["file_path"]
+        paths, attributes, svg_attributes = svg2paths2(svg_path)
+        single_paths = get_single_paths(paths)
+        drawing = disvg(single_paths, paths2Drawing=True, stroke_widths=[self.stroke_width]*len(single_paths), viewbox = svg_attributes["viewBox"],dimensions=(width, width))
+        if as_tensor:
+            return svg_string_to_tensor(drawing.tostring())
+        else:
+            return drawing
+
+    def __len__(self):
+        return len(self.split)
+
+class GlyphazznStage1Datamodule(LightningDataModule):
+    def __init__(
+        self,
+        top_level_dir: str,
+        train_batch_size: int,
+        val_batch_size: int,
+        channels: int,
+        width: int,
+        individual_max_length: float = 10.,
+        max_shapes_per_svg:int=64,
+        num_workers: int = 0,
+        stroke_width: float = 0.3,
+        subset:str = "all",
+        **kwargs,
+    ):
+        super().__init__()
+
+        self.train_batch_size = train_batch_size
+        self.val_batch_size = val_batch_size
+        self.num_workers = num_workers
+        self.top_level_dir = top_level_dir
+        self.channels = channels
+        self.width = width
+        self.num_workers = num_workers
+        self.stroke_width = stroke_width
+        self.individual_max_length = individual_max_length#
+        self.subset = subset
+        self.max_shapes_per_svg = max_shapes_per_svg
+
+    def setup(self, stage: Optional[str] = None) -> None:
+        self.train_dataset = GlyphazznStage1Dataset(
+            self.top_level_dir,
+            self.channels,
+            self.width,
+            train=True,
+            subset=self.subset,
+            individual_max_length=self.individual_max_length,
+            stroke_width=self.stroke_width,
+            max_shapes_per_svg=self.max_shapes_per_svg,
+        )
+
+        self.val_dataset = GlyphazznStage1Dataset(
+            self.top_level_dir,
+            self.channels,
+            self.width,
+            train=False,
+            subset=self.subset,
+            individual_max_length=self.individual_max_length,
+            stroke_width=self.stroke_width,
+            max_shapes_per_svg=self.max_shapes_per_svg,
+        )
+
+    #       ===============================================================
+
+    def collate_fn(self, batch):
+        imgs, labels, centers, descriptions = zip(*batch)
+        imgs = torch.concat(imgs)
+        labels = torch.concat(labels)
+        centers = torch.concat(centers)
+        return imgs, labels, centers, descriptions
+
+    def train_dataloader(self) -> DataLoader:
+        return DataLoader(
+            self.train_dataset,
+            batch_size=self.train_batch_size,
+            num_workers=self.num_workers,
+            shuffle=True,
+            pin_memory=True,
+            collate_fn=self.collate_fn
+        )
+
+    def val_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
+        return DataLoader(
+            self.val_dataset,
+            batch_size=self.val_batch_size,
+            num_workers=self.num_workers,
+            shuffle=False,
+            pin_memory=False,
+            collate_fn=self.collate_fn
+        )
+
+    def test_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
+        return DataLoader(
+            self.val_dataset,
+            batch_size=16,
+            num_workers=self.num_workers,
+            shuffle=False,
+            pin_memory=False,
+            collate_fn=self.collate_fn
         )
 
 class CenterShapeLayersFromSVGDataset(Dataset):
