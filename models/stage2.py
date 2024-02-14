@@ -72,7 +72,7 @@ class VQ_SVG_Stage2(nn.Module):
         if not self.use_alibi_positional_bias:
             self.pos_emb = AbsolutePositionalEmbedding(self.dim, max_seq_len)
         self.vq_embedding = TokenEmbedding(dim, self.vq_vocab_size)
-        self.text_embedder: BertModel = BertModel.from_pretrained(text_encoder_str)
+        self.text_embedder: BertModel = BertModel.from_pretrained(text_encoder_str).to(device)
         if self.text_embedder.config.hidden_size != self.dim:
             self.mapping_layer = nn.Linear(self.text_embedder.config.hidden_size, self.dim)
         else:
