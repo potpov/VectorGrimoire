@@ -93,6 +93,7 @@ class VQ_SVG_Stage2(nn.Module):
 
     def _combine_text_and_vq(self, text_tokens: Tensor,text_attn_mask:Tensor, vq_tokens: Tensor) -> Tensor:
         """
+        This is the function that assembles the text and vq tokens together with an <SOS> token as pre-fix
         returns an embedded version of [<SOS>, <CLS>, text, <SEP>, <T_PAD>*, <BOS>, vq, <EOS>, <V_PAD>*]
 
         requires text_attn_mask for the BERT encoder
@@ -106,12 +107,11 @@ class VQ_SVG_Stage2(nn.Module):
         text_embedding = self.mapping_layer.forward(text_embedding)
         vq_embeddings = self.vq_embedding.forward(vq_tokens)
         sos_embedding = self.vq_embedding.forward(torch.ones(bs, 1, dtype=torch.long, device=device) * self.special_token_mapping['<SOS>'])
-        eos_embedding = self.vq_embedding.forward(torch.ones(bs, 1, dtype=torch.long, device=device) * self.special_token_mapping['<EOS>'])
         
-        stacked_embeddings = torch.cat([sos_embedding, text_embedding, vq_embeddings, eos_embedding], dim=1)
+        stacked_embeddings = torch.cat([sos_embedding, text_embedding, vq_embeddings], dim=1)
         if stacked_embeddings.shape[1] > self.max_seq_len:
             print(f"[WARN] Input sequence length ({stacked_embeddings.shape[1]}) exceeds maximum sequence length ({self.max_seq_len}). Truncating input sequence.")
-            stacked_embeddings = torch.cat([stacked_embeddings[:, :self.max_seq_len-1, :], eos_embedding], dim=1)
+            stacked_embeddings = stacked_embeddings[:, :self.max_seq_len, :]
         if not self.use_alibi_positional_bias:
             stacked_embeddings = stacked_embeddings + self.pos_emb.forward(stacked_embeddings)
 
@@ -122,7 +122,7 @@ class VQ_SVG_Stage2(nn.Module):
         # TODO the attention mask should here also be used to zero out attention of the decoder to the text padding tokens
         out = self.transformer.forward(stacked_embeddings)
         out = self.final_linear.forward(out)
-        out = out[:, text_tokens.shape[-1] + 2:]  # remove the text and special tokens from the output
+        out = out[:, text_tokens.shape[-1] + 1:]  # remove the predictions for the text token range +1 (<SOS> token that was added during embedding)
         return out, {}
     
     def generate(self,
@@ -154,6 +154,7 @@ class VQ_SVG_Stage2(nn.Module):
                     required_token = "pos"
                 elif required_token == "pos":
                     predictions[:, -1, self.patch_idx_range[0]:self.patch_idx_range[1]] = -torch.inf
+                    predictions[:, -1, self.special_token_mapping["<EOS>"]] = -torch.inf  # cannot end on a patch token
                     required_token = "patch"
                 
                 # get the last predicted token

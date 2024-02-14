@@ -35,7 +35,7 @@ class VQDataset(Dataset):
         bert_pad_token = 0
         sos_token = 0
         bos_token = 1
-        eos_token = 2
+        self.eos_token = 2
         self.pad_token = 3  # needed in getitem method
 
         text_data = np.split(text_data, np.where(text_data == bert_cls_token)[0])[1:]
@@ -49,9 +49,10 @@ class VQDataset(Dataset):
         for i, _ in enumerate(text_data):
             if len(vq_data[i]) + self.max_text_length + 2 <= self.context_length and len(vq_data[i]) >= self.min_context_length:  # +2 for <SOS> and <EOS>
                 padded_text = np.append(text_data[i], np.zeros(self.max_text_length - len(text_data[i]), dtype=np.ushort) + bert_pad_token)
-                padded_vq = np.append(vq_data[i], np.zeros(self.context_length - self.max_text_length - len(vq_data[i]) - 2, dtype=np.ushort) + self.pad_token)
+                vq_with_eos = np.append(vq_data[i], np.zeros(1, dtype=np.ushort) + self.eos_token)
+                final_padded_vq = np.append(vq_with_eos, np.zeros(self.context_length - self.max_text_length - len(vq_with_eos) - 1, dtype=np.ushort) + self.pad_token)  # -1 because SOS token is prefixed to the sequence later
                 self.text_tokens.append(padded_text)
-                self.vq_tokens.append(padded_vq)
+                self.vq_tokens.append(final_padded_vq)
             else:
                 skipped += 1
         
@@ -74,14 +75,15 @@ class VQDataset(Dataset):
 
     def __getitem__(self, idx:int):
         """
-        
+        IMPORTANT
+        text tokens have their special tokens and padding already included.
+        vq tokens have their special tokens (BOS and EOS) and padding already included.
+        only SOS needs to be prefixed after the data is loaded.
         """
         text_tokens = torch.from_numpy(self.text_tokens[idx].astype(np.int32)).long()
         vq_tokens = torch.from_numpy(self.vq_tokens[idx].astype(np.int32)).long()
         vq_targets = torch.roll(vq_tokens, -1)
         vq_targets[-1] = self.pad_token
-        if vq_targets.dim() == 1:
-            vq_targets = vq_targets.unsqueeze(0)
         attention_mask = torch.from_numpy(self.text_attention_masks[idx].astype(np.int32)).long()
 
         return text_tokens, attention_mask, vq_tokens, vq_targets, torch.ones(1).to(text_tokens.device)*self.pad_token
