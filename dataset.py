@@ -10,7 +10,7 @@ import glob
 import pandas as pd
 import numpy as np
 import string
-from utils import svg2paths2, disvg, raster, get_single_paths, get_similar_length_paths, check_for_continouity, get_rasterized_segments, all_paths_to_max_diff, Path
+from utils import svg2paths2, disvg, raster, get_single_paths, get_similar_length_paths, check_for_continouity, get_rasterized_segments, all_paths_to_max_diff, Path, svg_string_to_tensor
 import copy
 import random
 import math
@@ -278,7 +278,7 @@ class GlyphazznStage1Dataset(Dataset):
         return imgs, labels.int(), centers, description
     
     def _get_full_svg_drawing(self, index, width:int = 720, as_tensor:bool = False):
-        svg_path = self.split[index]
+        svg_path = self.df.iloc[index]["file_path"]
         paths, attributes, svg_attributes = svg2paths2(svg_path)
         single_paths = get_single_paths(paths)
         drawing = disvg(single_paths, paths2Drawing=True, stroke_widths=[self.stroke_width]*len(single_paths), viewbox = svg_attributes["viewBox"],dimensions=(width, width))
