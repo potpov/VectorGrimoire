@@ -1,3 +1,4 @@
+import random
 from concurrent import futures
 import os
 from argparse import ArgumentParser
@@ -7,6 +8,8 @@ import glob
 import pandas as pd
 import yaml
 from svglib.svg import SVG
+from fontTools.ttLib import TTFont
+import ast
 
 
 def preprocess_svg(char_path):
@@ -18,7 +21,7 @@ def preprocess_svg(char_path):
         if i % (len(svg_files) // 10) == 0:
             print(f"Processed {round((i / len(svg_files)) * 100)}% of {char_path}")
         parts = svg_path.rsplit("/svg/", maxsplit=1)
-        new_filename = os.path.join(parts[0], "svg_simplified", parts[1]) if len(parts) > 1 else path
+        new_filename = os.path.join(parts[0], "svg_simplified", parts[1]) if len(parts) > 1 else svg_path
         if not os.path.exists(os.path.dirname(new_filename)):
             os.makedirs(os.path.dirname(new_filename))
         try:
@@ -56,8 +59,7 @@ def preprocess_svg(char_path):
         print(f"Error saving meta_data.csv for {char_path}")
 
 
-def main(config, workers=12):
-
+def multi_thread_svg_preprocess(config, workers=12):
     for dataset, params in config["fonts"].items():
         # each split is handled separately
         # we divide the work into processes, one per character
@@ -75,12 +77,69 @@ def main(config, workers=12):
                     for _ in futures.as_completed(preprocess_requests):
                         pbar.update(1)
 
-            # df = pd.DataFrame(meta_data.values())
-            # if not os.path.exists(os.path.dirname(args.output_meta_file)):
-            #     os.makedirs(os.path.dirname(args.output_meta_file))
-            # df.to_csv(args.output_meta_file, index=False)
-
         logging.info(f"SVG Preprocessing complete for dataset: {dataset}.")
+
+
+def process_csv_file(csv_filename, metadata, params):
+    df = pd.read_csv(os.path.join(params["svg_dir"], csv_filename))
+    print(f"Processing {os.path.join(params['svg_dir'], csv_filename)}, with {len(df)} rows")
+
+    new_csv = pd.DataFrame()
+    for index, row in df.iterrows():
+        file_path = row['output_path']
+        file_path.replace(params["svg_dir"], params["svg_simp"])
+
+        if os.path.exists(file_path):  # check if simplified svg exist
+            font_path = row['font_path']
+            character = row['char']
+
+            font = TTFont(font_path)
+            style = font["name"].getDebugName(2) if font["name"].getDebugName(2) is not None else "undefined"
+            descrition = f"{character} in a {style} font"
+
+            font_name = row['font_name']
+            if metadata is not None:
+                font_class = metadata[metadata['filename'].str.contains(font_name.lower())]
+                if len(font_class) > 0:
+                    classes = ast.literal_eval(metadata[metadata['filename'].str.contains(font_name.lower())].tags.iloc[0])
+                    style = random.choice(classes)
+                    descrition = f"{character} in a {', '.join(classes)} font"
+
+            new_row = pd.DataFrame({
+                "file_path": [file_path],
+                "class": [character],
+                "split": [row['split']],
+                "font_path": [font_path],
+                "font": [font_name],
+                "font_style": [style],
+                "description": [descrition],
+            })
+
+            new_csv = pd.concat([new_csv, new_row], ignore_index=True)
+    new_csv.to_csv(os.path.join(params["svg_simp"], csv_filename), index=False)
+
+
+def multi_thread_csv_preprocess(config):
+    for dataset, params in config["fonts"].items():
+        print(f"processing {dataset}.")
+        csv_shards = [f for f in os.listdir(params["svg_dir"]) if f.endswith(".csv")]
+
+        metadata = None
+        if os.path.exists(os.path.join(params["fonts_dir"], "metadata.csv")):
+            metadata = pd.read_csv(os.path.join(params["fonts_dir"], "metadata.csv"))
+
+        with futures.ProcessPoolExecutor(max_workers=len(csv_shards)) as executor:
+            with tqdm(total=len(csv_shards)) as pbar:
+                preprocess_requests = [executor.submit(process_csv_file, csv_name, metadata, params)
+                                       for csv_name in csv_shards]
+                for _ in futures.as_completed(preprocess_requests):
+                    pbar.update(1)
+
+        print("all shards processed. Creating one giant split file by merging them")
+        # merging up results
+        csv_files = [f for f in os.listdir(params["svg_simp"]) if f.endswith(".csv")]
+        merged_df = pd.concat([pd.read_csv(os.path.join(params["svg_simp"], csv_file)) for csv_file in csv_files], ignore_index=True)
+        merged_df.to_csv(os.path.join(params["svg_simp"], "split.csv"), index=False)
 
 
 if __name__ == '__main__':
@@ -89,4 +148,5 @@ if __name__ == '__main__':
     with open("font_paths.yaml", "r") as stream:
         config = yaml.safe_load(stream)
 
-    main(config)
+    multi_thread_csv_preprocess(config)
+    # multi_thread_svg_preprocess(config)
