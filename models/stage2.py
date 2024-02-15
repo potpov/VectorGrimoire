@@ -53,6 +53,7 @@ class VQ_SVG_Stage2(nn.Module):
                 text_encoder_str: str = "bert-base-uncased",
                 use_alibi_positional_bias = True,
                 device = "cpu",
+                freeze_text_encoder = True,
                  **kwargs):
         super(VQ_SVG_Stage2, self).__init__()
 
@@ -73,6 +74,12 @@ class VQ_SVG_Stage2(nn.Module):
             self.pos_emb = AbsolutePositionalEmbedding(self.dim, max_seq_len)
         self.vq_embedding = TokenEmbedding(dim, self.vq_vocab_size)
         self.text_embedder: BertModel = BertModel.from_pretrained(text_encoder_str).to(device)
+        
+        if freeze_text_encoder:
+            print("[INFO] Freezing the text encoder (BERT) weights.")
+            for param in self.text_embedder.parameters():
+                param.requires_grad = False
+
         if self.text_embedder.config.hidden_size != self.dim:
             self.mapping_layer = nn.Linear(self.text_embedder.config.hidden_size, self.dim)
         else:
@@ -104,9 +111,10 @@ class VQ_SVG_Stage2(nn.Module):
             text_embedding = self.text_embedder.forward(text_tokens, attention_mask=text_attn_mask)
             text_embedding = text_embedding.last_hidden_state
 
-        text_embedding = self.mapping_layer.forward(text_embedding)
-        vq_embeddings = self.vq_embedding.forward(vq_tokens)
-        sos_embedding = self.vq_embedding.forward(torch.ones(bs, 1, dtype=torch.long, device=device) * self.special_token_mapping['<SOS>'])
+        text_embedding = self.mapping_layer.forward(text_embedding)  # (bs, max_text_len, dim)
+        text_embedding[~(text_attn_mask.bool())] = 0.0  # remove impact of padding tokens
+        vq_embeddings = self.vq_embedding.forward(vq_tokens)  # (bs, max_vq_len, dim)
+        sos_embedding = self.vq_embedding.forward(torch.ones(bs, 1, dtype=torch.long, device=device) * self.special_token_mapping['<SOS>'])  # (bs, 1, dim)
         
         stacked_embeddings = torch.cat([sos_embedding, text_embedding, vq_embeddings], dim=1)
         if stacked_embeddings.shape[1] > self.max_seq_len:
