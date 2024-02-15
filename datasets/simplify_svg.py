@@ -87,7 +87,8 @@ def process_csv_file(csv_filename, metadata, params):
     new_csv = pd.DataFrame()
     for index, row in df.iterrows():
         file_path = row['output_path']
-        file_path.replace(params["svg_dir"], params["svg_simp"])
+        assert params["svg_dir"] in file_path, f"This is a very weird csv path: {file_path}"
+        file_path = file_path.replace(params["svg_dir"], params["svg_simp"])
 
         if os.path.exists(file_path):  # check if simplified svg exist
             font_path = row['font_path']
