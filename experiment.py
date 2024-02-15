@@ -4,30 +4,30 @@ import torch
 from torch import Tensor
 from torch import optim
 import wandb
-from .models import BaseVAE, VectorVAEnLayers, VectorGPT, VectorGPTv2, Vector_VQVAE, VQ_SVG_Stage2
+from models import BaseVAE, VectorVAEnLayers, VectorGPT, VectorGPTv2, Vector_VQVAE, VQ_Transformer
 import pytorch_lightning as pl
-from .utils import log_images, log_all_images
-from .tokenizer import VQTokenizer
+from utils import log_images
 from torchmetrics.image.fid import FrechetInceptionDistance
 from torchmetrics.multimodal.clip_score import CLIPScore
 import torch.nn.functional as F
-import pandas as pd
+from torch.optim.lr_scheduler import CosineAnnealingLR
+
 
 class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
     def __init__(self,
-                 model: VQ_SVG_Stage2,
-                 tokenizer: VQTokenizer,
+                 model: VQ_Transformer,
+                 checkpoint_path:str,
                  lr: float = 0.0003,
                  weight_decay: float = 0.0,
                  scheduler_gamma: float = 0.99,
-                 train_log_interval: int = 500,
+                 train_log_interval: int = 30,
                  manual_seed: int = 42,
-                 wandb: bool = False,
+                 wandb: bool = True,
                  **kwargs) -> None:
         super(SVG_VQVAE_Stage2_Experiment, self).__init__()
 
         self.model = model
-        self.tokenizer = tokenizer
+        self.checkpoint_path = checkpoint_path
         self.lr = lr
         self.weight_decay = weight_decay
         self.scheduler_gamma = scheduler_gamma
@@ -36,72 +36,49 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
         self.curr_device = None
         self.wandb = wandb
 
-    def forward(self, text_tokens:Tensor, text_attention_mask:Tensor, vq_tokens:Tensor, logging=False, **kwargs) -> list:
-        out, logging_dict = self.model.forward(text_tokens, text_attention_mask,vq_tokens, logging=logging, **kwargs)
+        # state_dict = torch.load(self.checkpoint_path)["state_dict"]
+        # try:
+        #     self.model.load_state_dict(state_dict)
+        #     print("Loaded weights.")
+        # except:
+        #     self.model.load_state_dict({k.replace("model.", ""): v for k, v in state_dict.items()})
+        #     print("Loaded weights.")
+
+        # self.model = self.model.eval()
+    
+
+    def forward(self, input_tokens: Tensor, logging=False, **kwargs) -> list:
+        out, logging_dict = self.model.forward(input_tokens, logging=logging, **kwargs)
         return out, logging_dict
     
-    def _generate_rasterized_sample(self, text_tokens:Tensor, text_attention_mask:Tensor, vq_tokens:Tensor, **kwargs) -> Tensor:
-        """
-        Args:
-            text_tokens (Tensor): (1, t)
-            text_attention_mask (Tensor): (1, t)
-            vq_tokens (Tensor): (1, input_context_len_you_want)
-        """
-        with torch.no_grad():
-            generation, reason = self.model.generate(text_tokens, text_attention_mask, vq_tokens)
-            if generation.ndim > 1:
-                generation = generation[0]
-        return self.tokenizer._tokens_to_image_tensor(generation)
-
     def training_step(self, batch, batch_idx, optimizer_idx=0):
-        text_tokens, text_attention_mask, vq_tokens, vq_targets, pad_token = batch
-        self.curr_device = text_tokens.device
-
-        if batch_idx % self.train_log_interval == 0:
-            out, logging_dict = self.forward(text_tokens, text_attention_mask, vq_tokens, logging=True)
-            text_condition = self.tokenizer.decode_text(text_tokens[0])
-            rasterized_gt = self.tokenizer._tokens_to_image_tensor(vq_targets[:1])
-            context_0_generation = self._generate_rasterized_sample(text_tokens[:1,:], text_attention_mask[:1,:], vq_tokens[:1, :1])
-            context_5_generation = self._generate_rasterized_sample(text_tokens[:1,:], text_attention_mask[:1,:], vq_tokens[:1, :6])
-            context_10_generation = self._generate_rasterized_sample(text_tokens[:1,:], text_attention_mask[:1,:], vq_tokens[:1, :11])
-            if self.wandb:
-                log_all_images([rasterized_gt, context_0_generation, context_5_generation, context_10_generation], 
-                            log_key="train/rasterized_samples", 
-                            caption=f"GT: {text_condition}, Gen. only text context, Gen. text + 5 vq tok, Gen. text + 10 vq tok")
-        else:
-            out, logging_dict = self.forward(text_tokens, text_attention_mask, vq_tokens, logging=False)
-        
-        pred_logits = out  # (b, vq_token_len)
-        pred_logits = pred_logits.reshape(-1, pred_logits.shape[-1])
-        
-        targets = vq_targets.view(-1)
-
-        # mask out pad token for loss calculation
-        mask = targets != pad_token[0]
-        pred_logits = pred_logits[mask]
-        targets = targets[mask]
+        inputs, targets = batch
+        self.curr_device = inputs.device
 
         if batch_idx % self.train_log_interval == 0 and self.wandb:
-            target_unique_values, target_counts = torch.unique(targets.detach().cpu(), return_counts=True)
-            pred_unique_values, pred_counts = torch.unique(pred_logits.detach().cpu().argmax(dim=1), return_counts=True)
-            df = pd.DataFrame(zip(target_unique_values.tolist(), target_counts.tolist()), columns=["token_idx", "target_count"])
-            df_pred = pd.DataFrame(zip(pred_unique_values.tolist(), pred_counts.tolist()), columns=["token_idx", "pred_count"])
-            df = pd.merge(df, df_pred, on='token_idx', how='outer').fillna(0)
-            df["target_count"] = df["target_count"].astype(int)
-            df["pred_count"] = df["pred_count"].astype(int)
-            sorted_df = df.sort_values(by='target_count', ascending=False).reset_index(drop=True)
-            wandb.log({"train/target_pred_token_counts": wandb.Table(dataframe=sorted_df)})
+            out, logging_dict = self.forward(inputs, logging=True)
+        else:
+            out, logging_dict = self.forward(inputs, logging=False)  # out is [reconstructions, input, all_points, vq_loss]
+        
+        pred_logits = out  # (b, seq_len)
+        
+        # one_hot_gt = F.one_hot(tokens, num_classes=self.model.num_tokens)  # (b, seq_len, num_tokens)
 
-
-
+        # reshape pred and targets to (b*seq_len, context_length)
+        pred_logits = pred_logits.view(-1, pred_logits.shape[-1])
+        targets = targets.view(-1)
 
         loss_dict = self.model.loss_function(
             targets=targets,
-            pred_logits=pred_logits,
+            pred_probabilities=pred_logits,
         )
+    
+        # always log the first batch and variable amount of timesteps up to 10
+        # if batch_idx % self.train_log_interval == 0 and self.wandb:
+        #     logging_dict = {f"train/{key}": value for key, value in logging_dict.items()}
+        #     wandb.log(logging_dict)
         
         self.log_dict(loss_dict)
-        self.log("train_loss", loss_dict["loss"], prog_bar=True)
         return loss_dict["loss"]
 
     def on_train_epoch_end(self):
@@ -111,47 +88,26 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx, optimizer_idx=0):
 
-        text_tokens, text_attention_mask, vq_tokens, vq_targets, pad_token = batch
-        self.curr_device = text_tokens.device
+        inputs, targets = batch
+        self.curr_device = inputs.device
 
         with torch.no_grad():
-            if batch_idx % self.train_log_interval == 0:
-                out, logging_dict = self.forward(text_tokens, text_attention_mask, vq_tokens, logging=True)
-                text_condition = self.tokenizer.decode_text(text_tokens[0])
-                rasterized_gt = self.tokenizer._tokens_to_image_tensor(vq_targets[:1])
-                context_0_generation = self._generate_rasterized_sample(text_tokens[:1,:], text_attention_mask[:1,:], vq_tokens[:1, :1])
-                context_5_generation = self._generate_rasterized_sample(text_tokens[:1,:], text_attention_mask[:1,:], vq_tokens[:1, :6])
-                context_10_generation = self._generate_rasterized_sample(text_tokens[:1,:], text_attention_mask[:1,:], vq_tokens[:1, :11])
-                if self.wandb:
-                    log_all_images([rasterized_gt, context_0_generation, context_5_generation, context_10_generation],
-                            log_key="val/rasterized_samples",
-                            caption=f"GT: {text_condition}, Gen. only text context, Gen. text + 5 vq tok, Gen. text + 10 vq tok")
+            if batch_idx % self.train_log_interval == 0 and self.wandb:
+                out, logging_dict = self.forward(inputs, logging=True)
             else:
-                out, logging_dict = self.forward(text_tokens, text_attention_mask, vq_tokens, logging=False)
+                out, logging_dict = self.forward(inputs, logging=False)  # out is [reconstructions, input, all_points, vq_loss]
         
-        pred_logits = out  # (b, vq_token_len)
-        pred_logits = pred_logits.reshape(-1, pred_logits.shape[-1])
+        pred_logits = out  # (b, seq_len)
+
+        # reshape pred to (b*seq_len, context_length)
+        pred_logits = pred_logits.view(-1, pred_logits.shape[-1])
+        # and targets to (b*seq_len)
+        targets = targets.view(-1)
+
         
-        targets = vq_targets.view(-1)
-
-        # mask out pad token for loss calculation
-        mask = targets != pad_token[0]
-        pred_logits = pred_logits[mask]
-        targets = targets[mask]
-
-        if batch_idx % self.train_log_interval == 0 and self.wandb:
-            target_unique_values, target_counts = torch.unique(targets.detach().cpu(), return_counts=True)
-            pred_unique_values, pred_counts = torch.unique(pred_logits.detach().cpu().argmax(dim=1), return_counts=True)
-            df = pd.DataFrame(zip(target_unique_values.tolist(), target_counts.tolist()), columns=["token_idx", "target_count"])
-            df_pred = pd.DataFrame(zip(pred_unique_values.tolist(), pred_counts.tolist()), columns=["token_idx", "pred_count"])
-            df = pd.merge(df, df_pred, on='token_idx', how='outer').fillna(0)
-            df["target_count"] = df["target_count"].astype(int)
-            sorted_df = df.sort_values(by='target_count', ascending=False).reset_index(drop=True)
-            wandb.log({"val/target_pred_token_counts": wandb.Table(dataframe=sorted_df)})
-
         loss_dict = self.model.loss_function(
             targets=targets,
-            pred_logits=pred_logits,
+            pred_probabilities=pred_logits,
         )
 
         self.log("val_loss", loss_dict["loss"])
@@ -194,6 +150,7 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
             pass
         return optims
 
+
 class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
     """
     Vector quantized pre-training of an autoencoder for SVG primitives.
@@ -209,6 +166,10 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
                  scheduler_gamma: float = 0.99,
                  train_log_interval: int = 30,
                  manual_seed: int = 42,
+                 min_lr: float = 0.0000001,
+                 total_steps: int = 450000,
+                 eval_steps: int = 13000,
+                 scheduler_type: str = "none",
                  wandb: bool = True,
                  **kwargs) -> None:
         super(VectorVQVAE_Experiment_Stage1, self).__init__()
@@ -216,12 +177,16 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
         self.model = model
         self.vector_decoder_model = vector_decoder_model
         self.lr = lr
+        self.total_steps = total_steps
+        self.min_lr = min_lr
         self.weight_decay = weight_decay
         self.scheduler_gamma = scheduler_gamma
         self.train_log_interval = train_log_interval
         self.manual_seed = manual_seed
         self.curr_device = None
         self.wandb = wandb
+        self.eval_steps = eval_steps
+        self.scheduler_type = scheduler_type
 
     def forward(self, input_images: Tensor, logging=False,**kwargs) -> list:
         out, logging_dict = self.model.forward(input_images, logging=logging, **kwargs)
@@ -249,19 +214,26 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
     
         # always log the first batch and variable amount of timesteps up to 10
         if batch_idx % self.train_log_interval == 0 and self.wandb:
-            logging_dict = {f"train/{key}": value for key, value in logging_dict.items()}
-            wandb.log(logging_dict)
+            for key, value in logging_dict.items():
+                if key in ["codebook_histogram"]:
+                    continue
+                self.log(f"train/{key}", value)
             if reconstructions.shape[0] > 10:
                 log_amount = 10
             else:
                 log_amount = reconstructions.shape[0]
 
             # Log input against prediction
-            log_images(
+            k, i = log_images(
                 reconstructions[:log_amount],
                 inputs[:log_amount],
                 log_key="train/reconstruction",
                 captions="input (left) vs. reconstruction (right)"
+            )
+            current_trainer_global_step = self.trainer.global_step
+            self.trainer.logger.experiment.log(
+                {"samples": [i]},
+                step=current_trainer_global_step,
             )
 
         self.log_dict(loss_dict)
@@ -293,19 +265,24 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
         )
 
         if batch_idx % self.train_log_interval == 0 and self.wandb:
-            logging_dict = {f"val/{key}": value for key, value in logging_dict.items()}
-            wandb.log(logging_dict)
+            for key, value in logging_dict.items():
+                self.log(f"val/{key}", value)
             if reconstructions.shape[0] > 10:
                 log_amount = 10
             else:
                 log_amount = reconstructions.shape[0]
 
             # Log input against prediction
-            log_images(
+            k, i, = log_images(
                 reconstructions[:log_amount],
                 inputs[:log_amount],
                 log_key="val/reconstruction",
                 captions="input (left) vs. reconstruction (right)"
+            )
+            current_trainer_global_step = self.trainer.global_step
+            self.trainer.logger.experiment.log(
+                {"samples": [i]},
+                step=current_trainer_global_step,
             )
 
         self.log("val_loss", loss_dict["loss"])
@@ -336,18 +313,27 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
             # learning rates should be explicitly specified in the param_groups
             optimizer = optim.Adam(param_groups)
         optims.append(optimizer)
-        
-        try:
-            if self.scheduler_gamma is not None:
-                scheduler = optim.lr_scheduler.ExponentialLR(optims[0],
-                                                             gamma = self.scheduler_gamma)
-                scheds.append(scheduler)
 
-                return optims, scheds
-        except:
-            pass
-        return optims
+        if self.scheduler_type == "cosine":
+            scheds.append(CosineAnnealingLR(optimizer, T_max=self.total_steps, eta_min=self.min_lr))
+            return optims, scheds
+        elif self.scheduler_type == "exponential":
+            try:
+                if self.scheduler_gamma is not None:
+                    scheduler = optim.lr_scheduler.ExponentialLR(optims[0], gamma = self.scheduler_gamma)
+                    scheds.append(scheduler)
+                    return optims, scheds
+            except:
+                return optims
+        elif self.scheduler_type == "none":
+            return optims
+        else:
+            raise Exception(f"Unknown scheduler for this training: {self.scheduler_type}")
 
+    def on_batch_end(self, trainer, pl_module):
+        # Perform evaluation after every eval_steps steps
+        if trainer.global_step % self.eval_steps == 0:
+            trainer.run_evaluation()
 
 class VectorGPTExperimentv2(pl.LightningModule):
     def __init__(self,
