@@ -208,7 +208,7 @@ class VQTokenizer:
         if tokens[0] == self.special_token_mapping["<BOS>"]:
             tokens = tokens[1:]
         if self._is_patch(tokens[-1]):
-            print("[INFO] Last token is a patch token, removing it.")
+            # print("[INFO] Last token is a patch token, removing it.")
             tokens = tokens[:-1]
         if self.tokens_per_patch == 1:
             assert tokens.size(0) % 2 == 0, f"Number of tokens should be even, got {tokens.size(0)}"
