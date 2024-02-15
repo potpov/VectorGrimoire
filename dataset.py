@@ -15,78 +15,55 @@ import copy
 import random
 import math
 
+
 class VQDataset(Dataset):
-    def __init__(self, csv_path:str, context_length: int, min_context_length: int = 10,train:bool = True):
+    def __init__(self, csv_path:str, context_length: int, train:bool = True):
         self.split = pd.read_csv(csv_path)
         self.train = train
         self.context_length = context_length
-        self.min_context_length = min_context_length
         if self.train:
-            vq_data: np.ndarray = np.load(self.split[self.split["split"] == "train"]["vq_token_path"].iloc[0])
-            text_data: np.ndarray = np.load(self.split[self.split["split"] == "train"]["text_token_path"].iloc[0])
+            self.vq_data: np.ndarray = np.load(self.split[self.split["split"] == "train"]["vq_token_path"].iloc[0])
+            self.text_data: np.ndarray = np.load(self.split[self.split["split"] == "train"]["text_token_path"].iloc[0])
         else:
-            vq_data: np.ndarray = np.load(self.split[self.split["split"] == "test"]["vq_token_path"].iloc[0])
-            text_data: np.ndarray = np.load(self.split[self.split["split"] == "test"]["text_token_path"].iloc[0])
-        print(f"Loaded datasets. \nVQ data shape: {vq_data.shape} and dtype: {vq_data.dtype}\nText data shape: {text_data.shape} and dtype: {text_data.dtype}")
+            self.vq_data: np.ndarray = np.load(self.split[self.split["split"] == "test"]["vq_token_path"].iloc[0])
+            self.text_data: np.ndarray = np.load(self.split[self.split["split"] == "test"]["text_token_path"].iloc[0])
+        print(f"Loaded datasets. \nVQ data shape: {self.vq_data.shape} and dtype: {self.vq_data.dtype}\nText data shape: {self.text_data.shape} and dtype: {self.text_data.dtype}")
         print("Processing...")
 
-        bert_cls_token = 101
-        bert_sep_token = 102
-        bert_pad_token = 0
+        cls_token = 101
         sos_token = 0
         bos_token = 1
-        self.eos_token = 2
-        self.pad_token = 3  # needed in getitem method
+        eos_token = 2
+        pad_token = 3
 
-        text_data = np.split(text_data, np.where(text_data == bert_cls_token)[0])[1:]
-        vq_data = np.split(vq_data, np.where(vq_data == bos_token)[0])[1:]
-        self.max_text_length = max([len(x) for x in text_data])
-        
-        # pad the text_data to the same length
-        self.text_tokens = []
-        self.vq_tokens = []
-        skipped = 0
-        for i, _ in enumerate(text_data):
-            if len(vq_data[i]) + self.max_text_length + 2 <= self.context_length and len(vq_data[i]) >= self.min_context_length:  # +2 for <SOS> and <EOS>
-                padded_text = np.append(text_data[i], np.zeros(self.max_text_length - len(text_data[i]), dtype=np.ushort) + bert_pad_token)
-                vq_with_eos = np.append(vq_data[i], np.zeros(1, dtype=np.ushort) + self.eos_token)
-                final_padded_vq = np.append(vq_with_eos, np.zeros(self.context_length - self.max_text_length - len(vq_with_eos) - 1, dtype=np.ushort) + self.pad_token)  # -1 because SOS token is prefixed to the sequence later
-                self.text_tokens.append(padded_text)
-                self.vq_tokens.append(final_padded_vq)
-            else:
-                skipped += 1
-        
-        self.text_tokens = np.stack(self.text_tokens)
-        self.vq_tokens = np.stack(self.vq_tokens)
-        self.text_attention_masks = (self.text_tokens != 0).astype(np.int64)
+        self.text_data = np.split(self.text_data, np.where(self.text_data == cls_token)[0])[1:]  # as 101 is the <CLS> token
 
-        assert len(self.text_tokens) == len(self.vq_tokens), "Text and VQ tokens should have the same shape."
-        assert self.text_tokens[0,0] == bert_cls_token, "First token in text tokens should be the BERT CLS token."
-        assert self.vq_tokens[0,0] == bos_token, "First token in VQ tokens should be the BOS token."
-        assert self.text_attention_masks[0,0] == 1, "First token in text attention masks should be 1."
+        self.vq_data = np.split(self.vq_data, np.where(self.vq_data == bos_token)[0])[1:]  # as 1 is the <BOS> token
+        # self.vq_data = [x for x in self.vq_data if len(x) < self.context_length - 1]  # -1 so we can shift one position for the target
+        assert len(self.vq_data) == len(self.text_data), f"VQ ({len(self.vq_data)}) and text {len(self.text_data)} data should have the same length."
+        self.data = [np.append(x, y) for x, y in zip(self.vq_data, self.text_data)]
+        # now add the SOS at index=0 and EOS token at last index to each sequence
+        self.data = [np.append(np.insert(array, 0, sos_token), eos_token) for array in self.data]
+        self.data = [x for x in self.data if len(x) < self.context_length - 1]  # remove sequences that are too long
 
+        for i, array in enumerate(self.data):
+            if len(array) < self.context_length:
+                self.data[i] = np.append(array, np.zeros(self.context_length - len(array), dtype=np.ushort) + pad_token)
+        self.data = np.stack(self.data)
         print("Finished processing dataset.")
-        print(f"Dataset now with shape {self.vq_tokens.shape} and dtype: {self.vq_tokens.dtype}")
-        print(f"[INFO] Skipped {skipped} samples because they were too long or too short. That is {np.round(skipped / len(self.text_tokens) * 100, decimals=2)}% of the dataset.")
+        print(f"Dataset now with shape {self.data.shape} and dtype: {self.data.dtype}")
 
 
     def __len__(self):
-        return len(self.vq_tokens)
+        return len(self.data)
 
     def __getitem__(self, idx:int):
-        """
-        IMPORTANT
-        text tokens have their special tokens and padding already included.
-        vq tokens have their special tokens (BOS and EOS) and padding already included.
-        only SOS needs to be prefixed after the data is loaded.
-        """
-        text_tokens = torch.from_numpy(self.text_tokens[idx].astype(np.int32)).long()
-        vq_tokens = torch.from_numpy(self.vq_tokens[idx].astype(np.int32)).long()
-        vq_targets = torch.roll(vq_tokens, -1)
-        vq_targets[-1] = self.pad_token
-        attention_mask = torch.from_numpy(self.text_attention_masks[idx].astype(np.int32)).long()
-
-        return text_tokens, attention_mask, vq_tokens, vq_targets, torch.ones(1).to(text_tokens.device)*self.pad_token
+        row = self.data[idx]
+        # TODO this might need to be changed so the targets are SVG only and inputs are SVG + text
+        inputs = torch.from_numpy(row.astype(np.int32)).long()
+        targets = torch.from_numpy(np.roll(row, -1).astype(np.int32)).long()
+        targets[-1] = 2  # <PAD> token
+        return inputs, targets
     
 class VQDataModule(LightningDataModule):
     def __init__(
@@ -122,11 +99,9 @@ class VQDataModule(LightningDataModule):
     #       ===============================================================
 
     def collate_fn(self, batch):
-        text_tokens, vq_tokens, vq_targets = zip(*batch)
-        # text_tokens = torch.concat(text_tokens)
-        # vq_tokens = torch.concat(vq_tokens)
-        # vq_targets = torch.concat(vq_targets)
-        return text_tokens, vq_tokens, vq_targets
+        # sequences = zip(*batch)
+        sequences = torch.concat(batch)
+        return sequences
 
     def train_dataloader(self) -> DataLoader:
         return DataLoader(
@@ -151,7 +126,7 @@ class VQDataModule(LightningDataModule):
     def test_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
         return DataLoader(
             self.val_dataset,
-            batch_size=self.val_batch_size,
+            batch_size=16,
             num_workers=self.num_workers,
             shuffle=False,
             pin_memory=False,
@@ -208,26 +183,30 @@ class GlyphazznStage1Dataset(Dataset):
         self.subset = subset
         print("[GlyphazznStage1Dataset] loading df...")
         df = pd.read_csv(os.path.join(top_level_dir, "split.csv"))
-        self.df = df[df["split"] == ("train" if self.train else "test")].reset_index(drop=True)
+        # self.df = df[df["split"] == ("train" if self.train else "test")].reset_index(drop=True)
+        self.split = df[df["split"] == ("train" if self.train else "test")].reset_index(drop=True)
 
-        
-        if train is not None:
-            self.split = glob.glob(os.path.join(top_level_dir, f"{'train' if self.train else 'test'}/**/*.svg"), recursive=True)
-        else:
-            self.split = glob.glob(os.path.join(top_level_dir, "**/*.svg"), recursive=True)
-            print("[WARNING] Using the whole dataset! Train was None.")
-        if self.subset == "all":
-            self.split = self.split
-        elif self.subset == "numbers":
-            self.split = [x for x in self.split if x.split("/")[-2] in [str(i) for i in range(10)]]
-        elif self.subset == "letters":
-            self.split = [x for x in self.split if x.split("/")[-2] in string.ascii_letters]
-        elif self.subset == "lowercase":
-            self.split = [x for x in self.split if x.split("/")[-2] in string.ascii_lowercase]
-        elif self.subset == "uppercase":
-            self.split = [x for x in self.split if x.split("/")[-2] in string.ascii_uppercase]
-        else:
-            raise ValueError(f"Subset {self.subset} not recognized.")
+        assert subset in ["all", "reduced"], f"unknown subset: {subset}"
+        if subset == "reduced":
+            self.split = self.split.sample(frac=0.0001)
+            print(f"[WARNING]: {'train' if self.train else 'test'} split running in reduced mode. using only {len(self.split)} samples.")
+        # if train is not None:
+        #     self.split = glob.glob(os.path.join(top_level_dir, f"{'train' if self.train else 'test'}/**/*.svg"), recursive=True)
+        # else:
+        #     self.split = glob.glob(os.path.join(top_level_dir, "**/*.svg"), recursive=True)
+        #     print("[WARNING] Using the whole dataset! Train was None.")
+        # if self.subset == "all":
+        #     self.split = self.split
+        # elif self.subset == "numbers":
+        #     self.split = [x for x in self.split if x.split("/")[-2] in [str(i) for i in range(10)]]
+        # elif self.subset == "letters":
+        #     self.split = [x for x in self.split if x.split("/")[-2] in string.ascii_letters]
+        # elif self.subset == "lowercase":
+        #     self.split = [x for x in self.split if x.split("/")[-2] in string.ascii_lowercase]
+        # elif self.subset == "uppercase":
+        #     self.split = [x for x in self.split if x.split("/")[-2] in string.ascii_uppercase]
+        # else:
+        #     raise ValueError(f"Subset {self.subset} not recognized.")
 
     def crop_path_into_segments(self, path:Path, length:float = 5.):
         """
@@ -261,10 +240,10 @@ class GlyphazznStage1Dataset(Dataset):
         return sim_length_paths
 
     def __getitem__(self, index) -> tuple:
-        svg_path = self.df.iloc[index]["file_path"]
-        label = self.df.iloc[index]["class"]
+        svg_path = self.split.iloc[index]["file_path"]
+        label = self.split.iloc[index]["class"]
         label = string.printable.index(label)
-        description = self.df.iloc[index]["description"]
+        description = self.split.iloc[index]["description"]
 
         label = svg_path.split("/")[-2]
         label = string.printable.index(label)
@@ -287,10 +266,10 @@ class GlyphazznStage1Dataset(Dataset):
         """
         This function is intended to be used by the tokenization process.
         """
-        svg_path = self.df.iloc[index]["file_path"]
-        label = self.df.iloc[index]["class"]
+        svg_path = self.split.iloc[index]["file_path"]
+        label = self.split.iloc[index]["class"]
         label = string.printable.index(label)
-        description = self.df.iloc[index]["description"]
+        description = self.split.iloc[index]["description"]
 
         paths, attributes, svg_attributes = svg2paths2(svg_path)
         single_paths = get_single_paths(paths)  # cannot be further optimized
@@ -304,7 +283,7 @@ class GlyphazznStage1Dataset(Dataset):
         return imgs, labels.int(), centers, description
     
     def _get_full_svg_drawing(self, index, width:int = 720, as_tensor:bool = False):
-        svg_path = self.df.iloc[index]["file_path"]
+        svg_path = self.split.iloc[index]["file_path"]
         paths, attributes, svg_attributes = svg2paths2(svg_path)
         single_paths = get_single_paths(paths)
         drawing = disvg(single_paths, paths2Drawing=True, stroke_widths=[self.stroke_width]*len(single_paths), viewbox = svg_attributes["viewBox"],dimensions=(width, width))
@@ -328,7 +307,8 @@ class GlyphazznStage1Datamodule(LightningDataModule):
         max_shapes_per_svg:int=64,
         num_workers: int = 0,
         stroke_width: float = 0.3,
-        subset:str = "all",
+        train_subset: str = "all",
+        val_subset: str = "all",
         **kwargs,
     ):
         super().__init__()
@@ -342,7 +322,8 @@ class GlyphazznStage1Datamodule(LightningDataModule):
         self.num_workers = num_workers
         self.stroke_width = stroke_width
         self.individual_max_length = individual_max_length#
-        self.subset = subset
+        self.train_subset = train_subset
+        self.val_subset = val_subset
         self.max_shapes_per_svg = max_shapes_per_svg
 
     def setup(self, stage: Optional[str] = None) -> None:
@@ -351,7 +332,7 @@ class GlyphazznStage1Datamodule(LightningDataModule):
             self.channels,
             self.width,
             train=True,
-            subset=self.subset,
+            subset=self.train_subset,
             individual_max_length=self.individual_max_length,
             stroke_width=self.stroke_width,
             max_shapes_per_svg=self.max_shapes_per_svg,
@@ -362,7 +343,7 @@ class GlyphazznStage1Datamodule(LightningDataModule):
             self.channels,
             self.width,
             train=False,
-            subset=self.subset,
+            subset=self.val_subset,
             individual_max_length=self.individual_max_length,
             stroke_width=self.stroke_width,
             max_shapes_per_svg=self.max_shapes_per_svg,
