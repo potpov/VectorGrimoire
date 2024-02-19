@@ -10,6 +10,10 @@ import yaml
 from svglib.svg import SVG
 from fontTools.ttLib import TTFont
 import ast
+import sys
+
+sys.path.insert(0, '../')
+from data_utils import svg2paths2
 
 
 def preprocess_svg(char_path):
@@ -83,41 +87,53 @@ def multi_thread_svg_preprocess(config, workers=12):
 def process_csv_file(csv_filename, metadata, params):
     df = pd.read_csv(os.path.join(params["svg_dir"], csv_filename))
     print(f"Processing {os.path.join(params['svg_dir'], csv_filename)}, with {len(df)} rows")
-
+    corrupted = []
     new_csv = pd.DataFrame()
     for index, row in df.iterrows():
         file_path = row['output_path']
         assert params["svg_dir"] in file_path, f"This is a very weird csv path: {file_path}"
         file_path = file_path.replace(params["svg_dir"], params["svg_simp"])
 
+        if params["svg_simp"] not in file_path:
+            continue
+
         if os.path.exists(file_path):  # check if simplified svg exist
-            font_path = row['font_path']
-            character = row['char']
 
-            font = TTFont(font_path)
-            style = font["name"].getDebugName(2) if font["name"].getDebugName(2) is not None else "undefined"
-            descrition = f"{character} in a {style} font"
+            # check format of SVG for possible corrupted pre-proccessed
+            _, att, svg_attr = svg2paths2(file_path)
+            if svg_attr["viewBox"] == "0.0 0.0 72.0 72.0" and svg_attr["height"] == "200px" and svg_attr["width"] == "200px" and all([a["fill"] == "none" for a in att]):
+                font_path = row['font_path']
+                character = row['char']
 
-            font_name = row['font_name']
-            if metadata is not None:
-                font_class = metadata[metadata['filename'].str.contains(font_name.lower())]
-                if len(font_class) > 0:
-                    classes = ast.literal_eval(metadata[metadata['filename'].str.contains(font_name.lower())].tags.iloc[0])
-                    style = random.choice(classes)
-                    descrition = f"{character} in a {', '.join(classes)} font"
+                font = TTFont(font_path)
+                style = font["name"].getDebugName(2) if font["name"].getDebugName(2) is not None else "undefined"
+                descrition = f"{character} in a {style} font"
 
-            new_row = pd.DataFrame({
-                "file_path": [file_path],
-                "class": [character],
-                "split": [row['split']],
-                "font_path": [font_path],
-                "font": [font_name],
-                "font_style": [style],
-                "description": [descrition],
-            })
+                font_name = row['font_name']
+                if metadata is not None:
+                    font_class = metadata[metadata['filename'].str.contains(font_name.lower())]
+                    if len(font_class) > 0:
+                        classes = ast.literal_eval(metadata[metadata['filename'].str.contains(font_name.lower())].tags.iloc[0])
+                        style = random.choice(classes)
+                        descrition = f"{character} in a {', '.join(classes)} font"
 
-            new_csv = pd.concat([new_csv, new_row], ignore_index=True)
+                new_row = pd.DataFrame({
+                    "file_path": [file_path],
+                    "class": [character],
+                    "split": [row['split']],
+                    "font_path": [font_path],
+                    "font": [font_name],
+                    "font_style": [style],
+                    "description": [descrition],
+                })
+
+                new_csv = pd.concat([new_csv, new_row], ignore_index=True)
+            else:
+                corrupted.append(file_path)
+
     new_csv.to_csv(os.path.join(params["svg_simp"], csv_filename), index=False)
+    if len(corrupted) > 0:
+        print(f"Found those corrupted SVG: \n{corrupted}")
 
 
 def multi_thread_csv_preprocess(config):
@@ -129,6 +145,7 @@ def multi_thread_csv_preprocess(config):
         if os.path.exists(os.path.join(params["fonts_dir"], "metadata.csv")):
             metadata = pd.read_csv(os.path.join(params["fonts_dir"], "metadata.csv"))
 
+        # with futures.ProcessPoolExecutor(max_workers=1) as executor:
         with futures.ProcessPoolExecutor(max_workers=len(csv_shards)) as executor:
             with tqdm(total=len(csv_shards)) as pbar:
                 preprocess_requests = [executor.submit(process_csv_file, csv_name, metadata, params)
@@ -141,6 +158,7 @@ def multi_thread_csv_preprocess(config):
         csv_files = [f for f in os.listdir(params["svg_simp"]) if f.endswith(".csv")]
         merged_df = pd.concat([pd.read_csv(os.path.join(params["svg_simp"], csv_file)) for csv_file in csv_files], ignore_index=True)
         merged_df.to_csv(os.path.join(params["svg_simp"], "split.csv"), index=False)
+        print("merged all svgs in ", os.path.join(params["svg_simp"], "split.csv"))
 
 
 if __name__ == '__main__':
