@@ -14,6 +14,7 @@ import cairosvg
 from PIL import Image
 from io import BytesIO
 from torchvision.transforms import ToTensor
+import re
 
 def svg_string_to_tensor(svg_string):
     # Convert SVG string to PNG bytes
@@ -33,19 +34,19 @@ def svg_string_to_tensor(svg_string):
 def drawing_to_tensor(drawing: Drawing):
     return svg_string_to_tensor(drawing.tostring())
 
-def svg_to_tensor(file_path):
-    # Convert SVG to PNG using cairosvg
-    png_data = cairosvg.svg2png(url=file_path, background_color="white")
-    
-    # Load the PNG data into PIL Image
-    image = Image.open(BytesIO(png_data))
-    
-    # Ensure the image is in RGB mode
-    image = image.convert("RGB")
-    
-    # Convert the PIL Image to a PyTorch tensor with three channels
-    tensor = ToTensor()(image)
-    
+def svg_to_tensor(file_path, new_stroke_width:float = None):
+    if new_stroke_width is None:
+        png_data = cairosvg.svg2png(url=file_path, background_color="white")
+        image = Image.open(BytesIO(png_data))
+        image = image.convert("RGB")
+        tensor = ToTensor()(image)
+    else:
+        with open(file_path, "r") as file:
+            svg_string = file.read()
+        pattern = r'stroke-width="[^"]*"'
+        replacement_string  = f'stroke-width="{new_stroke_width}"'
+        new_svg_content = re.sub(pattern, replacement_string, svg_string)
+        tensor = svg_string_to_tensor(new_svg_content)
     return tensor
 
 def calculate_global_positions(local_positions: Tensor, local_viewbox_width:float, global_center_positions: Tensor):
