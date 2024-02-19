@@ -163,7 +163,7 @@ class GlyphazznStage1Dataset(Dataset):
     Glyphazzn dataset that requires already normalized SVGs. Yields patches, positions, and labels. The label is the index of string.printable -> label = string.printable.index(label)
 
     Requires the following structure:
-    top_level_dir
+    top_level_dir (simplified svgs)
     |________________________________________
     |                   |                   |
     train               test                split.csv (with columns: file_path, class, split, description)
@@ -173,7 +173,7 @@ class GlyphazznStage1Dataset(Dataset):
     *.svg               *.svg
 
     Args:
-        - top_level_dir: path to the top level directory of all SVGs
+        - top_level_dirs: paths to the top level directory of all simplified SVGs
         - channels: number of channels for the rasterized images
         - width: width/height of the rasterized images
         - train: whether to use the train or test split
@@ -185,7 +185,7 @@ class GlyphazznStage1Dataset(Dataset):
     """
 
     def __init__(self,
-                 top_level_dir: str,
+                 top_level_dirs: List[str],
                  channels: int,
                  width: int,
                  train: bool = True,
@@ -197,7 +197,7 @@ class GlyphazznStage1Dataset(Dataset):
                  **kwargs):
         super(GlyphazznStage1Dataset, self)
         print(f"[INFO] These keywords were provided in GlyphazznStage1Dataset but are not used: {kwargs.keys()}")
-        self.top_level_dir = top_level_dir
+        self.top_level_dirs = top_level_dirs
         self.individual_min_length = individual_min_length
         self.individual_max_length = individual_max_length
         self.stroke_width = stroke_width
@@ -207,25 +207,27 @@ class GlyphazznStage1Dataset(Dataset):
         self.train = train
         self.subset = subset
         print("[GlyphazznStage1Dataset] loading df...")
-        df = pd.read_csv(os.path.join(top_level_dir, "split.csv"))
-        self.df = df[df["split"] == ("train" if self.train else "test")].reset_index(drop=True)
+        dfs = []
+        for top_level_dir in self.top_level_dirs:
+            df = pd.read_csv(os.path.join(top_level_dir, "split.csv"))
+            if train is not None:
+                df = df[df["split"] == ("train" if self.train else "test")].reset_index(drop=True)
+            else:
+                print("[WARNING] Using the whole dataset! Train was None.")
+            dfs.append(df)
 
-        
-        if train is not None:
-            self.split = glob.glob(os.path.join(top_level_dir, f"{'train' if self.train else 'test'}/**/*.svg"), recursive=True)
-        else:
-            self.split = glob.glob(os.path.join(top_level_dir, "**/*.svg"), recursive=True)
-            print("[WARNING] Using the whole dataset! Train was None.")
+        self.df = pd.concat(dfs, ignore_index=True).reset_index(drop=True)
+
         if self.subset == "all":
-            self.split = self.split
+            self.df = self.df
         elif self.subset == "numbers":
-            self.split = [x for x in self.split if x.split("/")[-2] in [str(i) for i in range(10)]]
+            self.df = self.df[self.df["class"].str in [str(i) for i in range(10)]]
         elif self.subset == "letters":
-            self.split = [x for x in self.split if x.split("/")[-2] in string.ascii_letters]
+            self.df = self.df[self.df["class"].str in string.ascii_letters]
         elif self.subset == "lowercase":
-            self.split = [x for x in self.split if x.split("/")[-2] in string.ascii_lowercase]
+            self.df = self.df[self.df["class"].str in string.ascii_lowercase]
         elif self.subset == "uppercase":
-            self.split = [x for x in self.split if x.split("/")[-2] in string.ascii_uppercase]
+            self.df = self.df[self.df["class"].str in string.ascii_uppercase]
         else:
             raise ValueError(f"Subset {self.subset} not recognized.")
 
@@ -254,7 +256,7 @@ class GlyphazznStage1Dataset(Dataset):
         return similar_length_paths
     
     def get_similar_length_paths_from_index(self, index, max_length: float = 5.):
-        svg_path = self.split[index]
+        svg_path = self.df.iloc[index].file_path
         paths, attributes, svg_attributes = svg2paths2(svg_path)
         single_paths = get_single_paths(paths)
         sim_length_paths = self.get_similar_length_paths(single_paths, max_length=max_length)
@@ -266,8 +268,6 @@ class GlyphazznStage1Dataset(Dataset):
         label = string.printable.index(label)
         description = self.df.iloc[index]["description"]
 
-        label = svg_path.split("/")[-2]
-        label = string.printable.index(label)
         paths, attributes, svg_attributes = svg2paths2(svg_path)
         single_paths = get_single_paths(paths)
         # queue = copy.deepcopy(single_paths)
@@ -304,7 +304,7 @@ class GlyphazznStage1Dataset(Dataset):
         return imgs, labels.int(), centers, description
     
     def _get_full_svg_drawing(self, index, width:int = 720, as_tensor:bool = False):
-        svg_path = self.split[index]
+        svg_path = self.df.iloc[index].file_path
         paths, attributes, svg_attributes = svg2paths2(svg_path)
         single_paths = get_single_paths(paths)
         drawing = disvg(single_paths, paths2Drawing=True, stroke_widths=[self.stroke_width]*len(single_paths), viewbox = svg_attributes["viewBox"],dimensions=(width, width))
@@ -314,7 +314,7 @@ class GlyphazznStage1Dataset(Dataset):
             return drawing
 
     def __len__(self):
-        return len(self.split)
+        return len(self.df)
 
 class GlyphazznStage1Datamodule(LightningDataModule):
     def __init__(
