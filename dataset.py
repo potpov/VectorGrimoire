@@ -169,6 +169,7 @@ class GlyphazznStage1Dataset(Dataset):
                  individual_max_length: float = 10.,
                  stroke_width: float = 0.3,
                  max_shapes_per_svg: int = 64,
+                 return_filename: bool = False,
                  **kwargs):
         super(GlyphazznStage1Dataset, self)
         print(f"[INFO] These keywords were provided in GlyphazznStage1Dataset but are not used: {kwargs.keys()}")
@@ -180,6 +181,7 @@ class GlyphazznStage1Dataset(Dataset):
         self.channels = channels
         self.width = width
         self.train = train
+        self.return_filename = return_filename
         self.subset = subset
         print("[GlyphazznStage1Dataset] loading df...")
         df = pd.read_csv(os.path.join(top_level_dir, "split.csv"))
@@ -213,11 +215,13 @@ class GlyphazznStage1Dataset(Dataset):
         a single input path is cropped into segments of approx length `length`. I say "approx" because we divide the path into same length segments, which will not be exactly `length` long.
         """
         segments = []
-        num_iters = math.ceil(path.length() / length)
-        for i in range(num_iters):
-            cropped_segment = path.cropped(i/num_iters, (i+1)/num_iters)
-            segments.append(cropped_segment)
-
+        try:
+            num_iters = math.ceil(path.length() / length)
+            for i in range(num_iters):
+                cropped_segment = path.cropped(i/num_iters, (i+1)/num_iters)
+                segments.append(cropped_segment)
+        except Exception as e:
+            pass
         return segments
 
     def get_similar_length_paths(self, single_paths, max_length: float = 5.):
@@ -260,6 +264,8 @@ class GlyphazznStage1Dataset(Dataset):
         imgs = torch.stack(rasterized_segments)  # (n_shapes, channels, width, width)
         centers = torch.tensor(centers)  # (n_shapes, 2)
         labels = torch.ones(imgs.size(0)) * label
+        if self.return_filename:
+            return imgs, labels.int(), centers, description, svg_path
         return imgs, labels.int(), centers, description
     
     def _get_full_item(self, index:int) -> List[Tensor]:
