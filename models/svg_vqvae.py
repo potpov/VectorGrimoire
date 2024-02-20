@@ -6,11 +6,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 import wandb
-from .mlp import MultiLayerPerceptron
-from .mlp_vector_head import MLPVectorHeadFixed
-from .vq_vae import VectorQuantizer
-from .resnet import ResNet, BasicBlock
 from utils import log_all_images, tensor_to_histogram_image, calculate_global_positions, shapes_to_drawing, svg_string_to_tensor
+from models.resnet import ResNet, BasicBlock
+from models.vq_vae import VectorQuantizer
+from models.mlp_vector_head import MLPVectorHeadFixed
+from models.mlp import MultiLayerPerceptron
 from vector_quantize_pytorch import FSQ
 from x_transformers import TransformerWrapper, Decoder
 from transformers import BertModel
@@ -45,7 +45,7 @@ class DeconvResNet(nn.Module):
 
         return x, {}
 
-class VQ_Transformer_deprecated(nn.Module):
+class VQ_Transformer(nn.Module):
     """
     Stage 2 of the SVG-VQ-VAE pipeline.
     """
@@ -59,7 +59,7 @@ class VQ_Transformer_deprecated(nn.Module):
                 text_encoder_str: str = "bert-base-uncased",
                  **kwargs) -> None:
         
-        super(VQ_Transformer_deprecated, self).__init__()
+        super(VQ_Transformer, self).__init__()
 
         self.num_tokens = num_tokens
         self.max_seq_len = max_seq_len
@@ -162,8 +162,8 @@ class Vector_VQVAE(nn.Module):
                  codebook_size: int = 512,
                  image_loss: str = "mse",
                  single_code_representation: bool = True,
-                 vq_method:str = "fsq",
-                 fsq_levels:list =[8,5,5,5],
+                 vq_method: str = "fsq",
+                 fsq_levels: list =[8,5,5,5],
                  **kwargs) -> None:
         super(Vector_VQVAE, self).__init__()
 
