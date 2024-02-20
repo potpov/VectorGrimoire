@@ -164,7 +164,6 @@ class GlyphazznStage1Dataset(Dataset):
                  channels: int,
                  width: int,
                  train: bool = True,
-                 subset:str = "all",
                  individual_min_length: float = 1.,
                  individual_max_length: float = 10.,
                  stroke_width: float = 0.3,
@@ -182,16 +181,14 @@ class GlyphazznStage1Dataset(Dataset):
         self.width = width
         self.train = train
         self.return_filename = return_filename
-        self.subset = subset
         print("[GlyphazznStage1Dataset] loading df...")
         df = pd.read_csv(os.path.join(top_level_dir, "split.csv"))
+
+        # map class to ID before splitting train/test so it's consistent!
+        self.class2id = {id_name: class_name for class_name, id_name in enumerate(df["class"].unique())}
         # self.df = df[df["split"] == ("train" if self.train else "test")].reset_index(drop=True)
         self.split = df[df["split"] == ("train" if self.train else "test")].reset_index(drop=True)
 
-        assert subset in ["all", "reduced"], f"unknown subset: {subset}"
-        if subset == "reduced":
-            self.split = self.split.sample(frac=0.0001)
-            print(f"[WARNING]: {'train' if self.train else 'test'} split running in reduced mode. using only {len(self.split)} samples.")
         # if train is not None:
         #     self.split = glob.glob(os.path.join(top_level_dir, f"{'train' if self.train else 'test'}/**/*.svg"), recursive=True)
         # else:
@@ -246,15 +243,16 @@ class GlyphazznStage1Dataset(Dataset):
     def __getitem__(self, index) -> tuple:
         svg_path = self.split.iloc[index]["file_path"]
         label = self.split.iloc[index]["class"]
-        label = string.printable.index(label)
+        label = self.class2id[label]
+        # label = string.printable.index(label)
         description = self.split.iloc[index]["description"]
 
-        label = svg_path.split("/")[-2]
-        label = string.printable.index(label)
+        # label = svg_path.split("/")[-2]
+        # label = string.printable.index(label)
         paths, attributes, svg_attributes = svg2paths2(svg_path)
-        single_paths = get_single_paths(paths)
+        # single_paths = get_single_paths(paths)
         # queue = copy.deepcopy(single_paths)
-        sim_length_paths = self.get_similar_length_paths(single_paths, self.individual_max_length)
+        sim_length_paths = self.get_similar_length_paths(paths, self.individual_max_length)
         assert check_for_continouity(sim_length_paths), "paths are not continous"
         # select a random slice of the paths of length max_shapes_per_svg
         if len(sim_length_paths) > self.max_shapes_per_svg:
@@ -338,7 +336,6 @@ class GlyphazznStage1Datamodule(LightningDataModule):
             self.channels,
             self.width,
             train=True,
-            subset=self.train_subset,
             individual_max_length=self.individual_max_length,
             stroke_width=self.stroke_width,
             max_shapes_per_svg=self.max_shapes_per_svg,
@@ -349,7 +346,6 @@ class GlyphazznStage1Datamodule(LightningDataModule):
             self.channels,
             self.width,
             train=False,
-            subset=self.val_subset,
             individual_max_length=self.individual_max_length,
             stroke_width=self.stroke_width,
             max_shapes_per_svg=self.max_shapes_per_svg,

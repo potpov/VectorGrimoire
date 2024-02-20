@@ -11,6 +11,8 @@ from torchmetrics.image.fid import FrechetInceptionDistance
 from torchmetrics.multimodal.clip_score import CLIPScore
 import torch.nn.functional as F
 from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.optim.lr_scheduler import StepLR
+
 
 
 class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
@@ -168,7 +170,8 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
                  manual_seed: int = 42,
                  min_lr: float = 0.0000001,
                  total_steps: int = 450000,
-                 eval_steps: int = 13000,
+                 eval_steps: int = 3000,
+                 step_size: int = 3000,
                  scheduler_type: str = "none",
                  wandb: bool = True,
                  **kwargs) -> None:
@@ -187,6 +190,7 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
         self.wandb = wandb
         self.eval_steps = eval_steps
         self.scheduler_type = scheduler_type
+        self.step_size = step_size
 
     def forward(self, input_images: Tensor, logging=False,**kwargs) -> list:
         out, logging_dict = self.model.forward(input_images, logging=logging, **kwargs)
@@ -214,10 +218,15 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
     
         # always log the first batch and variable amount of timesteps up to 10
         if batch_idx % self.train_log_interval == 0 and self.wandb:
+            current_trainer_global_step = self.trainer.global_step
             for key, value in logging_dict.items():
                 if key in ["codebook_histogram"]:
-                    continue
-                self.log(f"train/{key}", value)
+                    self.trainer.logger.experiment.log(
+                        {key: [value]},
+                        step=current_trainer_global_step,
+                    )
+                else:
+                    self.log(f"train/{key}", value, on_step=True)
             if reconstructions.shape[0] > 10:
                 log_amount = 10
             else:
@@ -230,19 +239,14 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
                 log_key="train/reconstruction",
                 captions="input (left) vs. reconstruction (right)"
             )
-            current_trainer_global_step = self.trainer.global_step
             self.trainer.logger.experiment.log(
-                {"samples": [i]},
+                {k: [i]},
                 step=current_trainer_global_step,
             )
 
-        self.log_dict(loss_dict)
+        self.log_dict(loss_dict, on_step=True)
         return loss_dict["loss"]
 
-    def on_train_epoch_end(self):
-        # gc.collect()
-        # torch.cuda.empty_cache()
-        return {}
 
     def validation_step(self, batch, batch_idx, optimizer_idx=0):
 
@@ -264,36 +268,30 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
             vq_loss=vq_loss,
         )
 
-        if batch_idx % self.train_log_interval == 0 and self.wandb:
-            for key, value in logging_dict.items():
-                self.log(f"val/{key}", value)
-            if reconstructions.shape[0] > 10:
-                log_amount = 10
-            else:
-                log_amount = reconstructions.shape[0]
+        # if batch_idx % self.train_log_interval == 0 and self.wandb:
+        for key, value in logging_dict.items():
+            self.log(f"val/{key}", value, on_step=True)
+        if reconstructions.shape[0] > 10:
+            log_amount = 10
+        else:
+            log_amount = reconstructions.shape[0]
 
-            # Log input against prediction
-            k, i, = log_images(
-                reconstructions[:log_amount],
-                inputs[:log_amount],
-                log_key="val/reconstruction",
-                captions="input (left) vs. reconstruction (right)"
-            )
-            current_trainer_global_step = self.trainer.global_step
-            self.trainer.logger.experiment.log(
-                {"samples": [i]},
-                step=current_trainer_global_step,
-            )
+        # Log input against prediction
+        k, i, = log_images(
+            reconstructions[:log_amount],
+            inputs[:log_amount],
+            log_key="val/reconstruction",
+            captions="input (left) vs. reconstruction (right)"
+        )
+        current_trainer_global_step = self.trainer.global_step
+        self.trainer.logger.experiment.log(
+            {k: [i]},
+            step=current_trainer_global_step,
+        )
 
-        self.log("val_loss", loss_dict["loss"])
+        self.log("val_loss", loss_dict["loss"], on_step=True)
         return loss_dict["loss"]
 
-    def on_validation_end(self) -> None:
-        # if self.wandb:
-        #     self.sample_images()
-        # gc.collect()
-        # torch.cuda.empty_cache()
-        return {}
     
     def configure_optimizers(self):
 
@@ -317,6 +315,9 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
         if self.scheduler_type == "cosine":
             scheds.append(CosineAnnealingLR(optimizer, T_max=self.total_steps, eta_min=self.min_lr))
             return optims, scheds
+        elif self.scheduler_type == "step":
+            scheds.append(StepLR(optimizer, step_size=self.step_size, gamma=self.scheduler_gamma))
+            return optims, scheds
         elif self.scheduler_type == "exponential":
             try:
                 if self.scheduler_gamma is not None:
@@ -330,10 +331,12 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
         else:
             raise Exception(f"Unknown scheduler for this training: {self.scheduler_type}")
 
-    def on_batch_end(self, trainer, pl_module):
-        # Perform evaluation after every eval_steps steps
-        if trainer.global_step % self.eval_steps == 0:
-            trainer.run_evaluation()
+    # def on_train_batch_end(self, output, batch, batch_index):
+    #     # Perform evaluation after every eval_steps steps
+    #     if batch_index % self.eval_steps == 0:
+    #         self.trainer.fit_loop.epoch_loop.val_loop.run()
+
+
 
 class VectorGPTExperimentv2(pl.LightningModule):
     def __init__(self,

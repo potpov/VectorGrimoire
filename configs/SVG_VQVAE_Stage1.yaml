@@ -10,7 +10,9 @@ model_params:
 
 data_params:
   dataset: "stage1"  # must be in the DATASETMAP in run.py
-  top_level_dir: "/scratch2/moritz_data/glyphazzn/svgs_simplified"  # root path for CausalSVGDataModule in dataset.py
+#  top_level_dir: "/scratch/datasets/svg/glyphazzn/svgs_simplified"  # root path for CausalSVGDataModule in dataset.py
+#  top_level_dir: "/scratch/datasets/svg/all/svg_simplified"  # root path for CausalSVGDataModule in dataset.py
+  top_level_dir: "/scratch/datasets/svg/figr8/svg_simplified"  # root path for CausalSVGDataModule in dataset.py
   channels: 3  # use 3
   width: 128
   train_batch_size: 8
@@ -18,25 +20,32 @@ data_params:
   num_workers: 8
   individual_max_length : 7.5  # max length of a single stroke, decides the width/height of rendered shapes
   stroke_width: 0.7  # IMPORTANT: this must scale with individiual_max_length as they together define the image
-  subset: "all"
   # max_shapes_per_svg: 32
 
 exp_params:
   lr: 0.00002  # 0.00002
+  scheduler: step # cosine, exponential, none, step
   weight_decay: 1.e-4  # specify positive float to enable, start experimenting with 1.e-4/1.e-3
+  step_size: 3000
   scheduler_gamma: 0.98  # 0.95 is a good starting value
-  train_log_interval: 100 # len(dataset) / train_batch_size / desired_logging_frequency
+  train_log_interval: 350 # len(dataset) / train_batch_size / desired_logging_frequency
+  eval_steps: 2  # after how many steps we perform the evaluation
   manual_seed: 1265
+  total_steps: 450000
+  min_lr: 0.0000001
 
 trainer_params:
   devices: -1  # always keep at -1 as this takes all available GPUs specified through CUDA_VISIBLE_DEVICES
   max_epochs: 250  # dsnt matter too much, got early stopping implemented
+  val_check_interval: 0.03  # per step validation
+  limit_val_batches: 0.0005
   # accumulate_grad_batches: 2
 
 logging_params:
-  # entity: "aiis-chair"  # comment to use default wandb entity "mfeuer"
+  entity: "aiis-chair"  # comment to use default wandb entity "mfeuer"
   project: "thesis"  # your wandb project name
-  save_dir: "/scratch2/moritz_logs/SVG_VQVAE/Stage1/glyphazzn_full_single_code"
-  name: "SVG_VQVAE glyphazzn Stage1, single code representation"  # name of the run in wandb
+#  save_dir: "/scratch/mcipriano/results/svg/all_full_single_code"
+  save_dir: "/scratch/mcipriano/results/svg/figr8"
+  name: "SVG_VQVAE figr8 Stage1, single code representation"  # name of the run in wandb
   version: 0
-  author: "Moritz"  # will be a tag in wandb
+  author: "Marco"  # will be a tag in wandb
