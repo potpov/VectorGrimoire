@@ -5,6 +5,7 @@ from fontTools.ttLib import TTFont
 from tqdm import tqdm
 from tqdm.auto import tqdm
 import argparse
+import numpy as np
 tqdm.pandas()
 
 def svg_path_to_ttf_path(svg_path):
@@ -83,6 +84,10 @@ if __name__ == "__main__":
     print("Making token paths...")
     df["vq_token_path"] = df["simplified_svg_file_path"].progress_apply(lambda x: simplified_path_to_npy_paths(x)[0])
     df["text_token_path"] = df["simplified_svg_file_path"].progress_apply(lambda x: simplified_path_to_npy_paths(x)[1])
+
+    print("Getting token lengths...")
+    df["text_token_length"] = df["text_token_path"].progress_apply(lambda x: len(np.load(x)))
+    df["vq_token_length"] = df["vq_token_path"].progress_apply(lambda x: len(np.load(x)))
 
     if CHECK_FILES_EXISTING:
         all_exist = True
