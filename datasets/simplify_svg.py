@@ -11,9 +11,7 @@ from svglib.svg import SVG
 from fontTools.ttLib import TTFont
 import ast
 import sys
-
-sys.path.insert(0, '../')
-from data_utils import svg2paths2
+from utils import svg2paths2
 
 
 def preprocess_svg(char_path):
