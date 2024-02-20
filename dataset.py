@@ -201,7 +201,7 @@ class VQDataset(Dataset):
                 i = self.min_context_length//2
             if self.tokenizer._is_position(vq_tokens[i]):
                 i -= 1  # position is guaranteed to be preceded by a patch
-            vq_tokens = np.concatenate([vq_tokens[i:], vq_tokens[:i]])
+            vq_tokens = np.concatenate([np.array([self.bos_token]),vq_tokens[i:], vq_tokens[1:i]])
         vq_tokens = self._get_padded_vq_tokens(vq_tokens)
         text_attention_mask = (text_tokens != self.bert_pad_token).astype(np.int64)
 
