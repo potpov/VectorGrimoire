@@ -14,9 +14,14 @@ from thesis.utils import svg2paths2, disvg, raster, get_single_paths, get_simila
 import copy
 import random
 import math
+from thesis.tokenizer import VQTokenizer
 
-class VQDataset(Dataset):
+class Legacy_VQDataset(Dataset):
+    """
+    This exists for backward compatibility where the whole dataset was a single numpy array. If your dataset is single txt and vq numpy files, use the new VQDataset instead.
+    """
     def __init__(self, csv_path:str, context_length: int, min_context_length: int = 10,train:bool = True):
+        super(Legacy_VQDataset, self).__init__()
         self.split = pd.read_csv(csv_path)
         self.train = train
         self.context_length = context_length
@@ -88,14 +93,151 @@ class VQDataset(Dataset):
 
         return text_tokens, attention_mask, vq_tokens, vq_targets, torch.ones(1).to(text_tokens.device)*self.pad_token
     
+
+class VQDataset(Dataset):
+    """
+    main input here is the csv_path to a split.csv, which can be created using datasets/make_final_stage2_csv.py
+
+    - fraction_of_class_only_inputs: float (default 0.2), fraction of samples where the text input is only the "class" entry of the dataframe
+    - fraction_of_blank_inputs: float (default 0.1), fraction of samples where the text input is empty
+    - use_given_text_tokens_only: bool (default False), if True, the text input will always be the already tokenized file
+    - shuffle_vq_order: bool (default False), if True, `<SOS>, <CLS>, t_1, ..., t_n, <SEP>, <BOS>, v_1, p_1, v_2, p_2, ... v_m, p_m, <EOS>` will become `<SOS>, <CLS>, t_1, ..., t_n, <SEP>, <BOS>, v_i, p_i, v_i+1, p_i+1, ..., v_m, p_m, v_1, p_1, ..., v_i-1, p_i-1, <EOS>` for random index i
+    its not really "shuffling", but more cutting the sequence into two parts and switching their order
+    """
+    def __init__(self,
+                 csv_path:str,
+                 tokenizer: VQTokenizer,
+                 context_length: int,
+                 min_context_length: int = 10,
+                 fraction_of_class_only_inputs: float = 0.2,
+                 fraction_of_blank_inputs: float = 0.1,
+                 shuffle_vq_order:bool=False,
+                 use_pre_computed_text_tokens_only: bool=False,
+                 train:bool = True):
+        super(VQDataset, self).__init__()
+        self.split = pd.read_csv(csv_path)
+
+        if train:
+            self.split = self.split[self.split["split"] == "train"].reset_index(drop=True)
+        else:
+            self.split = self.split[self.split["split"] == "test"].reset_index(drop=True)
+
+        self.context_length = context_length
+        self.min_context_length = min_context_length
+
+        self.fraction_of_class_only_inputs = fraction_of_class_only_inputs
+        self.fraction_of_blank_inputs = fraction_of_blank_inputs
+        self.fraction_of_full_description_inputs = 1 - fraction_of_class_only_inputs - fraction_of_blank_inputs
+        assert self.fraction_of_full_description_inputs >= 0.6, "Fraction of full description inputs must be greater or equal to 0.6"
+
+        self.use_pre_computed_text_tokens_only = use_pre_computed_text_tokens_only
+        self.shuffle_vq_order = shuffle_vq_order
+
+        self.tokenizer = tokenizer
+        self.tokenizer.use_text_encoder_only = True
+
+        self.bert_cls_token = self.tokenizer.text_tokenizer.get_vocab().get("[CLS]")
+        self.bert_sep_token = self.tokenizer.text_tokenizer.get_vocab().get("[SEP]")
+        self.bert_pad_token = self.tokenizer.text_tokenizer.get_vocab().get("[PAD]")
+        self.sos_token = self.tokenizer.special_token_mapping.get("<SOS>")
+        self.bos_token = self.tokenizer.special_token_mapping.get("<BOS>")
+        self.eos_token = self.tokenizer.special_token_mapping.get("<EOS>")
+        self.pad_token = self.tokenizer.special_token_mapping.get("<PAD>")
+
+        self.max_text_length = self.split["text_token_length"].max()
+
+        samples_before_filtering = len(self.split)
+
+        # TODO add font blacklisting here
+        self.split = self.split[self.split["vq_token_length"] + self.max_text_length + 2 <= self.context_length]
+        self.split = self.split[self.split["vq_token_length"] >= self.min_context_length]
+
+        samples_after_filtering = len(self.split)
+        if samples_before_filtering > 0:
+            print(f"[INFO] Filtered {samples_before_filtering - samples_after_filtering} samples because they were too long or too short. That is {np.round((samples_before_filtering - samples_after_filtering) / samples_before_filtering * 100, decimals=2)}% of the dataset.")
+        else:
+            print(f"[WARNING] No samples found for {'train' if train else 'test'} split.")
+
+    def _get_padded_text_tokens(self, text_tokens: np.ndarray):
+        padded_text = np.append(text_tokens, np.zeros(self.max_text_length - len(text_tokens), dtype=np.ushort) + self.bert_pad_token)
+        return padded_text
+    
+    def _get_padded_vq_tokens(self, vq_tokens: np.ndarray):
+        if vq_tokens[0] != self.bos_token:
+            vq_tokens = np.concatenate([np.array([self.bos_token]), vq_tokens])
+        vq_with_eos = np.append(vq_tokens, np.zeros(1, dtype=np.ushort) + self.eos_token)
+        final_padded_vq = np.append(vq_with_eos, np.zeros(self.context_length - self.max_text_length - len(vq_with_eos) - 1, dtype=np.ushort) + self.pad_token)  # -1 because SOS token is prefixed to the sequence later
+        return final_padded_vq
+
+        # assert len(self.text_tokens) == len(self.vq_tokens), "Text and VQ tokens should have the same shape."
+        # assert self.text_tokens[0,0] == bert_cls_token, "First token in text tokens should be the BERT CLS token."
+        # assert self.vq_tokens[0,0] == bos_token, "First token in VQ tokens should be the BOS token."
+        # assert self.text_attention_masks[0,0] == 1, "First token in text attention masks should be 1."
+
+    def __len__(self):
+        return len(self.split)
+
+    def __getitem__(self, idx:int):
+        """
+        IMPORTANT
+        text tokens have their special tokens and padding already included.
+        vq tokens have their special tokens (BOS and EOS) and padding already included.
+        only SOS needs to be prefixed after the data is loaded.
+        """
+        if self.use_pre_computed_text_tokens_only:
+            text_tokens = np.load(self.split.iloc[idx]["text_token_path"])
+        else:
+            text_to_tokenize = np.random.choice([self.split.iloc[idx]["class"], self.split.iloc[idx]["description"], ""],
+                                             p=[self.fraction_of_class_only_inputs, self.fraction_of_full_description_inputs, self.fraction_of_blank_inputs])
+            text_tokens = self.tokenizer.tokenize_text(text_to_tokenize)
+
+        text_tokens = self._get_padded_text_tokens(text_tokens)
+        vq_tokens = np.load(self.split.iloc[idx]["vq_token_path"])
+        if self.shuffle_vq_order:
+            try:
+                i = np.random.randint(5, len(vq_tokens) - 5)
+            except:
+                # if something goes wrong, just take the middle of the min-sequence
+                i = self.min_context_length//2
+            if self.tokenizer._is_position(vq_tokens[i]):
+                i -= 1  # position is guaranteed to be preceded by a patch
+            vq_tokens = np.concatenate([vq_tokens[i:], vq_tokens[:i]])
+        vq_tokens = self._get_padded_vq_tokens(vq_tokens)
+        text_attention_mask = (text_tokens != self.bert_pad_token).astype(np.int64)
+
+        text_tokens = torch.from_numpy(text_tokens.astype(np.int32)).long()
+        vq_tokens = torch.from_numpy(vq_tokens.astype(np.int32)).long()
+        vq_targets = torch.roll(vq_tokens, -1)
+        vq_targets[-1] = self.pad_token
+        attention_mask = torch.from_numpy(text_attention_mask.astype(np.int32)).long()
+
+        return text_tokens, attention_mask, vq_tokens, vq_targets, torch.ones(1).to(text_tokens.device)*self.pad_token
+
 class VQDataModule(LightningDataModule):
+
+        # def __init__(self,
+        #          csv_path:str,
+        #          tokenizer: VQTokenizer,
+        #          context_length: int,
+        #          min_context_length: int = 10,
+        #          fraction_of_class_only_inputs: float = 0.2,
+        #          fraction_of_blank_inputs: float = 0.1,
+        #          shuffle_vq_order:bool=False,
+        #          use_given_text_tokens_only: bool=False,
+        #          train:bool = True):
     def __init__(
         self,
         csv_path: str,
+        tokenizer: VQTokenizer,
         context_length: int,
         train_batch_size: int,
         val_batch_size: int,
         num_workers: int = 0,
+        min_context_length: int = 10,
+        fraction_of_class_only_inputs: float = 0.2,
+        fraction_of_blank_inputs: float = 0.1,
+        shuffle_vq_order:bool=False,
+        use_pre_computed_text_tokens_only: bool=False,
         **kwargs,
     ):
         super().__init__()
@@ -105,28 +247,40 @@ class VQDataModule(LightningDataModule):
         self.val_batch_size = val_batch_size
         self.num_workers = num_workers
         self.context_length = context_length
+        self.tokenizer = tokenizer
+        self.min_context_length = min_context_length
+        self.fraction_of_class_only_inputs = fraction_of_class_only_inputs
+        self.fraction_of_blank_inputs = fraction_of_blank_inputs
+        self.shuffle_vq_order = shuffle_vq_order
+        self.use_pre_computed_text_tokens_only = use_pre_computed_text_tokens_only
+
 
     def setup(self, stage: Optional[str] = None) -> None:
         self.train_dataset = VQDataset(
             self.csv_path,
+            tokenizer=self.tokenizer,
             context_length=self.context_length,
             train=True,
+            min_context_length=self.min_context_length,
+            fraction_of_class_only_inputs = self.fraction_of_class_only_inputs,
+            fraction_of_blank_inputs = self.fraction_of_blank_inputs,
+            shuffle_vq_order = self.shuffle_vq_order,
+            use_pre_computed_text_tokens_only = self.use_pre_computed_text_tokens_only,
         )
 
         self.val_dataset = VQDataset(
             self.csv_path,
+            tokenizer=self.tokenizer,
             context_length=self.context_length,
             train=False,
+            min_context_length=self.min_context_length,
+            fraction_of_class_only_inputs = self.fraction_of_class_only_inputs,
+            fraction_of_blank_inputs = self.fraction_of_blank_inputs,
+            shuffle_vq_order = self.shuffle_vq_order,
+            use_pre_computed_text_tokens_only = self.use_pre_computed_text_tokens_only,
         )
 
     #       ===============================================================
-
-    def collate_fn(self, batch):
-        text_tokens, vq_tokens, vq_targets = zip(*batch)
-        # text_tokens = torch.concat(text_tokens)
-        # vq_tokens = torch.concat(vq_tokens)
-        # vq_targets = torch.concat(vq_targets)
-        return text_tokens, vq_tokens, vq_targets
 
     def train_dataloader(self) -> DataLoader:
         return DataLoader(
@@ -135,7 +289,6 @@ class VQDataModule(LightningDataModule):
             num_workers=self.num_workers,
             shuffle=True,
             pin_memory=False,
-            # collate_fn=self.collate_fn
         )
 
     def val_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
@@ -145,7 +298,6 @@ class VQDataModule(LightningDataModule):
             num_workers=self.num_workers,
             shuffle=False,
             pin_memory=False,
-            # collate_fn=self.collate_fn
         )
 
     def test_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
@@ -155,7 +307,6 @@ class VQDataModule(LightningDataModule):
             num_workers=self.num_workers,
             shuffle=False,
             pin_memory=False,
-            # collate_fn=self.collate_fn
         )
     
 class GlyphazznStage1Dataset(Dataset):

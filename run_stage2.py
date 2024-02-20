@@ -83,7 +83,8 @@ else:
 
 print("Loading dataset...")
 experiment = SVG_VQVAE_Stage2_Experiment(model, tokenizer, **config['exp_params'], wandb = args.wandb)
-data = VQDataModule(**config["data_params"], context_length=config['model_params']['max_seq_len'])
+text_only_tokenizer = VQTokenizer(vq_model, config["data_params"]["width"], 1, "bert-base-uncased", use_text_encoder_only=True, codebook_size=tokenizer.codebook_size)
+data = VQDataModule(tokenizer=text_only_tokenizer,**config["data_params"], context_length=config['model_params']['max_seq_len'])
 
 print("Setting up data...")
 data.setup()

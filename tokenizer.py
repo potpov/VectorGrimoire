@@ -7,6 +7,7 @@ import torch
 from torch import Tensor
 from svgwrite import Drawing
 from transformers import BertTokenizer, BertModel,PreTrainedTokenizerBase
+from torch import nn
 
 class VQTokenizer:
     """
@@ -17,16 +18,30 @@ class VQTokenizer:
         - full_image_res (int): Full resolution of the rasterized SVGs
         - tokens_per_patch (int): Number of tokens per patch
         - text_encoder_str (str): huggingface string of the BERT text encoder to use, default: bert-base-uncased
+        - device (str, optional): Device to use. Defaults to "cpu".
+        - use_text_encoder_only (bool, optional): Whether to use the text encoder only. Defaults to False. Used to bnenefit from special token mapping and text tokenization without the need for a VQVAE model.
     """
 
-    def __init__(self, vq_model: Vector_VQVAE, full_image_res: int, tokens_per_patch:int, text_encoder_str: str = "bert-base-uncased", device = "cpu", **kwargs) -> None:
+    def __init__(self, vq_model: Vector_VQVAE, 
+                 full_image_res: int, 
+                 tokens_per_patch:int, 
+                 text_encoder_str: str = "bert-base-uncased", 
+                 device = "cpu",
+                 use_text_encoder_only: bool = False,
+                 codebook_size:int = None,
+                 **kwargs) -> None:
         self.text_encoder_str = text_encoder_str
         self.full_image_res = full_image_res
         self.tokens_per_patch = tokens_per_patch
         self.max_num_pos_tokens = self.full_image_res ** 2  # for now this is just resolution squared, could be quantized to a smaller number of positions later
         self.device = device
-        self.vq_model = vq_model.to(device)
-        self.codebook_size = self.vq_model.codebook_size
+        self.use_text_encoder_only = use_text_encoder_only
+        if self.use_text_encoder_only:
+            self.vq_model = None
+            self.codebook_size = codebook_size
+        else:
+            self.vq_model = vq_model.to(device)
+            self.codebook_size = self.vq_model.codebook_size
         
         self.text_tokenizer: PreTrainedTokenizerBase = BertTokenizer.from_pretrained(self.text_encoder_str)
         assert self.text_tokenizer.vocab_size < 65535, "VQTokenizer only supports 16-bit np.ushort encoded tokens, but the text tokenizer exceeds that."
@@ -65,6 +80,8 @@ class VQTokenizer:
         Returns:
             Tensor: Tensor of shape (num_patches, self.tokens_per_patch)
         """
+        if self.use_text_encoder_only:
+            raise NotImplementedError("Tokenizing patches is not supported when using the text encoder only.")
         with torch.no_grad():
             _, indices = self.vq_model.encode(patches, quantize=True)
         indices = indices.flatten().to(self.device)
@@ -80,6 +97,8 @@ class VQTokenizer:
         Returns:
             Tensor: Tensor of shape (num_pos, 1)
         """
+        if self.use_text_encoder_only:
+            raise NotImplementedError("Tokenizing positions is not supported when using the text encoder only.")
         assert positions.mean() > 1., f"Positions should be scaled with the full image resolution already, got mean: {positions.mean()}"
         positions = positions[:, 0].round() + self.full_image_res * positions[:, 1].round()
         return positions + self.start_of_pos_token_idx
@@ -114,6 +133,8 @@ class VQTokenizer:
             - vq_tokens: [<BOS>, patch_tokens, pos_token, patch_tokens, pos_token, ...], no padding, either Tensor or np.ndarray
             - end_token: [<EOS>], either Tensor or np.ndarray
         """
+        if self.use_text_encoder_only:
+            raise NotImplementedError("Tokenizing patches/positions is not supported when using the text encoder only.")
         patch_tokens = self.tokenize_patches(patches).cpu()
         pos_tokens = self.tokenize_positions(positions)
         text_tokens = self.tokenize_text(text)
@@ -150,6 +171,8 @@ class VQTokenizer:
         Returns:
             Tensor: Tensor of shape (num_patches, channels, patch_res, patch_res)
         """
+        if self.use_text_encoder_only:
+            raise NotImplementedError("Decoding patches is not supported when using the text encoder only.")
         with torch.no_grad():
             out, _ = self.vq_model.decode_from_indices(tokens - self.start_of_patch_token_idx)
         if raster:
@@ -167,6 +190,8 @@ class VQTokenizer:
         Returns:
             Tensor: Tensor of shape (num_pos, 2)
         """
+        if self.use_text_encoder_only:
+            raise NotImplementedError("Decoding positions is not supported when using the text encoder only.")
         tokens = tokens - self.start_of_pos_token_idx
         positions = torch.stack([tokens % self.full_image_res, tokens // self.full_image_res], dim=1)
         return positions
@@ -195,6 +220,8 @@ class VQTokenizer:
         Returns:
             Tuple[Tensor, Tensor]: Tuple of tensors of shape (num_patches, channels, patch_res, patch_res) and (num_pos, 2)
         """
+        if self.use_text_encoder_only:
+            raise NotImplementedError("Decoding patches/positions is not supported when using the text encoder only.")
         # remove all occurence of <PAD> token
         tokens = tokens[tokens != self.special_token_mapping["<PAD>"]]
 
