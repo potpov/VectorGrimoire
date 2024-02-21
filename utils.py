@@ -16,6 +16,15 @@ from io import BytesIO
 from torchvision.transforms import ToTensor
 import re
 
+def svg_file_path_to_tensor(path, permuted = True, plot=False):
+    paths, attributes, svg_attributes = svg2paths2(path)
+    return_tensor = raster(disvg(paths, stroke_widths=[0.5]*len(paths),paths2Drawing=True), out_h=224, out_w = 224)
+    if permuted:
+        return_tensor = return_tensor.permute(1,2,0)
+    if plot:
+        plt.imshow(return_tensor)
+    return return_tensor
+
 def svg_string_to_tensor(svg_string):
     # Convert SVG string to PNG bytes
     png_bytes = cairosvg.svg2png(bytestring=svg_string, background_color="white")
