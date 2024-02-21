@@ -17,6 +17,8 @@ def svg_path_to_ttf_path(svg_path):
     return os.path.join(svg_path.split("/svgs_simplified/")[0], "font_files", font_id+".ttf")
 
 def get_style_of_font(ttf_path):
+    if not os.path.exists(ttf_path):
+        return "ERROR: FONT FILE NOT FOUND"
     font = TTFont(ttf_path)
     # style = font['name'].getName(2, 3, 1).toUnicode()
     style_debug = font["name"].getDebugName(2)
@@ -76,19 +78,21 @@ if __name__ == "__main__":
     df["font_style"] = ""
     for font in tqdm(unique_fonts):
         style = get_style_of_font(os.path.join(BASE_PATH, DATASET, "font_files", font))
-        df.loc[df["font"] == font, "font_style"] = style.lower()
-
+        if isinstance(style, str):
+            df.loc[df["font"] == font, "font_style"] = style.lower()
+        else:
+            df.loc[df["font"] == font, "font_style"] = "unknown"
     print("Making descriptions...")
     df["description"] = df.progress_apply(make_description, axis=1)
     
     print("Making token paths...")
     df["vq_token_path"] = df["simplified_svg_file_path"].progress_apply(lambda x: simplified_path_to_npy_paths(x)[0])
     df["text_token_path"] = df["simplified_svg_file_path"].progress_apply(lambda x: simplified_path_to_npy_paths(x)[1])
-
+    df.to_csv(OUTPUT_PATH.replace(".csv", "_temp.csv"), index=False)
     print("Getting token lengths...")
-    df["text_token_length"] = df["text_token_path"].progress_apply(lambda x: len(np.load(x)))
-    df["vq_token_length"] = df["vq_token_path"].progress_apply(lambda x: len(np.load(x)))
-
+    df["text_token_length"] = df["text_token_path"].progress_apply(lambda x: len(np.load(x)) if os.path.exists(x) else 9999)
+    df["vq_token_length"] = df["vq_token_path"].progress_apply(lambda x: len(np.load(x)) if os.path.exists(x) else 9999)
+    df.to_csv(OUTPUT_PATH.replace(".csv", "_temp.csv"), index=False)
     if CHECK_FILES_EXISTING:
         all_exist = True
         print("Checking if all files exist...")
@@ -109,7 +113,9 @@ if __name__ == "__main__":
                 print("[MISSING FILE DETECTED] "+row["font_path"])
                 all_exist = False
         if not all_exist:
+            df.to_csv(OUTPUT_PATH.replace(".csv", "_temp.csv"), index=False)
             input("Some files are missing. Press enter to continue saving the csv nonetheless...")
         print("Check complete.")
 
     df.to_csv(OUTPUT_PATH, index=False)
+    os.remove(OUTPUT_PATH.replace(".csv", "_temp.csv"))
