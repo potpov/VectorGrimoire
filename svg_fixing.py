@@ -169,7 +169,7 @@ def get_fixed_svg_drawing(bezier_points: Tensor,
 
 def get_fixed_svg_render(bezier_points: Tensor,
                          positions: Tensor,
-                         method: str,
+                         method: str = "min_dist_clip",
                          stroke_width: float = 0.7,
                          padded_individual_max_length: int = 9.5,
                          width: int = 480,

@@ -8,6 +8,7 @@ from torch import Tensor
 from svgwrite import Drawing
 from transformers import BertTokenizer, BertModel,PreTrainedTokenizerBase
 from torch import nn
+from thesis.svg_fixing import get_fixed_svg_render 
 
 class VQTokenizer:
     """
@@ -250,7 +251,11 @@ class VQTokenizer:
         reconstructed_drawing = shapes_to_drawing(global_shapes, stroke_width=stroke_width, w=w)
         return reconstructed_drawing
     
-    def _tokens_to_image_tensor(self, tokens:Tensor):
+    def _tokens_to_image_tensor(self, tokens:Tensor, post_process:bool = True) -> Tensor:
         bezier_points, positions = self.decode(tokens, ignore_special_tokens=True)
-        drawing = self.assemble_svg(bezier_points, positions, 9.5, 0.7, w=480)
-        return drawing_to_tensor(drawing)
+        if post_process:
+            return_tensor = get_fixed_svg_render(bezier_points, positions, "min_dist_clip", 0.7, 9.5, 480, 4.5)
+        else:
+            drawing = self.assemble_svg(bezier_points, positions, 9.5, 0.7, w=480)
+            return_tensor = drawing_to_tensor(drawing)
+        return return_tensor

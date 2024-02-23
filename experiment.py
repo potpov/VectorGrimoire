@@ -51,7 +51,7 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
             generation, reason = self.model.generate(text_tokens, text_attention_mask, vq_tokens)
             if generation.ndim > 1:
                 generation = generation[0]
-        return self.tokenizer._tokens_to_image_tensor(generation)
+        return self.tokenizer._tokens_to_image_tensor(generation, post_process=True)
 
     def training_step(self, batch, batch_idx, optimizer_idx=0):
         text_tokens, text_attention_mask, vq_tokens, vq_targets, pad_token = batch
@@ -66,7 +66,7 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
             context_10_generation = self._generate_rasterized_sample(text_tokens[:1,:], text_attention_mask[:1,:], vq_tokens[:1, :11])
             if self.wandb:
                 log_all_images([rasterized_gt, context_0_generation, context_5_generation, context_10_generation], 
-                            log_key="train/rasterized_samples", 
+                            log_key="train/rasterized_samples",
                             caption=f"GT: {text_condition}, Gen. only text context, Gen. text + 5 vq tok, Gen. text + 10 vq tok")
         else:
             out, logging_dict = self.forward(text_tokens, text_attention_mask, vq_tokens, logging=False)

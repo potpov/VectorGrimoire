@@ -101,6 +101,7 @@ runner = Trainer(
                         save_last=True,
                         every_n_train_steps=10000),
     ],
+    val_check_interval=0.3,
     log_every_n_steps=int(config['exp_params']["train_log_interval"]),
     profiler=profiler,
     **config['trainer_params']
@@ -114,7 +115,12 @@ Path(f"{wandb_logger.save_dir}/Reconstructions").mkdir(exist_ok=True, parents=Tr
 print(f"======= Training {config['model_params']['name']} =======")
 try:
     # Start training
-    runner.fit(experiment, datamodule=data)
+    if os.path.exists(config["exp_params"]["continue_checkpoint"]):
+        runner.fit(experiment, datamodule=data, ckpt_path=config["exp_params"]["continue_checkpoint"])
+        print(f"[INFO] Successfully loaded checkpoint from {config['exp_params']['continue_checkpoint']}.")
+    else:
+        print("[INFO] Started training from scratch.")
+        runner.fit(experiment, datamodule=data)
     profiler.describe()
     print(profiler.summary())
     with open("profiler_results_stage2.txt", "w+") as f:
