@@ -7,10 +7,11 @@ model_params:
   single_code_representation: true
   vq_method: "fsq"  # "vqvae", "FSQ", "vqtorch"
   fsq_levels: [7,5,5,5,5]  # will determine codebook_size, see Table 1 of FSQ paper - [7,5,5,5,5] for 4096 (e.g. StrokeNUWA), [8,5,5,5] for 1024
+  num_segments: 2
 
 data_params:
   dataset: "stage1"  # must be in the DATASETMAP in run.py
-  top_level_dir: "/scratch2/moritz_data/glyphazzn/svgs_simplified"  # root path for CausalSVGDataModule in dataset.py
+  csv_path: "/scratch2/moritz_data/dafont/full_split.csv"  # root path for CausalSVGDataModule in dataset.py
   channels: 3  # use 3
   width: 128
   train_batch_size: 8

@@ -163,16 +163,28 @@ class Vector_VQVAE(nn.Module):
                  single_code_representation: bool = True,
                  vq_method:str = "fsq",
                  fsq_levels:list =[8,5,5,5],
+                 num_segments:int = 1,
+                 geometric_constraint: str = None,
+                 geometric_constraint_weight: float = 0.1,
                  **kwargs) -> None:
         super(Vector_VQVAE, self).__init__()
 
         assert vector_decoder_model in ["mlp", "raster_conv"], "vector_decoder_model must be one of ['mlp', 'raster_conv']"
+        assert geometric_constraint in ["inner_distance", None], f"geometric_constraint must be one of ['inner_distance'], but was {geometric_constraint}"
 
         self.vector_decoder_model = vector_decoder_model
         self.quantized_dim = quantized_dim
         self.image_loss = image_loss
         self.vq_method = vq_method.lower()
         self.fsq_levels = fsq_levels
+        self.num_segments = num_segments
+        if geometric_constraint is not None:
+            self.geometric_constraint = geometric_constraint
+            self.geometric_constraint_weight = geometric_constraint_weight
+        else:
+            self.geometric_constraint = "None"
+            self.geometric_constraint_weight = 0.0
+
         if self.vq_method == "fsq":
             self.codebook_size = np.prod(fsq_levels)
         else:
@@ -203,7 +215,7 @@ class Vector_VQVAE(nn.Module):
         
         if self.vector_decoder_model == "mlp":
             self.decoder = MLPVectorHeadFixed(latent_dim = self.latent_dim,
-                                              segments = 1,
+                                              segments = self.num_segments,
                                               imsize = 128,
                                               max_stroke_width=20.)
         elif self.vector_decoder_model == "raster_conv":
@@ -315,10 +327,22 @@ class Vector_VQVAE(nn.Module):
             wandb.log(recons_loss_contributions)
         return recon_loss
 
+    def _get_mean_inner_distance(self,
+                        points: Tensor) -> Tensor:
+        """
+        mean inner distance is defined as the distance between start and end point of each segment of the path
+        """
+        inner_dists = []
+        for i in range(self.num_segments):
+            inner_dist = torch.cdist(points[:,:,i*3,:], points[:,:,(i+1)*3,:])
+            inner_dists.append(inner_dist.mean())
+        return torch.mean(torch.tensor(inner_dists))
+
     def loss_function(self,
                       reconstructions: Tensor,
                       gt_images: Tensor,
                       vq_loss: Tensor,
+                      points: Tensor,
                       log_loss: bool = False,
                       **kwargs) -> dict:
         if self.image_loss == "mse":
@@ -327,10 +351,19 @@ class Vector_VQVAE(nn.Module):
             recons_loss = self.gaussian_pyramid_loss(reconstructions, gt_images, down_sample_steps=3, log_loss=log_loss)
         else:
             raise NotImplementedError("Only mse and pyramid loss implemented for now.")
-        loss = recons_loss + vq_loss
+        if self.geometric_constraint == "inner_distance":
+            max_dist = torch.cdist(torch.tensor([[0.0,0.0]]), torch.tensor([[1.0,1.0]])).item()
+            mean_inner_distance = self._get_mean_inner_distance(points)
+            geometric_loss = self.geometric_constraint_weight * (max_dist - mean_inner_distance)
+        else:
+            geometric_loss = 0.0
+        
+        loss = recons_loss * 10 + vq_loss + geometric_loss
+
         return {'loss': loss,
                 'Reconstruction_Loss': recons_loss,
-                'VQ_Loss':vq_loss}
+                'VQ_Loss':vq_loss,
+                self.geometric_constraint : geometric_loss}
     
 
     def generate(self, x: Tensor, **kwargs) -> Tensor:

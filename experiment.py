@@ -238,13 +238,14 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
             out, logging_dict = self.forward(all_center_shapes, logging=False)  # out is [reconstructions, input, all_points, vq_loss]
         reconstructions=out[0]
         inputs = all_center_shapes
-        # all_points = out[2]
+        all_points = out[2]
         vq_loss=out[3]
 
         loss_dict = self.model.loss_function(
             reconstructions=reconstructions[:,:channels,:,:],
             gt_images=inputs,
             vq_loss=vq_loss,
+            points=all_points,
         )
     
         # always log the first batch and variable amount of timesteps up to 10
@@ -282,7 +283,7 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
         out, logging_dict = self.forward(all_center_shapes)
         reconstructions=out[0]
         inputs = all_center_shapes
-        # all_points = out[2]
+        all_points = out[2]
         vq_loss=out[3]
         assert vq_loss.dim() <= 1, f"vq_loss should be a 1D tensor, but got {vq_loss.dim()}"
 
@@ -290,6 +291,7 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
             reconstructions=reconstructions[:,:channels,:,:],
             gt_images=inputs,
             vq_loss=vq_loss,
+            points=all_points,
         )
 
         if batch_idx % self.train_log_interval == 0 and self.wandb:

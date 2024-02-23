@@ -144,10 +144,11 @@ class VQDataset(Dataset):
         self.eos_token = self.tokenizer.special_token_mapping.get("<EOS>")
         self.pad_token = self.tokenizer.special_token_mapping.get("<PAD>")
 
-        self.max_text_length = self.split["text_token_length"].max()
 
         samples_before_filtering = len(self.split)
 
+        self.split = self.split[self.split["text_token_length"] < 16]
+        self.max_text_length = self.split["text_token_length"].max()
         # TODO add font blacklisting here
         self.split = self.split[self.split["vq_token_length"] + self.max_text_length + 2 <= self.context_length]
         self.split = self.split[self.split["vq_token_length"] >= self.min_context_length]
@@ -215,16 +216,6 @@ class VQDataset(Dataset):
 
 class VQDataModule(LightningDataModule):
 
-        # def __init__(self,
-        #          csv_path:str,
-        #          tokenizer: VQTokenizer,
-        #          context_length: int,
-        #          min_context_length: int = 10,
-        #          fraction_of_class_only_inputs: float = 0.2,
-        #          fraction_of_blank_inputs: float = 0.1,
-        #          shuffle_vq_order:bool=False,
-        #          use_given_text_tokens_only: bool=False,
-        #          train:bool = True):
     def __init__(
         self,
         csv_path: str,
@@ -336,7 +327,7 @@ class GlyphazznStage1Dataset(Dataset):
     """
 
     def __init__(self,
-                 top_level_dirs: List[str],
+                 csv_path: List[str],
                  channels: int,
                  width: int,
                  train: bool = True,
@@ -348,7 +339,7 @@ class GlyphazznStage1Dataset(Dataset):
                  **kwargs):
         super(GlyphazznStage1Dataset, self)
         print(f"[INFO] These keywords were provided in GlyphazznStage1Dataset but are not used: {kwargs.keys()}")
-        self.top_level_dirs = top_level_dirs
+        self.csv_path = csv_path
         self.individual_min_length = individual_min_length
         self.individual_max_length = individual_max_length
         self.stroke_width = stroke_width
@@ -359,28 +350,30 @@ class GlyphazznStage1Dataset(Dataset):
         self.subset = subset
         print("[GlyphazznStage1Dataset] loading df...")
         dfs = []
-        for top_level_dir in self.top_level_dirs:
-            df = pd.read_csv(os.path.join(top_level_dir, "split.csv"))
-            if train is not None:
-                df = df[df["split"] == ("train" if self.train else "test")].reset_index(drop=True)
-            else:
-                print("[WARNING] Using the whole dataset! Train was None.")
-            dfs.append(df)
+        # for top_level_dir in self.top_level_dirs:
+        #     df = pd.read_csv(os.path.join(top_level_dir, "split.csv"))
+        #     if train is not None:
+        #         df = df[df["split"] == ("train" if self.train else "test")].reset_index(drop=True)
+        #     else:
+        #         print("[WARNING] Using the whole dataset! Train was None.")
+        #     dfs.append(df)
 
-        self.df = pd.concat(dfs, ignore_index=True).reset_index(drop=True)
+        self.df = pd.read_csv(csv_path)
+        self.class2id = {id_name: class_name for class_name, id_name in enumerate(self.df["class"].unique())}
+        self.df = self.df[self.df["split"] == ("train" if self.train else "test")].reset_index(drop=True)
 
-        if self.subset == "all":
-            self.df = self.df
-        elif self.subset == "numbers":
-            self.df = self.df[self.df["class"].str in [str(i) for i in range(10)]]
-        elif self.subset == "letters":
-            self.df = self.df[self.df["class"].str in string.ascii_letters]
-        elif self.subset == "lowercase":
-            self.df = self.df[self.df["class"].str in string.ascii_lowercase]
-        elif self.subset == "uppercase":
-            self.df = self.df[self.df["class"].str in string.ascii_uppercase]
-        else:
-            raise ValueError(f"Subset {self.subset} not recognized.")
+        # if self.subset == "all":
+        #     self.df = self.df
+        # elif self.subset == "numbers":
+        #     self.df = self.df[self.df["class"].str in [str(i) for i in range(10)]]
+        # elif self.subset == "letters":
+        #     self.df = self.df[self.df["class"].str in string.ascii_letters]
+        # elif self.subset == "lowercase":
+        #     self.df = self.df[self.df["class"].str in string.ascii_lowercase]
+        # elif self.subset == "uppercase":
+        #     self.df = self.df[self.df["class"].str in string.ascii_uppercase]
+        # else:
+        #     raise ValueError(f"Subset {self.subset} not recognized.")
 
     def crop_path_into_segments(self, path:Path, length:float = 5.):
         """
@@ -407,16 +400,16 @@ class GlyphazznStage1Dataset(Dataset):
         return similar_length_paths
     
     def get_similar_length_paths_from_index(self, index, max_length: float = 5.):
-        svg_path = self.df.iloc[index].file_path
+        svg_path = self.df.iloc[index].simplified_svg_file_path
         paths, attributes, svg_attributes = svg2paths2(svg_path)
         single_paths = get_single_paths(paths)
         sim_length_paths = self.get_similar_length_paths(single_paths, max_length=max_length)
         return sim_length_paths
 
     def __getitem__(self, index) -> tuple:
-        svg_path = self.df.iloc[index]["file_path"]
+        svg_path = self.df.iloc[index]["simplified_svg_file_path"]
         label = self.df.iloc[index]["class"]
-        label = string.printable.index(label)
+        label = self.class2id[label]
         description = self.df.iloc[index]["description"]
 
         paths, attributes, svg_attributes = svg2paths2(svg_path)
@@ -438,7 +431,7 @@ class GlyphazznStage1Dataset(Dataset):
         """
         This function is intended to be used by the tokenization process.
         """
-        svg_path = self.df.iloc[index]["file_path"]
+        svg_path = self.df.iloc[index]["simplified_svg_file_path"]
         label = self.df.iloc[index]["class"]
         label = string.printable.index(label)
         description = self.df.iloc[index]["description"]
@@ -470,7 +463,7 @@ class GlyphazznStage1Dataset(Dataset):
 class GlyphazznStage1Datamodule(LightningDataModule):
     def __init__(
         self,
-        top_level_dir: str,
+        csv_path: str,
         train_batch_size: int,
         val_batch_size: int,
         channels: int,
@@ -487,7 +480,7 @@ class GlyphazznStage1Datamodule(LightningDataModule):
         self.train_batch_size = train_batch_size
         self.val_batch_size = val_batch_size
         self.num_workers = num_workers
-        self.top_level_dir = top_level_dir
+        self.csv_path = csv_path
         self.channels = channels
         self.width = width
         self.num_workers = num_workers
@@ -498,7 +491,7 @@ class GlyphazznStage1Datamodule(LightningDataModule):
 
     def setup(self, stage: Optional[str] = None) -> None:
         self.train_dataset = GlyphazznStage1Dataset(
-            self.top_level_dir,
+            self.csv_path,
             self.channels,
             self.width,
             train=True,
@@ -509,7 +502,7 @@ class GlyphazznStage1Datamodule(LightningDataModule):
         )
 
         self.val_dataset = GlyphazznStage1Dataset(
-            self.top_level_dir,
+            self.csv_path,
             self.channels,
             self.width,
             train=False,
