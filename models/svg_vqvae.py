@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 import wandb
-from thesis.utils import log_all_images, tensor_to_histogram_image, calculate_global_positions, shapes_to_drawing, svg_string_to_tensor
+from thesis.utils import log_all_images, tensor_to_histogram_image, calculate_global_positions, shapes_to_drawing, svg_string_to_tensor, add_points_to_image
 from .resnet import ResNet, BasicBlock
 from .vq_vae import VectorQuantizer
 from .mlp_vector_head import MLPVectorHeadFixed
@@ -276,7 +276,7 @@ class Vector_VQVAE(nn.Module):
                 quantized_inputs, indices = self.quantize_layer.forward(encoding)
                 vq_loss = torch.tensor(0.)
                 if logging:
-                    vq_logging_dict = {"codebook_histogram":wandb.Image(tensor_to_histogram_image(indices.detach().flatten().cpu()))}
+                    vq_logging_dict = {"codebook_histogram":wandb.Image(tensor_to_histogram_image(indices.detach().flatten().cpu()), caption="histogram of codebook indices")}
                     
             # flatten it for MLP digestion
             quantized_inputs = quantized_inputs.view(bs, self.latent_dim)
@@ -354,16 +354,17 @@ class Vector_VQVAE(nn.Module):
         if self.geometric_constraint == "inner_distance":
             max_dist = torch.cdist(torch.tensor([[0.0,0.0]]), torch.tensor([[1.0,1.0]])).item()
             mean_inner_distance = self._get_mean_inner_distance(points)
-            geometric_loss = self.geometric_constraint_weight * (max_dist - mean_inner_distance)
+            # loss is weighted by the mean of black pixels, so that short strokes are not penalized as much
+            geometric_loss = (max_dist - mean_inner_distance) * (1- gt_images).mean()
         else:
             geometric_loss = 0.0
         
-        loss = recons_loss * 10 + vq_loss + geometric_loss
+        loss = recons_loss + vq_loss + self.geometric_constraint_weight * geometric_loss
 
         return {'loss': loss,
                 'Reconstruction_Loss': recons_loss,
                 'VQ_Loss':vq_loss,
-                self.geometric_constraint : geometric_loss}
+                self.geometric_constraint+"_loss" : self.geometric_constraint_weight * geometric_loss}
     
 
     def generate(self, x: Tensor, **kwargs) -> Tensor:
@@ -390,7 +391,7 @@ class Vector_VQVAE(nn.Module):
             - reconstructed_drawing (Drawing): Reconstructed drawing (use to save svg)
             - rasterized_reconstructions (Tensor): Rasterized reconstructions
         """
-        [reconstructions, input, all_points, vq_loss], logging_dict = self.forward(patches)
+        [reconstructions, input, all_points, vq_loss], logging_dict = self.forward(patches, logging = False)
         global_shapes = calculate_global_positions(all_points, padded_individual_max_length, gt_center_positions)[:,0]
         reconstructed_drawing = shapes_to_drawing(global_shapes, stroke_width=stroke_width, w=rendered_w)
         rasterized_reconstructions = svg_string_to_tensor(reconstructed_drawing.tostring())
