@@ -4,11 +4,11 @@ import numpy as np
 import os
 import yaml
 import torch
-from models import VectorGPTv2
-from dataset import NewCausalSVGDataModule
+from thesis.models import VectorGPTv2
+from thesis.dataset import NewCausalSVGDataModule
 from glob import glob
 import random
-from datasets.make_causal_positional_dataset import all_paths_to_max_diff, get_single_paths, svg2paths2, get_positional_array_from_paths
+from thesis.datasets.make_causal_positional_dataset import all_paths_to_max_diff, get_single_paths, svg2paths2, get_positional_array_from_paths
 from svgpathtools import Path, Line, CubicBezier, disvg
 from torchvision.utils import save_image, make_grid
 

@@ -3,7 +3,7 @@ import random
 import torch
 from torch import Tensor
 import wandb
-from models import BaseVAE
+from thesis.models import BaseVAE
 from torch import nn
 from torch.nn import functional as F
 from PIL import Image

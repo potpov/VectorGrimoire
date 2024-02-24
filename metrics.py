@@ -6,7 +6,7 @@ import torchvision.utils as vutils
 import matplotlib.pyplot as plt
 from PIL import Image
 import os
-from models import VanillaVAE
+from thesis.models import VanillaVAE
 
 def _load_vanilla_vae(config_path: str, weights_path:str, device:str = "cuda:0"):
     with open(config_path, 'r') as file:
