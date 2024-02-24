@@ -6,8 +6,8 @@ from torch import optim
 import wandb
 from .models import BaseVAE, VectorVAEnLayers, VectorGPT, VectorGPTv2, Vector_VQVAE, VQ_SVG_Stage2
 import pytorch_lightning as pl
-from .utils import log_images, log_all_images
-from .tokenizer import VQTokenizer
+from thesis.utils import log_images, log_all_images, add_points_to_image, get_side_by_side_reconstruction
+from thesis.tokenizer import VQTokenizer
 from torchmetrics.image.fid import FrechetInceptionDistance
 from torchmetrics.multimodal.clip_score import CLIPScore
 import torch.nn.functional as F
@@ -203,13 +203,14 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
 
     def __init__(self,
                  model: Vector_VQVAE,
-                 vector_decoder_model: str = "raster_conv",  # or mlp
+                 vector_decoder_model: str = "mlp",  # or mlp
                  lr: float = 0.0003,
                  weight_decay: float = 0.0,
                  scheduler_gamma: float = 0.99,
                  train_log_interval: int = 30,
                  manual_seed: int = 42,
                  wandb: bool = True,
+                 datamodule = None,
                  **kwargs) -> None:
         super(VectorVQVAE_Experiment_Stage1, self).__init__()
 
@@ -222,6 +223,7 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
         self.manual_seed = manual_seed
         self.curr_device = None
         self.wandb = wandb
+        self.datamodule = datamodule
 
     def forward(self, input_images: Tensor, logging=False,**kwargs) -> list:
         out, logging_dict = self.model.forward(input_images, logging=logging, **kwargs)
@@ -250,20 +252,26 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
     
         # always log the first batch and variable amount of timesteps up to 10
         if batch_idx % self.train_log_interval == 0 and self.wandb:
-            logging_dict = {f"train/{key}": value for key, value in logging_dict.items()}
-            wandb.log(logging_dict)
-            if reconstructions.shape[0] > 10:
-                log_amount = 10
-            else:
-                log_amount = reconstructions.shape[0]
+            with torch.no_grad():
+                logging_dict = {f"train/{key}": value for key, value in logging_dict.items()}
+                wandb.log(logging_dict)
+                random_idx = random.randint(0, len(self.datamodule.train_dataset))
+                side_by_side_recons = get_side_by_side_reconstruction(self.model, self.datamodule.train_dataset, idx = random_idx, device = self.curr_device)
+                wandb.log({"train/side_by_side_recons":wandb.Image(side_by_side_recons, caption="side by side reconstructions of training sample")})
+                if reconstructions.shape[0] > 25:
+                    log_amount = 25
+                else:
+                    log_amount = reconstructions.shape[0]
 
-            # Log input against prediction
-            log_images(
-                reconstructions[:log_amount],
-                inputs[:log_amount],
-                log_key="train/reconstruction",
-                captions="input (left) vs. reconstruction (right)"
-            )
+                log_reconstructions = add_points_to_image(all_points, reconstructions[:,:3,:,:], image_scale=reconstructions.shape[-1])
+
+                # Log input against prediction
+                log_images(
+                    log_reconstructions[:log_amount],
+                    inputs[:log_amount],
+                    log_key="train/reconstruction",
+                    captions="input (left) vs. reconstruction (right)"
+                )
 
         self.log_dict(loss_dict)
         return loss_dict["loss"]
@@ -274,41 +282,45 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
         return {}
 
     def validation_step(self, batch, batch_idx, optimizer_idx=0):
+        with torch.no_grad():
+            all_center_shapes, label, centers, descriptions = batch
+            self.curr_device = all_center_shapes.device
+            bs = all_center_shapes.shape[0]
+            channels = all_center_shapes.shape[1]
 
-        all_center_shapes, label, centers, descriptions = batch
-        self.curr_device = all_center_shapes.device
-        bs = all_center_shapes.shape[0]
-        channels = all_center_shapes.shape[1]
+            out, logging_dict = self.forward(all_center_shapes)
+            reconstructions=out[0]
+            inputs = all_center_shapes
+            all_points = out[2]
+            vq_loss=out[3]
+            assert vq_loss.dim() <= 1, f"vq_loss should be a 1D tensor, but got {vq_loss.dim()}"
 
-        out, logging_dict = self.forward(all_center_shapes)
-        reconstructions=out[0]
-        inputs = all_center_shapes
-        all_points = out[2]
-        vq_loss=out[3]
-        assert vq_loss.dim() <= 1, f"vq_loss should be a 1D tensor, but got {vq_loss.dim()}"
-
-        loss_dict = self.model.loss_function(
-            reconstructions=reconstructions[:,:channels,:,:],
-            gt_images=inputs,
-            vq_loss=vq_loss,
-            points=all_points,
-        )
-
-        if batch_idx % self.train_log_interval == 0 and self.wandb:
-            logging_dict = {f"val/{key}": value for key, value in logging_dict.items()}
-            wandb.log(logging_dict)
-            if reconstructions.shape[0] > 10:
-                log_amount = 10
-            else:
-                log_amount = reconstructions.shape[0]
-
-            # Log input against prediction
-            log_images(
-                reconstructions[:log_amount],
-                inputs[:log_amount],
-                log_key="val/reconstruction",
-                captions="input (left) vs. reconstruction (right)"
+            loss_dict = self.model.loss_function(
+                reconstructions=reconstructions[:,:channels,:,:],
+                gt_images=inputs,
+                vq_loss=vq_loss,
+                points=all_points,
             )
+            # log_reconstructions = add_points_to_image(all_points, reconstructions[:,:3,:,:], image_scale=reconstructions.shape[-1])
+            if batch_idx % self.train_log_interval == 0 and self.wandb:
+                logging_dict = {f"val/{key}": value for key, value in logging_dict.items()}
+                wandb.log(logging_dict)
+                random_idx = random.randint(0, len(self.datamodule.val_dataset))
+                side_by_side_recons = get_side_by_side_reconstruction(self.model, self.datamodule.val_dataset, idx = random_idx, device = self.curr_device)
+                wandb.log({"val/side_by_side_recons":wandb.Image(side_by_side_recons, caption="side by side reconstructions of validation sample")})
+                if reconstructions.shape[0] > 25:
+                    log_amount = 25
+                else:
+                    log_amount = reconstructions.shape[0]
+
+                log_reconstructions = add_points_to_image(all_points[:log_amount], reconstructions[:log_amount,:3,:,:], image_scale=reconstructions.shape[-1])
+                # Log input against prediction
+                log_images(
+                    log_reconstructions[:log_amount],
+                    inputs[:log_amount],
+                    log_key="val/reconstruction",
+                    captions="input (left) vs. reconstruction (right)"
+                )
 
         self.log("val_loss", loss_dict["loss"])
         return loss_dict["loss"]

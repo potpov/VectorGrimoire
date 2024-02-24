@@ -8,11 +8,11 @@ from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import WandbLogger, TensorBoardLogger
 from pytorch_lightning import seed_everything
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, LearningRateFinder, EarlyStopping
-from .dataset import MNISTDataset, MNISTppDataset, NounProjectDataset, EmojiDataset, MNISTDatasetCSVG, CausalSVGDataModule, NewCausalSVGDataModule, CenterShapeLayersFromSVGDataModule, VQDataModule, GlyphazznStage1Datamodule
-from .models import VAEctorGen, VectorGPT, VanillaVAE, VectorVAEnLayers, VectorGPTv2, Vector_VQVAE
-from .experiment import VAEXperiment, VectorGPTExperiment, VectorGPTExperimentv2, VectorVQVAE_Experiment_Stage1, SVG_VQVAE_Stage2_Experiment
+from thesis.dataset import MNISTDataset, MNISTppDataset, NounProjectDataset, EmojiDataset, MNISTDatasetCSVG, CausalSVGDataModule, NewCausalSVGDataModule, CenterShapeLayersFromSVGDataModule, VQDataModule, GlyphazznStage1Datamodule
+from thesis.models import VAEctorGen, VectorGPT, VanillaVAE, VectorVAEnLayers, VectorGPTv2, Vector_VQVAE
+from thesis.experiment import VAEXperiment, VectorGPTExperiment, VectorGPTExperimentv2, VectorVQVAE_Experiment_Stage1, SVG_VQVAE_Stage2_Experiment
 import wandb
-from .utils import get_rank
+from thesis.utils import get_rank
 import torch
 from pytorch_lightning.profilers import SimpleProfiler
 
@@ -98,20 +98,20 @@ else:
     model = MODELS[config['model_params']['name']](**config['model_params'])
 print("Loading dataset...")
 if config['model_params']['name'] == "VectorGPT":
+    data = DATASETMAP[config["data_params"]["dataset"]](**config["data_params"])
     experiment = VectorGPTExperiment(model, **config['exp_params'], wandb = args.wandb)
-    data = DATASETMAP[config["data_params"]["dataset"]](**config["data_params"])
 elif config['model_params']['name'] == "VectorGPTv2":
+    data = DATASETMAP[config["data_params"]["dataset"]](**config["data_params"])
     experiment = VectorGPTExperimentv2(model, **config['exp_params'], wandb = args.wandb)
-    data = DATASETMAP[config["data_params"]["dataset"]](**config["data_params"])
 elif config['model_params']['name'] == "SVG_VAQVAE":
-    experiment = VectorVQVAE_Experiment_Stage1(model, **config['exp_params'], wandb = args.wandb)
     data = DATASETMAP[config["data_params"]["dataset"]](**config["data_params"])
+    experiment = VectorVQVAE_Experiment_Stage1(model, **config['exp_params'], wandb = args.wandb, datamodule = data)
 elif config['model_params']['name'] == "VQ_Transformer":
-    experiment = SVG_VQVAE_Stage2_Experiment(model, **config['exp_params'], wandb = args.wandb)
     data = DATASETMAP[config["data_params"]["dataset"]](**config["data_params"], context_length = config["model_params"]["max_seq_len"])
+    experiment = SVG_VQVAE_Stage2_Experiment(model, **config['exp_params'], wandb = args.wandb)
 else:
-    experiment = VAEXperiment(model, config['exp_params'])
     data = DATASETMAP[config["data_params"]["dataset"]](**config["data_params"])
+    experiment = VAEXperiment(model, config['exp_params'])
 
 print("Setting up data...")
 data.setup()
@@ -128,7 +128,7 @@ runner = Trainer(
                         dirpath=os.path.join(config['logging_params']['save_dir'], "checkpoints"),
                         monitor="val_loss",
                         save_last=True,
-                        every_n_train_steps=5000),
+                        every_n_train_steps=2000),
     ],
     #  overfit_batches=20,
     log_every_n_steps=max(int(config['exp_params']["train_log_interval"] / 10), 5),

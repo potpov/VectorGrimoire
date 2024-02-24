@@ -336,6 +336,7 @@ class GlyphazznStage1Dataset(Dataset):
                  individual_max_length: float = 10.,
                  stroke_width: float = 0.3,
                  max_shapes_per_svg: int = 64,
+                 use_single_paths:bool = False,
                  **kwargs):
         super(GlyphazznStage1Dataset, self)
         print(f"[INFO] These keywords were provided in GlyphazznStage1Dataset but are not used: {kwargs.keys()}")
@@ -348,6 +349,7 @@ class GlyphazznStage1Dataset(Dataset):
         self.width = width
         self.train = train
         self.subset = subset
+        self.use_single_paths = use_single_paths
         print("[GlyphazznStage1Dataset] loading df...")
         dfs = []
         # for top_level_dir in self.top_level_dirs:
@@ -361,6 +363,9 @@ class GlyphazznStage1Dataset(Dataset):
         self.df = pd.read_csv(csv_path)
         self.class2id = {id_name: class_name for class_name, id_name in enumerate(self.df["class"].unique())}
         self.df = self.df[self.df["split"] == ("train" if self.train else "test")].reset_index(drop=True)
+        if not train:
+            print("[INFO] Subsampling test set to 1000 samples.")
+            self.df = self.df.sample(min(1000, len(self.df)), random_state=42).reset_index(drop=True)
 
         # if self.subset == "all":
         #     self.df = self.df
@@ -387,10 +392,21 @@ class GlyphazznStage1Dataset(Dataset):
 
         return segments
 
-    def get_similar_length_paths(self, single_paths, max_length: float = 5.):
+    def get_similar_length_paths(self, single_paths, max_length: float = 5., filter_min_length:bool = False):
+        """
+        splits all the paths into similar length segments if they're too long
+        """
         similar_length_paths = []
-        single_paths = [x for x in single_paths if x.length() >= self.individual_min_length]
+        if filter_min_length:
+            prev_len = len(single_paths)
+            single_paths = [x for x in single_paths if x.length() >= self.individual_min_length]
+            after_len = len(single_paths)
+            if after_len >= 0.8 * len(prev_len):
+                print("More than 80% of paths were removed because they were too short. This is likely an error.")
         for path in single_paths:
+            if path.length() < self.individual_min_length:
+                similar_length_paths.append(path)
+                continue
             try:
                 segments = self.crop_path_into_segments(path, length=max_length)
                 similar_length_paths.extend(segments)
@@ -413,15 +429,18 @@ class GlyphazznStage1Dataset(Dataset):
         description = self.df.iloc[index]["description"]
 
         paths, attributes, svg_attributes = svg2paths2(svg_path)
-        single_paths = get_single_paths(paths)
-        # queue = copy.deepcopy(single_paths)
-        sim_length_paths = self.get_similar_length_paths(single_paths, self.individual_max_length)
-        assert check_for_continouity(sim_length_paths), "paths are not continous"
+        if self.use_single_paths:
+            single_paths = get_single_paths(paths)
+            single_paths = self.get_similar_length_paths(single_paths, self.individual_max_length, filter_min_length=False)
+        else:
+            single_paths = self.get_similar_length_paths(paths, self.individual_max_length)
+        
+        assert check_for_continouity(single_paths), "paths are not continous"
         # select a random slice of the paths of length max_shapes_per_svg
-        if len(sim_length_paths) > self.max_shapes_per_svg:
-            start_idx = random.randint(0, len(sim_length_paths) - self.max_shapes_per_svg)
-            sim_length_paths = sim_length_paths[start_idx:start_idx+self.max_shapes_per_svg]
-        rasterized_segments, centers = get_rasterized_segments(sim_length_paths, self.stroke_width, self.individual_max_length, svg_attributes, centered=True, height=self.width, width=self.width)
+        if len(single_paths) > self.max_shapes_per_svg:
+            start_idx = random.randint(0, len(single_paths) - self.max_shapes_per_svg)
+            single_paths = single_paths[start_idx:start_idx+self.max_shapes_per_svg]
+        rasterized_segments, centers = get_rasterized_segments(single_paths, self.stroke_width, self.individual_max_length, svg_attributes, centered=True, height=self.width, width=self.width)
         imgs = torch.stack(rasterized_segments)  # (n_shapes, channels, width, width)
         centers = torch.tensor(centers)  # (n_shapes, 2)
         labels = torch.ones(imgs.size(0)) * label
@@ -433,24 +452,29 @@ class GlyphazznStage1Dataset(Dataset):
         """
         svg_path = self.df.iloc[index]["simplified_svg_file_path"]
         label = self.df.iloc[index]["class"]
-        label = string.printable.index(label)
+        label = self.class2id[label]
         description = self.df.iloc[index]["description"]
 
         paths, attributes, svg_attributes = svg2paths2(svg_path)
-        single_paths = get_single_paths(paths)  # cannot be further optimized
-        # queue = copy.deepcopy(single_paths)
-        sim_length_paths = self.get_similar_length_paths(single_paths, self.individual_max_length)
-        assert check_for_continouity(sim_length_paths), "paths are not continous"
-        rasterized_segments, centers = get_rasterized_segments(sim_length_paths, self.stroke_width, self.individual_max_length, svg_attributes, centered=True, height=self.width, width=self.width)
+        if self.use_single_paths:
+            single_paths = get_single_paths(paths, self.individual_max_length)
+        else:
+            single_paths = self.get_similar_length_paths(paths, self.individual_max_length)
+        assert check_for_continouity(single_paths), "paths are not continous"
+        rasterized_segments, centers = get_rasterized_segments(single_paths, self.stroke_width, self.individual_max_length, svg_attributes, centered=True, height=self.width, width=self.width)
         imgs = torch.stack(rasterized_segments)  # (n_shapes, channels, width, width)
         centers = torch.tensor(centers)  # (n_shapes, 2)
         labels = torch.ones(imgs.size(0)) * label
         return imgs, labels.int(), centers, description
     
     def _get_full_svg_drawing(self, index, width:int = 720, as_tensor:bool = False):
-        svg_path = self.df.iloc[index].file_path
+        svg_path = self.df.iloc[index].simplified_svg_file_path
         paths, attributes, svg_attributes = svg2paths2(svg_path)
-        single_paths = get_single_paths(paths)
+        if self.use_single_paths:
+            single_paths = get_single_paths(paths)
+        else:
+            single_paths = self.get_similar_length_paths(paths, self.individual_max_length)
+        # single_paths = get_single_paths(paths)
         drawing = disvg(single_paths, paths2Drawing=True, stroke_widths=[self.stroke_width]*len(single_paths), viewbox = svg_attributes["viewBox"],dimensions=(width, width))
         if as_tensor:
             return svg_string_to_tensor(drawing.tostring())
@@ -473,6 +497,7 @@ class GlyphazznStage1Datamodule(LightningDataModule):
         num_workers: int = 0,
         stroke_width: float = 0.3,
         subset:str = "all",
+        use_single_paths:bool = False,
         **kwargs,
     ):
         super().__init__()
@@ -485,9 +510,10 @@ class GlyphazznStage1Datamodule(LightningDataModule):
         self.width = width
         self.num_workers = num_workers
         self.stroke_width = stroke_width
-        self.individual_max_length = individual_max_length#
+        self.individual_max_length = individual_max_length
         self.subset = subset
         self.max_shapes_per_svg = max_shapes_per_svg
+        self.use_single_paths = use_single_paths
 
     def setup(self, stage: Optional[str] = None) -> None:
         self.train_dataset = GlyphazznStage1Dataset(
@@ -499,6 +525,7 @@ class GlyphazznStage1Datamodule(LightningDataModule):
             individual_max_length=self.individual_max_length,
             stroke_width=self.stroke_width,
             max_shapes_per_svg=self.max_shapes_per_svg,
+            use_single_paths=self.use_single_paths
         )
 
         self.val_dataset = GlyphazznStage1Dataset(
@@ -510,6 +537,7 @@ class GlyphazznStage1Datamodule(LightningDataModule):
             individual_max_length=self.individual_max_length,
             stroke_width=self.stroke_width,
             max_shapes_per_svg=self.max_shapes_per_svg,
+            use_single_paths=self.use_single_paths
         )
 
     #       ===============================================================

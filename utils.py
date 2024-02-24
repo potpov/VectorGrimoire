@@ -25,6 +25,42 @@ def svg_file_path_to_tensor(path, permuted = True, plot=False):
         plt.imshow(return_tensor)
     return return_tensor
 
+def add_points_to_image(all_points:Tensor, image:Tensor, image_scale:int):
+    """
+    inputs:
+    - all_points: tensor of shape (batch, n_points, 2)
+    - image: tensor of shape (batch, 3, 128, 128)
+    - image_scale: 128 if the image is 128x128, 224 if the image is 224x224
+
+    this function should be used to add predicted points to a reconstructed image for better debugging of shape predictions. 
+    start/end points are red, bending control points are green.
+    """
+    all_points = all_points.detach().clone()
+    image = image.detach().clone()
+    for batch in range(all_points.shape[0]):
+        for i, point in enumerate(all_points[batch][0]):
+            point = point * image_scale
+            point = point.long()
+            # this could crash if the point is outside the image or on the border
+            # try:
+            radius = 2
+            if i%3 == 0:
+                image[batch, 0, point[1]-radius:point[1]+radius, point[0]-radius:point[0]+radius] = 1
+                image[batch, 1, point[1]-radius:point[1]+radius, point[0]-radius:point[0]+radius] = 0
+                image[batch, 2, point[1]-radius:point[1]+radius, point[0]-radius:point[0]+radius] = 0
+            elif i<3:
+                image[batch, 0, point[1]-radius:point[1]+1, point[0]-1:point[0]+1] = 0
+                image[batch, 1, point[1]-radius:point[1]+1, point[0]-1:point[0]+1] = 1
+                image[batch, 2, point[1]-radius:point[1]+1, point[0]-1:point[0]+1] = 0
+            elif i>3:
+                image[batch, 0, point[1]-radius:point[1]+radius, point[0]-radius:point[0]+1] = 0
+                image[batch, 1, point[1]-radius:point[1]+radius, point[0]-radius:point[0]+1] = 0.5
+                image[batch, 2, point[1]-radius:point[1]+radius, point[0]-radius:point[0]+1] = 1
+
+            # except Exception as e:
+            #     print("[INFO] couldnt add points to logging image", e)
+    return image
+
 def svg_string_to_tensor(svg_string):
     # Convert SVG string to PNG bytes
     png_bytes = cairosvg.svg2png(bytestring=svg_string, background_color="white")
@@ -39,6 +75,36 @@ def svg_string_to_tensor(svg_string):
     tensor = ToTensor()(image)
     
     return tensor
+
+def get_side_by_side_reconstruction(model, dataset, idx, device, w=480):
+    """
+    model must be Vector_VQVAE
+    dataset must be GlyphazznStage1Dataset
+    """
+    # Get the ground truth SVG drawing
+    gt = dataset._get_full_svg_drawing(idx, width=w, as_tensor=True)
+
+    # Reconstruct the SVG drawing
+    patches, labels, positions, _ = dataset._get_full_item(idx)
+    patches = patches.to(device)
+    positions = positions.to(device)
+    _, recons_rastered_drawing = model.reconstruct(patches, positions, dataset.individual_max_length +2, dataset.stroke_width, rendered_w=w)
+    fig, axes = plt.subplots(1, 2, figsize=(10, 5))
+    # Plot reconstructed drawing
+    axes[1].imshow(recons_rastered_drawing.permute(1, 2, 0))
+    axes[1].set_title('Reconstructed SVG')
+
+    # Plot ground truth drawing
+    axes[0].imshow(gt.permute(1, 2, 0))
+    axes[0].set_title('Ground Truth SVG')
+    for ax in axes:
+        ax.axis('off')
+     
+    fig.tight_layout()
+    img = fig2img(fig)
+    plt.close(fig)
+
+    return img
 
 def drawing_to_tensor(drawing: Drawing):
     return svg_string_to_tensor(drawing.tostring())
@@ -77,15 +143,36 @@ def stroke_points_to_bezier(my_tensor:Tensor):
     """
     return CubicBezier(tensor_to_complex(my_tensor[0]), tensor_to_complex(my_tensor[1]), tensor_to_complex(my_tensor[2]), tensor_to_complex(my_tensor[3]))
 
+def stroke_to_path(my_tensor: Tensor):
+    """
+    expects my_tensor to be in shape (1+3*num_segments, 2)
+    """
+    num_segments = (my_tensor.shape[0] - 1) // 3
+    all_paths = []
+    for seg_idx in range(num_segments):
+        start_idx = seg_idx * 3
+        end_idx = (seg_idx+1) * 3 + 1
+        all_paths.append(stroke_points_to_bezier(my_tensor[start_idx:end_idx]))
+    return Path(*all_paths)
+
 def shapes_to_drawing(shapes:Tensor, stroke_width:float, w=128) -> Drawing:
     """
     expects shapes to be in shape (n, 4, 2)
     """
     all_shapes = []
     for shape in shapes:
-        all_shapes.append(stroke_points_to_bezier(shape))
+        all_shapes.append(stroke_to_path(shape))
     drawing = disvg(all_shapes, stroke_widths=[stroke_width]*len(all_shapes), paths2Drawing=True, viewbox=f"0 0 72 72", dimensions=(w, w))  # I think the 72 comes from the simplified svg files
     return drawing
+
+def fig2img(fig):
+    """Convert a Matplotlib figure to a PIL Image and return it"""
+    import io
+    buf = io.BytesIO()
+    fig.savefig(buf)
+    buf.seek(0)
+    img = Image.open(buf)
+    return img
 
 def fig2data(fig):
     """
@@ -308,8 +395,8 @@ def get_rasterized_segments(single_paths:list, stroke_width:float, total_max_dif
     if centered:
         single_paths = [my_path for my_path in single_paths if my_path.length() > 0.]
         if len(single_paths) == 0:
-            print("[INFO] tried to rasterize an empty path")
-            return [torch.zeros((3, height, width)), torch.zeros((3, height, width))], [[width/2,height/2], [width/2,height/2]]
+            # print("[INFO] tried to rasterize an empty path")
+            return [torch.ones((3, height, width)), torch.ones((3, height, width))], [[width/2,height/2], [width/2,height/2]]
         out = [get_viewbox(my_path, total_max_diff) for my_path in single_paths]
         viewboxes = [x[0] for x in out]
         centers = [x[1] for x in out]
