@@ -190,7 +190,7 @@ class VQDataset(Dataset):
         else:
             text_to_tokenize = np.random.choice([self.split.iloc[idx]["class"], self.split.iloc[idx]["description"], ""],
                                              p=[self.fraction_of_class_only_inputs, self.fraction_of_full_description_inputs, self.fraction_of_blank_inputs])
-            if text_to_tokenize in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+            if text_to_tokenize in "ABCDEFGHIJKLMNOPQRSTUVWXYZ" and len(text_to_tokenize) == 1:
                 text_to_tokenize = f"capital {text_to_tokenize}"
             text_tokens = self.tokenizer.tokenize_text(text_to_tokenize)
 
