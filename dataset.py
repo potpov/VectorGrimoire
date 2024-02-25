@@ -190,6 +190,8 @@ class VQDataset(Dataset):
         else:
             text_to_tokenize = np.random.choice([self.split.iloc[idx]["class"], self.split.iloc[idx]["description"], ""],
                                              p=[self.fraction_of_class_only_inputs, self.fraction_of_full_description_inputs, self.fraction_of_blank_inputs])
+            if text_to_tokenize in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+                text_to_tokenize = f"capital {text_to_tokenize}"
             text_tokens = self.tokenizer.tokenize_text(text_to_tokenize)
 
         text_tokens = self._get_padded_text_tokens(text_tokens)
@@ -427,8 +429,11 @@ class GlyphazznStage1Dataset(Dataset):
         label = self.df.iloc[index]["class"]
         label = self.class2id[label]
         description = self.df.iloc[index]["description"]
-
-        paths, attributes, svg_attributes = svg2paths2(svg_path)
+        try:
+            paths, attributes, svg_attributes = svg2paths2(svg_path)
+        except Exception as e:
+            print(f"[ERROR] Could not load {svg_path}. Exception: {e}")
+            return torch.ones(2,3,128,128), torch.ones(2).int(), torch.ones(2,2), "EMPTY"
         if self.use_single_paths:
             single_paths = get_single_paths(paths)
             single_paths = self.get_similar_length_paths(single_paths, self.individual_max_length, filter_min_length=False)
@@ -437,6 +442,7 @@ class GlyphazznStage1Dataset(Dataset):
         
         assert check_for_continouity(single_paths), "paths are not continous"
         # select a random slice of the paths of length max_shapes_per_svg
+        single_paths = [path for path in single_paths if path.length() > 0.]
         if len(single_paths) > self.max_shapes_per_svg:
             start_idx = random.randint(0, len(single_paths) - self.max_shapes_per_svg)
             single_paths = single_paths[start_idx:start_idx+self.max_shapes_per_svg]
@@ -461,6 +467,7 @@ class GlyphazznStage1Dataset(Dataset):
         else:
             single_paths = self.get_similar_length_paths(paths, self.individual_max_length)
         assert check_for_continouity(single_paths), "paths are not continous"
+        single_paths = [path for path in single_paths if path.length() > 0.]
         rasterized_segments, centers = get_rasterized_segments(single_paths, self.stroke_width, self.individual_max_length, svg_attributes, centered=True, height=self.width, width=self.width)
         imgs = torch.stack(rasterized_segments)  # (n_shapes, channels, width, width)
         centers = torch.tensor(centers)  # (n_shapes, 2)
@@ -475,6 +482,7 @@ class GlyphazznStage1Dataset(Dataset):
         else:
             single_paths = self.get_similar_length_paths(paths, self.individual_max_length)
         # single_paths = get_single_paths(paths)
+        single_paths = [path for path in single_paths if path.length() > 0.]
         drawing = disvg(single_paths, paths2Drawing=True, stroke_widths=[self.stroke_width]*len(single_paths), viewbox = svg_attributes["viewBox"],dimensions=(width, width))
         if as_tensor:
             return svg_string_to_tensor(drawing.tostring())
