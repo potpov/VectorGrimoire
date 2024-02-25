@@ -401,7 +401,7 @@ def get_rasterized_segments(single_paths:list, stroke_width:float, total_max_dif
         viewboxes = [x[0] for x in out]
         centers = [x[1] for x in out]
         if colors is not None:
-            rasterized_segments = [raster(disvg(my_path, paths2Drawing=True, colors=colors, stroke_widths=[stroke_width] * len(my_path), viewbox=viewboxes[i]), out_h = height, out_w = width) for i, my_path in enumerate(single_paths)]
+            rasterized_segments = [raster(disvg(my_path, paths2Drawing=True, colors=[colors[i]], stroke_widths=[stroke_width] * len(my_path), viewbox=viewboxes[i]), out_h = height, out_w = width) for i, my_path in enumerate(single_paths)]
         else:
             rasterized_segments = [raster(disvg(my_path, paths2Drawing=True, stroke_widths=[stroke_width] * len(my_path), viewbox=viewboxes[i]), out_h = height, out_w = width) for i, my_path in enumerate(single_paths)]
         return rasterized_segments, centers
