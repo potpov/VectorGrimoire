@@ -115,7 +115,7 @@ Path(f"{wandb_logger.save_dir}/Reconstructions").mkdir(exist_ok=True, parents=Tr
 print(f"======= Training {config['model_params']['name']} =======")
 try:
     # Start training
-    if os.path.exists(config["exp_params"]["continue_checkpoint"]):
+    if "continue_checkpoint" in config["exp_params"] and os.path.exists(config["exp_params"]["continue_checkpoint"]):
         runner.fit(experiment, datamodule=data, ckpt_path=config["exp_params"]["continue_checkpoint"])
         print(f"[INFO] Successfully loaded checkpoint from {config['exp_params']['continue_checkpoint']}.")
     else:
