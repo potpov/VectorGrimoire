@@ -144,7 +144,10 @@ Path(f"{wandb_logger.save_dir}/Reconstructions").mkdir(exist_ok=True, parents=Tr
 print(f"======= Training {config['model_params']['name']} =======")
 try:
     # Start training
-    runner.fit(experiment, datamodule=data)
+    if os.path.exists(config["exp_params"]["continue_checkpoint"]):
+        runner.fit(experiment, datamodule=data, ckpt_path=config["exp_params"]["continue_checkpoint"])
+    else:
+        runner.fit(experiment, datamodule=data)
     profiler.describe()
     print(profiler.summary())
     with open("profiler_results.txt", "w") as f:
