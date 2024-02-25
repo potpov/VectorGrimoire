@@ -391,7 +391,7 @@ def get_viewbox(single_path, total_max_diff, offset: float = 1.0):
     viewbox = f"{new_top_left.real - offset} {new_top_left.imag - offset} {total_max_diff + offset*2} {total_max_diff + offset*2}"
     return viewbox, [center.real, center.imag]
 
-def get_rasterized_segments(single_paths:list, stroke_width:float, total_max_diff: float, svg_attributes, centered = False, height: int = 128, width: int = 128) -> List:
+def get_rasterized_segments(single_paths:list, stroke_width:float, total_max_diff: float, svg_attributes, centered = False, height: int = 128, width: int = 128, colors=None) -> List:
     if centered:
         single_paths = [my_path for my_path in single_paths if my_path.length() > 0.]
         if len(single_paths) == 0:
@@ -400,7 +400,10 @@ def get_rasterized_segments(single_paths:list, stroke_width:float, total_max_dif
         out = [get_viewbox(my_path, total_max_diff) for my_path in single_paths]
         viewboxes = [x[0] for x in out]
         centers = [x[1] for x in out]
-        rasterized_segments = [raster(disvg(my_path, paths2Drawing=True, stroke_widths=[stroke_width] * len(my_path), viewbox=viewboxes[i]), out_h = height, out_w = width) for i, my_path in enumerate(single_paths)]
+        if colors is not None:
+            rasterized_segments = [raster(disvg(my_path, paths2Drawing=True, colors=colors, stroke_widths=[stroke_width] * len(my_path), viewbox=viewboxes[i]), out_h = height, out_w = width) for i, my_path in enumerate(single_paths)]
+        else:
+            rasterized_segments = [raster(disvg(my_path, paths2Drawing=True, stroke_widths=[stroke_width] * len(my_path), viewbox=viewboxes[i]), out_h = height, out_w = width) for i, my_path in enumerate(single_paths)]
         return rasterized_segments, centers
     else:
         viewbox=svg_attributes["viewBox"]
