@@ -97,6 +97,7 @@ class Legacy_VQDataset(Dataset):
 class VQDataset(Dataset):
     """
     main input here is the csv_path to a split.csv, which can be created using datasets/make_final_stage2_csv.py
+    new addition: the csv needs a column called "index_in_numpy_array", which points each sample to an index in the vq_token numpy array
 
     - fraction_of_class_only_inputs: float (default 0.2), fraction of samples where the text input is only the "class" entry of the dataframe
     - fraction_of_blank_inputs: float (default 0.1), fraction of samples where the text input is empty
@@ -106,21 +107,18 @@ class VQDataset(Dataset):
     """
     def __init__(self,
                  csv_path:str,
+                 vq_token_npy_path:str,
                  tokenizer: VQTokenizer,
                  context_length: int,
                  min_context_length: int = 10,
                  fraction_of_class_only_inputs: float = 0.2,
                  fraction_of_blank_inputs: float = 0.1,
-                 shuffle_vq_order:bool=False,
+                 shuffle_vq_order:bool=True,
                  use_pre_computed_text_tokens_only: bool=False,
                  train:bool = True):
         super(VQDataset, self).__init__()
-        self.split = pd.read_csv(csv_path)
 
-        if train:
-            self.split = self.split[self.split["split"] == "train"].reset_index(drop=True)
-        else:
-            self.split = self.split[self.split["split"] == "test"].reset_index(drop=True)
+        self.split = pd.read_csv(csv_path)
 
         self.context_length = context_length
         self.min_context_length = min_context_length
@@ -144,7 +142,21 @@ class VQDataset(Dataset):
         self.eos_token = self.tokenizer.special_token_mapping.get("<EOS>")
         self.pad_token = self.tokenizer.special_token_mapping.get("<PAD>")
 
+        # load pre-computed vq tokens
+        self.vq_token_npy_path = vq_token_npy_path
+        numpy_array = np.load(vq_token_npy_path)
+        self.vq_numpy_array = np.split(numpy_array, np.where(numpy_array == self.bos_token)[0])[1:]
 
+        if not len(self.vq_numpy_array) == len(self.split):
+            print(f"[WARNING] Number of samples in the numpy array and the csv file do not match. Numpy array has {len(self.vq_numpy_array)} samples, csv has {len(self.split)} samples.")
+            input("Want to continue? Press any button.")
+        
+        if train:
+            self.split = self.split[self.split["split"] == "train"].reset_index(drop=True)
+        else:
+            self.split = self.split[self.split["split"] == "test"].reset_index(drop=True)
+
+        self.split["index_in_numpy_array"] = self.split["index_in_numpy_array"].astype(int)
         samples_before_filtering = len(self.split)
 
         self.split = self.split[self.split["text_token_length"] < 16]
@@ -185,17 +197,22 @@ class VQDataset(Dataset):
         vq tokens have their special tokens (BOS and EOS) and padding already included.
         only SOS needs to be prefixed after the data is loaded.
         """
+        row = self.split.iloc[idx]
+
         if self.use_pre_computed_text_tokens_only:
-            text_tokens = np.load(self.split.iloc[idx]["text_token_path"])
+            text_tokens = np.load(row["text_token_path"])
         else:
-            text_to_tokenize = np.random.choice([self.split.iloc[idx]["class"], self.split.iloc[idx]["description"], ""],
+            text_to_tokenize = np.random.choice([row["class"], row["description"], ""],
                                              p=[self.fraction_of_class_only_inputs, self.fraction_of_full_description_inputs, self.fraction_of_blank_inputs])
             if text_to_tokenize in "ABCDEFGHIJKLMNOPQRSTUVWXYZ" and len(text_to_tokenize) == 1:
                 text_to_tokenize = f"capital {text_to_tokenize}"
             text_tokens = self.tokenizer.tokenize_text(text_to_tokenize)
 
         text_tokens = self._get_padded_text_tokens(text_tokens)
-        vq_tokens = np.load(self.split.iloc[idx]["vq_token_path"])
+
+        # vq_tokens = np.load(row["vq_token_path"])
+        vq_tokens = self.vq_numpy_array[row["index_in_numpy_array"]]
+
         if self.shuffle_vq_order:
             try:
                 i = np.random.randint(5, len(vq_tokens) - 5)
@@ -221,6 +238,7 @@ class VQDataModule(LightningDataModule):
     def __init__(
         self,
         csv_path: str,
+        vq_token_npy_path: str,
         tokenizer: VQTokenizer,
         context_length: int,
         train_batch_size: int,
@@ -236,6 +254,7 @@ class VQDataModule(LightningDataModule):
         super().__init__()
 
         self.csv_path = csv_path
+        self.vq_token_npy_path= vq_token_npy_path
         self.train_batch_size = train_batch_size
         self.val_batch_size = val_batch_size
         self.num_workers = num_workers
@@ -251,6 +270,7 @@ class VQDataModule(LightningDataModule):
     def setup(self, stage: Optional[str] = None) -> None:
         self.train_dataset = VQDataset(
             self.csv_path,
+            self.vq_token_npy_path,
             tokenizer=self.tokenizer,
             context_length=self.context_length,
             train=True,
@@ -263,6 +283,7 @@ class VQDataModule(LightningDataModule):
 
         self.val_dataset = VQDataset(
             self.csv_path,
+            self.vq_token_npy_path,
             tokenizer=self.tokenizer,
             context_length=self.context_length,
             train=False,
