@@ -109,6 +109,9 @@ if __name__ == "__main__":
     print(f"Finished in {round((time.time() - start_time) / 60)} minutes.")
     USED_FILES_DIR = os.path.join(SAVE_DIR, "used_files")  # Define the directory for used files
 
+    if os.path.exists(os.path.join(SAVE_DIR, "combined_full_fonts_fixed.csv")):
+        input("The combined CSV file already exists. Press enter to override...")
+
     # Merge and save CSV files
     csv_files = merge_csv_files(SAVE_DIR, "combined_full_fonts_fixed.csv")
     # Merge and save NPY files
