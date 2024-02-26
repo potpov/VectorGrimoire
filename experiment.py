@@ -4,7 +4,7 @@ import torch
 from torch import Tensor
 from torch import optim
 import wandb
-from .models import BaseVAE, VectorVAEnLayers, VectorGPT, VectorGPTv2, Vector_VQVAE, VQ_SVG_Stage2
+from thesis.models import BaseVAE, VectorVAEnLayers, VectorGPT, VectorGPTv2, Vector_VQVAE, VQ_SVG_Stage2
 import pytorch_lightning as pl
 from thesis.utils import log_images, log_all_images, add_points_to_image, get_side_by_side_reconstruction
 from thesis.tokenizer import VQTokenizer
@@ -12,15 +12,20 @@ from torchmetrics.image.fid import FrechetInceptionDistance
 from torchmetrics.multimodal.clip_score import CLIPScore
 import torch.nn.functional as F
 import pandas as pd
+from torchmetrics.functional.multimodal import clip_score
 
 class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
     def __init__(self,
                  model: VQ_SVG_Stage2,
                  tokenizer: VQTokenizer,
+                 num_batches_train : int,
+                 num_batches_val: int,
                  lr: float = 0.0003,
                  weight_decay: float = 0.0,
                  scheduler_gamma: float = 0.99,
-                 train_log_interval: int = 500,
+                 train_log_interval: float = 0.05,
+                 val_log_interval: float = 0.1,
+                 metric_log_interval: float = 0.1,
                  manual_seed: int = 42,
                  wandb: bool = False,
                  **kwargs) -> None:
@@ -31,7 +36,12 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
         self.lr = lr
         self.weight_decay = weight_decay
         self.scheduler_gamma = scheduler_gamma
-        self.train_log_interval = train_log_interval
+        assert train_log_interval < 1 and train_log_interval >= 0, f"train log interval should be a fraction of the total number of batches in [0, 1), got {train_log_interval}"
+        assert metric_log_interval < 1 and metric_log_interval >= 0, f"metric log interval should be a fraction of the total number of batches in [0, 1), got {metric_log_interval}"
+        self.train_log_interval = max(1, int(train_log_interval * num_batches_train))
+        self.val_log_interval = max(1, int(val_log_interval * num_batches_val))
+        self.train_metric_log_interval = max(1, int(metric_log_interval * num_batches_train))
+        self.val_metric_log_interval = max(1, int(metric_log_interval * num_batches_val))
         self.manual_seed = manual_seed
         self.curr_device = None
         self.wandb = wandb
@@ -40,36 +50,59 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
         out, logging_dict = self.model.forward(text_tokens, text_attention_mask,vq_tokens, logging=logging, **kwargs)
         return out, logging_dict
     
-    def _generate_rasterized_sample(self, text_tokens:Tensor, text_attention_mask:Tensor, vq_tokens:Tensor, **kwargs) -> Tensor:
+    def _generate_rasterized_sample(self, text_tokens:Tensor, text_attention_mask:Tensor, vq_tokens:Tensor, draw_context_red:bool=True) -> Tensor:
         """
         Args:
             text_tokens (Tensor): (1, t)
             text_attention_mask (Tensor): (1, t)
             vq_tokens (Tensor): (1, input_context_len_you_want)
         """
+        num_input_context_tokens = vq_tokens.shape[-1] // 2
         with torch.no_grad():
             generation, reason = self.model.generate(text_tokens, text_attention_mask, vq_tokens)
             if generation.ndim > 1:
                 generation = generation[0]
-        return self.tokenizer._tokens_to_image_tensor(generation, post_process=True)
+        if draw_context_red:
+            return self.tokenizer._tokens_to_image_tensor(generation, post_process=True, num_strokes_to_paint=num_input_context_tokens)
+        else:
+            return self.tokenizer._tokens_to_image_tensor(generation, post_process=True)
+
+    def _get_clip_score_for_batch(self, text_tokens:Tensor, text_attention_mask:Tensor, vq_tokens:Tensor) -> Tensor:
+        """
+        gets clip scores for 0-context generations of a batch of text tokens
+        """
+        with torch.no_grad():
+            bs = text_tokens.shape[0]
+            texts = [self.tokenizer.decode_text(text_tokens[i]) for i in range(bs)]
+            # filter out empty texts
+            relevant_idxs = [i for i in range(bs) if len(texts[i]) > 0]
+            generations = [self._generate_rasterized_sample(text_tokens[i:i+1,:], text_attention_mask[i:i+1,:], vq_tokens[i:i+1, :1]) for i in relevant_idxs]
+            texts = [texts[i] for i in relevant_idxs]
+            metric = clip_score(generations, texts, "openai/clip-vit-base-patch16")
+        return metric, generations, texts
 
     def training_step(self, batch, batch_idx, optimizer_idx=0):
         text_tokens, text_attention_mask, vq_tokens, vq_targets, pad_token = batch
         self.curr_device = text_tokens.device
 
-        if batch_idx % self.train_log_interval == 0:
+        if batch_idx % self.train_log_interval == 0 and self.wandb:
             out, logging_dict = self.forward(text_tokens, text_attention_mask, vq_tokens, logging=True)
             text_condition = self.tokenizer.decode_text(text_tokens[0])
             rasterized_gt = self.tokenizer._tokens_to_image_tensor(vq_targets[:1])
             context_0_generation = self._generate_rasterized_sample(text_tokens[:1,:], text_attention_mask[:1,:], vq_tokens[:1, :1])
             context_5_generation = self._generate_rasterized_sample(text_tokens[:1,:], text_attention_mask[:1,:], vq_tokens[:1, :6])
             context_10_generation = self._generate_rasterized_sample(text_tokens[:1,:], text_attention_mask[:1,:], vq_tokens[:1, :11])
-            if self.wandb:
-                log_all_images([rasterized_gt, context_0_generation, context_5_generation, context_10_generation], 
-                            log_key="train/rasterized_samples",
-                            caption=f"GT: {text_condition}, Gen. only text context, Gen. text + 5 vq tok, Gen. text + 10 vq tok")
+            log_all_images([rasterized_gt, context_0_generation, context_5_generation, context_10_generation], 
+                        log_key="train/rasterized_samples",
+                        caption=f"GT: {text_condition}, Gen. only text context, Gen. text + 5 vq tok, Gen. text + 10 vq tok")
         else:
             out, logging_dict = self.forward(text_tokens, text_attention_mask, vq_tokens, logging=False)
+
+        if batch_idx % self.train_metric_log_interval == 0 and self.wandb:
+            with torch.no_grad():
+                clip_score_metric, generations, texts = self._get_clip_score_for_batch(text_tokens, text_attention_mask, vq_tokens)
+                wandb.log({"train/clip_score": clip_score_metric})
+                log_all_images(generations, log_key="train/generated_samples", caption="; ".join(texts))
         
         pred_logits = out  # (b, vq_token_len)
         pred_logits = pred_logits.reshape(-1, pred_logits.shape[-1])
@@ -81,6 +114,7 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
         pred_logits = pred_logits[mask]
         targets = targets[mask]
 
+        # This is logging a table of tokens to the wandb dashboard
         if batch_idx % self.train_log_interval == 0 and self.wandb:
             target_unique_values, target_counts = torch.unique(targets.detach().cpu(), return_counts=True)
             pred_unique_values, pred_counts = torch.unique(pred_logits.detach().cpu().argmax(dim=1), return_counts=True)
@@ -91,8 +125,6 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
             df["pred_count"] = df["pred_count"].astype(int)
             sorted_df = df.sort_values(by='target_count', ascending=False).reset_index(drop=True)
             wandb.log({"train/target_pred_token_counts": wandb.Table(dataframe=sorted_df)})
-
-
 
 
         loss_dict = self.model.loss_function(
@@ -129,6 +161,11 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
             else:
                 out, logging_dict = self.forward(text_tokens, text_attention_mask, vq_tokens, logging=False)
         
+            if batch_idx % self.val_metric_log_interval == 0 and self.wandb:
+                clip_score_metric, generations, texts = self._get_clip_score_for_batch(text_tokens, text_attention_mask, vq_tokens)
+                wandb.log({"val/clip_score": clip_score_metric})
+                log_all_images(generations, log_key="val/generated_samples", caption="; ".join(texts))
+
         pred_logits = out  # (b, vq_token_len)
         pred_logits = pred_logits.reshape(-1, pred_logits.shape[-1])
         

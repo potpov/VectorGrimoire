@@ -145,7 +145,8 @@ def get_fixed_svg_drawing(bezier_points: Tensor,
                          stroke_width: float = 0.7,
                          padded_individual_max_length: int = 9.5,
                          width: int = 480,
-                         max_dist: float = 4.5):
+                         max_dist: float = 4.5,
+                         num_strokes_to_paint:int=0):
     """
     Takes local points and global positions and returns a fixed SVG drawing using the specified method.
     Use the tokenizer to convert the model output to the points and positions, then feed it into here.
@@ -164,7 +165,7 @@ def get_fixed_svg_drawing(bezier_points: Tensor,
     elif method == "min_dist_interpolate":
         fixed_global_shapes = min_dist_fix(global_shapes, method="min_dist_interpolate", max_dist=max_dist)
         
-    fixed_drawing = shapes_to_drawing(fixed_global_shapes, stroke_width, width)
+    fixed_drawing = shapes_to_drawing(fixed_global_shapes, stroke_width, width, num_strokes_to_paint=num_strokes_to_paint)
     return fixed_drawing
 
 def get_fixed_svg_render(bezier_points: Tensor,
@@ -173,9 +174,10 @@ def get_fixed_svg_render(bezier_points: Tensor,
                          stroke_width: float = 0.7,
                          padded_individual_max_length: int = 9.5,
                          width: int = 480,
-                         max_dist: float = 4.5):
+                         max_dist: float = 4.5,
+                         num_strokes_to_paint:int=0):
     """
     Conveneienc function to get the fixed SVG drawing as an image tensor. For more info look at `get_fixed_svg_drawing`.
     """
-    fixed_drawing = get_fixed_svg_drawing(bezier_points, positions, method, stroke_width, padded_individual_max_length, width, max_dist)
+    fixed_drawing = get_fixed_svg_drawing(bezier_points, positions, method, stroke_width, padded_individual_max_length, width, max_dist, num_strokes_to_paint=num_strokes_to_paint)
     return drawing_to_tensor(fixed_drawing)

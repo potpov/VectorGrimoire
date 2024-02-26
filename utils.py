@@ -155,14 +155,15 @@ def stroke_to_path(my_tensor: Tensor):
         all_paths.append(stroke_points_to_bezier(my_tensor[start_idx:end_idx]))
     return Path(*all_paths)
 
-def shapes_to_drawing(shapes:Tensor, stroke_width:float, w=128) -> Drawing:
+def shapes_to_drawing(shapes:Tensor, stroke_width:float, w=128, num_strokes_to_paint:int = 0) -> Drawing:
     """
     expects shapes to be in shape (n, 4, 2)
     """
     all_shapes = []
     for shape in shapes:
         all_shapes.append(stroke_to_path(shape))
-    drawing = disvg(all_shapes, stroke_widths=[stroke_width]*len(all_shapes), paths2Drawing=True, viewbox=f"0 0 72 72", dimensions=(w, w))  # I think the 72 comes from the simplified svg files
+    colors = ["red"] * num_strokes_to_paint + ["black"] * (len(all_shapes) - num_strokes_to_paint)
+    drawing = disvg(all_shapes, stroke_widths=[stroke_width]*len(all_shapes), colors=colors, paths2Drawing=True, viewbox=f"0 0 72 72", dimensions=(w, w))  # I think the 72 comes from the simplified svg files
     return drawing
 
 def fig2img(fig):

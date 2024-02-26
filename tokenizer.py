@@ -246,16 +246,16 @@ class VQTokenizer:
         positions = self.decode_positions(pos_tokens)
         return bezier_points, positions
     
-    def assemble_svg(self, bezier_points: Tensor, center_positions: Tensor, padded_individual_max_length: float, stroke_width: float, w=128.) -> Drawing:
+    def assemble_svg(self, bezier_points: Tensor, center_positions: Tensor, padded_individual_max_length: float, stroke_width: float, w=128., num_strokes_to_paint:int = 0) -> Drawing:
         global_shapes = calculate_global_positions(bezier_points, padded_individual_max_length, center_positions)[:,0]
-        reconstructed_drawing = shapes_to_drawing(global_shapes, stroke_width=stroke_width, w=w)
+        reconstructed_drawing = shapes_to_drawing(global_shapes, stroke_width=stroke_width, w=w, num_strokes_to_paint=num_strokes_to_paint)
         return reconstructed_drawing
     
-    def _tokens_to_image_tensor(self, tokens:Tensor, post_process:bool = True) -> Tensor:
+    def _tokens_to_image_tensor(self, tokens:Tensor, post_process:bool = True, num_strokes_to_paint: int = 0) -> Tensor:
         bezier_points, positions = self.decode(tokens, ignore_special_tokens=True)
         if post_process:
-            return_tensor = get_fixed_svg_render(bezier_points, positions, "min_dist_clip", 0.7, 9.5, 480, 4.5)
+            return_tensor = get_fixed_svg_render(bezier_points, positions, "min_dist_clip", 0.7, 9.5, 480, 4.5, num_strokes_to_paint=num_strokes_to_paint)
         else:
-            drawing = self.assemble_svg(bezier_points, positions, 9.5, 0.7, w=480)
+            drawing = self.assemble_svg(bezier_points, positions, 9.5, 0.7, w=480, num_strokes_to_paint=num_strokes_to_paint)
             return_tensor = drawing_to_tensor(drawing)
         return return_tensor
