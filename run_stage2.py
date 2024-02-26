@@ -82,13 +82,17 @@ else:
     model = VQ_SVG_Stage2(tokenizer, **config['model_params'], device = device)
 
 print("Loading dataset...")
-experiment = SVG_VQVAE_Stage2_Experiment(model, tokenizer, **config['exp_params'], wandb = args.wandb)
 text_only_tokenizer = VQTokenizer(vq_model, config["data_params"]["width"], 1, "bert-base-uncased", use_text_encoder_only=True, codebook_size=tokenizer.codebook_size)
 data = VQDataModule(tokenizer=text_only_tokenizer,**config["data_params"], context_length=config['model_params']['max_seq_len'])
 
 print("Setting up data...")
 data.setup()
 print("Setting up trainer...")
+
+num_batches_train = len(data.train_dataloader())
+num_batches_val = len(data.val_dataloader())
+
+experiment = SVG_VQVAE_Stage2_Experiment(model, tokenizer, **config['exp_params'], wandb = args.wandb, num_batches_train=num_batches_train, num_batches_val=num_batches_val)
 profiler = SimpleProfiler(dirpath=os.path.join(config['logging_params']['save_dir']))
 runner = Trainer(
     logger=wandb_logger,
