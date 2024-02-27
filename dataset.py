@@ -110,9 +110,12 @@ class VQDataset(Dataset):
                  vq_token_npy_path:str,
                  tokenizer: VQTokenizer,
                  context_length: int,
+                 dataset:str,
                  min_context_length: int = 10,
-                 fraction_of_class_only_inputs: float = 0.2,
-                 fraction_of_blank_inputs: float = 0.1,
+                fraction_of_strokenuwa_inputs:float= 0.7,
+                fraction_of_class_only_inputs:float= 0.2,
+                fraction_of_blank_inputs:float= 0.1,
+                fraction_of_iconshop_chatgpt_inputs:float= 0.0,
                  shuffle_vq_order:bool=True,
                  use_pre_computed_text_tokens_only: bool=False,
                  train:bool = True):
@@ -123,10 +126,20 @@ class VQDataset(Dataset):
         self.context_length = context_length
         self.min_context_length = min_context_length
 
+        sum_of_fractions = fraction_of_class_only_inputs + fraction_of_blank_inputs + fraction_of_strokenuwa_inputs + fraction_of_iconshop_chatgpt_inputs
+        assert dataset in ["figr8", "fonts"], f"Dataset must be either 'figr8' or 'fonts', got {dataset}."
+        assert sum_of_fractions <= 1, f"All fractions must be less or equal to 1, got {sum_of_fractions}."
+
         self.fraction_of_class_only_inputs = fraction_of_class_only_inputs
         self.fraction_of_blank_inputs = fraction_of_blank_inputs
-        self.fraction_of_full_description_inputs = 1 - fraction_of_class_only_inputs - fraction_of_blank_inputs
-        assert self.fraction_of_full_description_inputs >= 0.6, "Fraction of full description inputs must be greater or equal to 0.6"
+        self.fraction_of_strokenuwa_inputs = fraction_of_strokenuwa_inputs
+        self.fraction_of_iconshop_chatgpt_inputs = fraction_of_iconshop_chatgpt_inputs
+        self.dataset = dataset
+
+        if sum_of_fractions < 1:
+            self.fraction_of_full_description_inputs = 1 - sum_of_fractions
+        else:
+            self.fraction_of_full_description_inputs = 0
 
         self.use_pre_computed_text_tokens_only = use_pre_computed_text_tokens_only
         self.shuffle_vq_order = shuffle_vq_order
@@ -189,6 +202,20 @@ class VQDataset(Dataset):
 
     def __len__(self):
         return len(self.split)
+    
+    def _get_tokenized_text(self, row):
+        if self.dataset == "fonts":
+            text_to_tokenize = np.random.choice([row["class"], row["description"], ""],
+                                             p=[self.fraction_of_class_only_inputs, self.fraction_of_full_description_inputs, self.fraction_of_blank_inputs])
+            if text_to_tokenize in "ABCDEFGHIJKLMNOPQRSTUVWXYZ" and len(text_to_tokenize) == 1:
+                text_to_tokenize = f"capital {text_to_tokenize}"
+            text_tokens = self.tokenizer.tokenize_text(text_to_tokenize)
+            return text_tokens
+        elif self.dataset == "figr8":
+            text_to_tokenize = np.random.choice([row["class"], row["strokenuwa_prompt"], row["iconshop_sentence_prompt"],""],
+                                                p=[self.fraction_of_class_only_inputs, self.fraction_of_strokenuwa_inputs, self.fraction_of_iconshop_chatgpt_inputs, self.fraction_of_blank_inputs])
+            text_tokens = self.tokenizer.tokenize_text(text_to_tokenize)
+            return text_tokens
 
     def __getitem__(self, idx:int):
         """
@@ -202,12 +229,7 @@ class VQDataset(Dataset):
         if self.use_pre_computed_text_tokens_only:
             text_tokens = np.load(row["text_token_path"])
         else:
-            text_to_tokenize = np.random.choice([row["class"], row["description"], ""],
-                                             p=[self.fraction_of_class_only_inputs, self.fraction_of_full_description_inputs, self.fraction_of_blank_inputs])
-            if text_to_tokenize in "ABCDEFGHIJKLMNOPQRSTUVWXYZ" and len(text_to_tokenize) == 1:
-                text_to_tokenize = f"capital {text_to_tokenize}"
-            text_tokens = self.tokenizer.tokenize_text(text_to_tokenize)
-
+            text_tokens = self._get_tokenized_text(row)
         text_tokens = self._get_padded_text_tokens(text_tokens)
 
         # vq_tokens = np.load(row["vq_token_path"])
@@ -238,6 +260,7 @@ class VQDataModule(LightningDataModule):
     def __init__(
         self,
         csv_path: str,
+        dataset:str,
         vq_token_npy_path: str,
         tokenizer: VQTokenizer,
         context_length: int,
@@ -247,6 +270,8 @@ class VQDataModule(LightningDataModule):
         min_context_length: int = 10,
         fraction_of_class_only_inputs: float = 0.2,
         fraction_of_blank_inputs: float = 0.1,
+        fraction_of_strokenuwa_inputs: float = 0.0,
+        fraction_of_iconshop_chatgpt_inputs: float = 0.0,
         shuffle_vq_order:bool=False,
         use_pre_computed_text_tokens_only: bool=False,
         **kwargs,
@@ -254,6 +279,7 @@ class VQDataModule(LightningDataModule):
         super().__init__()
 
         self.csv_path = csv_path
+        self.dataset = dataset
         self.vq_token_npy_path= vq_token_npy_path
         self.train_batch_size = train_batch_size
         self.val_batch_size = val_batch_size
@@ -263,6 +289,8 @@ class VQDataModule(LightningDataModule):
         self.min_context_length = min_context_length
         self.fraction_of_class_only_inputs = fraction_of_class_only_inputs
         self.fraction_of_blank_inputs = fraction_of_blank_inputs
+        self.fraction_of_strokenuwa_inputs = fraction_of_strokenuwa_inputs
+        self.fraction_of_iconshop_chatgpt_inputs = fraction_of_iconshop_chatgpt_inputs
         self.shuffle_vq_order = shuffle_vq_order
         self.use_pre_computed_text_tokens_only = use_pre_computed_text_tokens_only
 
@@ -273,10 +301,13 @@ class VQDataModule(LightningDataModule):
             self.vq_token_npy_path,
             tokenizer=self.tokenizer,
             context_length=self.context_length,
+            dataset=self.dataset,
             train=True,
             min_context_length=self.min_context_length,
             fraction_of_class_only_inputs = self.fraction_of_class_only_inputs,
             fraction_of_blank_inputs = self.fraction_of_blank_inputs,
+            fraction_of_iconshop_chatgpt_inputs=self.fraction_of_iconshop_chatgpt_inputs,
+            fraction_of_strokenuwa_inputs=self.fraction_of_strokenuwa_inputs,
             shuffle_vq_order = self.shuffle_vq_order,
             use_pre_computed_text_tokens_only = self.use_pre_computed_text_tokens_only,
         )
@@ -286,10 +317,13 @@ class VQDataModule(LightningDataModule):
             self.vq_token_npy_path,
             tokenizer=self.tokenizer,
             context_length=self.context_length,
+            dataset=self.dataset,
             train=False,
             min_context_length=self.min_context_length,
             fraction_of_class_only_inputs = self.fraction_of_class_only_inputs,
             fraction_of_blank_inputs = self.fraction_of_blank_inputs,
+            fraction_of_iconshop_chatgpt_inputs=self.fraction_of_iconshop_chatgpt_inputs,
+            fraction_of_strokenuwa_inputs=self.fraction_of_strokenuwa_inputs,
             shuffle_vq_order = self.shuffle_vq_order,
             use_pre_computed_text_tokens_only = self.use_pre_computed_text_tokens_only,
         )

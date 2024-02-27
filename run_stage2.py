@@ -61,7 +61,7 @@ else:
 
 # Load auxiliary models
 vq_model = Vector_VQVAE(**config['stage1_params'], device = device)
-state_dict = torch.load(config['stage1_params']["checkpoint_path"])["state_dict"]
+state_dict = torch.load(config['stage1_params']["checkpoint_path"], map_location=device)["state_dict"]
 try:
     vq_model.load_state_dict(state_dict)
 except:

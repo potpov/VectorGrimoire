@@ -28,6 +28,7 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
                  metric_log_interval: float = 0.1,
                  manual_seed: int = 42,
                  wandb: bool = False,
+                 post_process:bool=True,
                  **kwargs) -> None:
         super(SVG_VQVAE_Stage2_Experiment, self).__init__()
 
@@ -45,12 +46,13 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
         self.manual_seed = manual_seed
         self.curr_device = None
         self.wandb = wandb
+        self.post_process = post_process
 
     def forward(self, text_tokens:Tensor, text_attention_mask:Tensor, vq_tokens:Tensor, logging=False, **kwargs) -> list:
         out, logging_dict = self.model.forward(text_tokens, text_attention_mask,vq_tokens, logging=logging, **kwargs)
         return out, logging_dict
     
-    def _generate_rasterized_sample(self, text_tokens:Tensor, text_attention_mask:Tensor, vq_tokens:Tensor, draw_context_red:bool=True) -> Tensor:
+    def _generate_rasterized_sample(self, text_tokens:Tensor, text_attention_mask:Tensor, vq_tokens:Tensor,post_process:bool=True, draw_context_red:bool=True) -> Tensor:
         """
         Args:
             text_tokens (Tensor): (1, t)
@@ -63,11 +65,11 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
             if generation.ndim > 1:
                 generation = generation[0]
         if draw_context_red:
-            return self.tokenizer._tokens_to_image_tensor(generation, post_process=True, num_strokes_to_paint=num_input_context_tokens)
+            return self.tokenizer._tokens_to_image_tensor(generation, post_process=post_process, num_strokes_to_paint=num_input_context_tokens)
         else:
-            return self.tokenizer._tokens_to_image_tensor(generation, post_process=True)
+            return self.tokenizer._tokens_to_image_tensor(generation, post_process=post_process)
 
-    def _get_clip_score_for_batch(self, text_tokens:Tensor, text_attention_mask:Tensor, vq_tokens:Tensor) -> Tensor:
+    def _get_clip_score_for_batch(self, text_tokens:Tensor, text_attention_mask:Tensor, vq_tokens:Tensor, post_process:bool=True) -> Tensor:
         """
         gets clip scores for 0-context generations of a batch of text tokens
         """
@@ -76,7 +78,7 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
             texts = [self.tokenizer.decode_text(text_tokens[i]) for i in range(bs)]
             # filter out empty texts
             relevant_idxs = [i for i in range(bs) if len(texts[i]) > 0]
-            generations = [self._generate_rasterized_sample(text_tokens[i:i+1,:], text_attention_mask[i:i+1,:], vq_tokens[i:i+1, :1]) for i in relevant_idxs]
+            generations = [self._generate_rasterized_sample(text_tokens[i:i+1,:], text_attention_mask[i:i+1,:], vq_tokens[i:i+1, :1], post_process=post_process) for i in relevant_idxs]
             texts = [texts[i] for i in relevant_idxs]
             metric = clip_score(generations, texts, "openai/clip-vit-base-patch16")
         return metric, generations, texts
@@ -88,10 +90,10 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
         if batch_idx % self.train_log_interval == 0 and self.wandb:
             out, logging_dict = self.forward(text_tokens, text_attention_mask, vq_tokens, logging=True)
             text_condition = self.tokenizer.decode_text(text_tokens[0])
-            rasterized_gt = self.tokenizer._tokens_to_image_tensor(vq_targets[:1])
-            context_0_generation = self._generate_rasterized_sample(text_tokens[:1,:], text_attention_mask[:1,:], vq_tokens[:1, :1])
-            context_5_generation = self._generate_rasterized_sample(text_tokens[:1,:], text_attention_mask[:1,:], vq_tokens[:1, :6])
-            context_10_generation = self._generate_rasterized_sample(text_tokens[:1,:], text_attention_mask[:1,:], vq_tokens[:1, :11])
+            rasterized_gt = self.tokenizer._tokens_to_image_tensor(vq_targets[:1], post_process=self.post_process)
+            context_0_generation = self._generate_rasterized_sample(text_tokens[:1,:], text_attention_mask[:1,:], vq_tokens[:1, :1], post_process=self.post_process)
+            context_5_generation = self._generate_rasterized_sample(text_tokens[:1,:], text_attention_mask[:1,:], vq_tokens[:1, :6], post_process=self.post_process)
+            context_10_generation = self._generate_rasterized_sample(text_tokens[:1,:], text_attention_mask[:1,:], vq_tokens[:1, :11], post_process=self.post_process)
             log_all_images([rasterized_gt, context_0_generation, context_5_generation, context_10_generation], 
                         log_key="train/rasterized_samples",
                         caption=f"GT: {text_condition}, Gen. only text context, Gen. text + 5 vq tok, Gen. text + 10 vq tok")
@@ -100,7 +102,7 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
 
         if batch_idx % self.train_metric_log_interval == 0 and self.wandb:
             with torch.no_grad():
-                clip_score_metric, generations, texts = self._get_clip_score_for_batch(text_tokens, text_attention_mask, vq_tokens)
+                clip_score_metric, generations, texts = self._get_clip_score_for_batch(text_tokens, text_attention_mask, vq_tokens, post_process=self.post_process)
                 wandb.log({"train/clip_score": clip_score_metric})
                 log_all_images(generations, log_key="train/generated_samples", caption="; ".join(texts))
         
@@ -150,10 +152,10 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
             if batch_idx % self.train_log_interval == 0:
                 out, logging_dict = self.forward(text_tokens, text_attention_mask, vq_tokens, logging=True)
                 text_condition = self.tokenizer.decode_text(text_tokens[0])
-                rasterized_gt = self.tokenizer._tokens_to_image_tensor(vq_targets[:1])
-                context_0_generation = self._generate_rasterized_sample(text_tokens[:1,:], text_attention_mask[:1,:], vq_tokens[:1, :1])
-                context_5_generation = self._generate_rasterized_sample(text_tokens[:1,:], text_attention_mask[:1,:], vq_tokens[:1, :6])
-                context_10_generation = self._generate_rasterized_sample(text_tokens[:1,:], text_attention_mask[:1,:], vq_tokens[:1, :11])
+                rasterized_gt = self.tokenizer._tokens_to_image_tensor(vq_targets[:1], post_process=self.post_process)
+                context_0_generation = self._generate_rasterized_sample(text_tokens[:1,:], text_attention_mask[:1,:], vq_tokens[:1, :1], post_process=self.post_process)
+                context_5_generation = self._generate_rasterized_sample(text_tokens[:1,:], text_attention_mask[:1,:], vq_tokens[:1, :6], post_process=self.post_process)
+                context_10_generation = self._generate_rasterized_sample(text_tokens[:1,:], text_attention_mask[:1,:], vq_tokens[:1, :11], post_process=self.post_process)
                 if self.wandb:
                     log_all_images([rasterized_gt, context_0_generation, context_5_generation, context_10_generation],
                             log_key="val/rasterized_samples",
@@ -162,7 +164,7 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
                 out, logging_dict = self.forward(text_tokens, text_attention_mask, vq_tokens, logging=False)
         
             if batch_idx % self.val_metric_log_interval == 0 and self.wandb:
-                clip_score_metric, generations, texts = self._get_clip_score_for_batch(text_tokens, text_attention_mask, vq_tokens)
+                clip_score_metric, generations, texts = self._get_clip_score_for_batch(text_tokens, text_attention_mask, vq_tokens, post_process=self.post_process)
                 wandb.log({"val/clip_score": clip_score_metric})
                 log_all_images(generations, log_key="val/generated_samples", caption="; ".join(texts))
 
