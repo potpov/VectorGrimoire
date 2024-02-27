@@ -16,6 +16,7 @@ from x_transformers import TransformerWrapper, Decoder
 from transformers import BertModel
 from svgwrite import Drawing
 
+
 class DeconvResNet(nn.Module):
     def __init__(self):
         super(DeconvResNet, self).__init__()
@@ -163,12 +164,14 @@ class Vector_VQVAE(nn.Module):
                  image_loss: str = "mse",
                  single_code_representation: bool = True,
                  vq_method: str = "fsq",
+                 stroke_width_predictor: bool = True,
                  fsq_levels: list =[8,5,5,5],
                  **kwargs) -> None:
         super(Vector_VQVAE, self).__init__()
 
         assert vector_decoder_model in ["mlp", "raster_conv"], "vector_decoder_model must be one of ['mlp', 'raster_conv']"
 
+        self.stroke_width_predictor = stroke_width_predictor
         self.vector_decoder_model = vector_decoder_model
         self.quantized_dim = quantized_dim
         self.image_loss = image_loss
@@ -203,9 +206,10 @@ class Vector_VQVAE(nn.Module):
         self.latent_dim = self.quantized_dim
         
         if self.vector_decoder_model == "mlp":
-            self.decoder = MLPVectorHeadFixed(latent_dim = self.latent_dim,
-                                              segments = 1,
-                                              imsize = 128,
+            self.decoder = MLPVectorHeadFixed(latent_dim=self.latent_dim,
+                                              segments=2,
+                                              imsize=128,
+                                              stroke_width_predictor=self.stroke_width_predictor,
                                               max_stroke_width=20.)
         elif self.vector_decoder_model == "raster_conv":
             self.decoder = DeconvResNet()
@@ -320,6 +324,7 @@ class Vector_VQVAE(nn.Module):
                       reconstructions: Tensor,
                       gt_images: Tensor,
                       vq_loss: Tensor,
+                      all_points: Tensor = None,
                       log_loss: bool = False,
                       **kwargs) -> dict:
         if self.image_loss == "mse":
@@ -328,10 +333,13 @@ class Vector_VQVAE(nn.Module):
             recons_loss = self.gaussian_pyramid_loss(reconstructions, gt_images, down_sample_steps=3, log_loss=log_loss)
         else:
             raise NotImplementedError("Only mse and pyramid loss implemented for now.")
+
         loss = recons_loss + vq_loss
-        return {'loss': loss,
-                'Reconstruction_Loss': recons_loss,
-                'VQ_Loss':vq_loss}
+        return {
+            'loss': loss,
+            'Reconstruction_Loss': recons_loss,
+            'VQ_Loss': vq_loss,
+        }
     
 
     def generate(self, x: Tensor, **kwargs) -> Tensor:

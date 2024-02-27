@@ -258,7 +258,7 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
         out, logging_dict = self.forward(all_center_shapes)
         reconstructions=out[0]
         inputs = all_center_shapes
-        # all_points = out[2]
+        all_points = out[2]
         vq_loss=out[3]
         assert vq_loss.dim() <= 1, f"vq_loss should be a 1D tensor, but got {vq_loss.dim()}"
 
@@ -266,6 +266,7 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
             reconstructions=reconstructions[:,:channels,:,:],
             gt_images=inputs,
             vq_loss=vq_loss,
+            # all_points=all_points,
         )
 
         # if batch_idx % self.train_log_interval == 0 and self.wandb:
