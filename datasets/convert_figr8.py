@@ -14,7 +14,7 @@ ROOT_DIR = "/scratch/datasets/svg/figr8"
 
 
 def invert(thread_index, block):
-    new_csv = pd.DataFrame()
+    img_id, img_path, img_class, split = [], [], [], []
     for idx, sample in tqdm(block.iterrows(), total=len(block), disable=(thread_index != 0)):
 
         png_path = sample["Image"]
@@ -67,14 +67,18 @@ def invert(thread_index, block):
             svg.save_svg(simp_svg_filepath)
 
         # logging this new file
-        new_row = pd.DataFrame({
-            "ID": [sample["ID"]],
-            "Image": [os.path.join(ROOT_DIR, "svg_simplified", folder, filename.replace(".png", ".svg"))],
-            "Class": [sample['Class']],
-            "Split": [sample['Split']],
-        })
-        new_csv = pd.concat([new_csv, new_row], ignore_index=True)
+        img_id.append(sample["ID"])
+        img_path.append(os.path.join(ROOT_DIR, "svg_simplified", folder, filename.replace(".png", ".svg")))
+        img_class.append(sample['Class'])
+        split.append(sample['Split'])
 
+
+    new_csv = pd.DataFrame({
+                "ID": img_id,
+                "file_path": img_path,
+                "class": img_class,
+                "split": split,
+            })
     new_csv.to_csv(os.path.join(ROOT_DIR, "svg_simplified", f"{thread_index}_thread.csv"), index=False)
 
 
@@ -100,6 +104,7 @@ if __name__ == '__main__':
 
     print("Vectorizing and simplifying...")
     shards = 500
+    print(f"Using {shards} shards, a thread for each of them.")
     csv_blocks = np.array_split(df, shards)
 
     with futures.ProcessPoolExecutor(max_workers=len(csv_blocks)) as executor:
