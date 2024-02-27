@@ -120,16 +120,16 @@ print("Setting up trainer...")
 profiler = SimpleProfiler(dirpath=os.path.join(config['logging_params']['save_dir']))
 runner = Trainer(
     logger=wandb_logger,
-    # strategy='ddp_find_unused_parameters_true',
+    strategy='ddp_find_unused_parameters_true',
     callbacks=[
         LearningRateMonitor(logging_interval="epoch", log_momentum=True),
         #  LearningRateFinder(early_stop_threshold=None, num_training_steps=200),
-        EarlyStopping("val_loss", 0.005, 5, verbose=True),
+        EarlyStopping("val_loss", 0.005, 10, verbose=True),
         ModelCheckpoint(save_top_k=2,
                         dirpath=os.path.join(config['logging_params']['save_dir'], "checkpoints"),
                         monitor="val_loss",
                         save_last=True,
-                        every_n_train_steps=5000),
+                        every_n_train_steps=1500),
     ],
     #  overfit_batches=20,
     log_every_n_steps=max(int(config['exp_params']["train_log_interval"] / 10), 5),
