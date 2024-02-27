@@ -1,5 +1,5 @@
 from typing import Iterable, List, Tuple, Union
-from thesis.utils import calculate_global_positions, shapes_to_drawing, drawing_to_tensor
+from utils import calculate_global_positions, shapes_to_drawing, drawing_to_tensor
 
 import numpy as np
 from thesis.models.svg_vqvae import Vector_VQVAE

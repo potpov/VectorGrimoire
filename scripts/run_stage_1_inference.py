@@ -1,8 +1,8 @@
 import os
 import torch
-from thesis.models import Vector_VQVAE
-from thesis.dataset import CenterShapeLayersFromSVGDataset
-from thesis.utils import calculate_global_positions, shapes_to_drawing
+from models import Vector_VQVAE
+from dataset import CenterShapeLayersFromSVGDataset
+from utils import calculate_global_positions, shapes_to_drawing
 import argparse
 import random
 

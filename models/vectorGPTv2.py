@@ -6,12 +6,12 @@ from torch import Tensor
 import math
 import wandb
 from x_transformers import Decoder
-from .resnet import ResNet18, ResNet34, ResNet50, ResNet101, ResNet152
-from .simple_vector_decoder import SimpleVectorDecoder
-from .mlp_vector_head import MLPVectorHeadFixed, MLPRasterHead
-from .mlp import MultiLayerPerceptron
+from models.resnet import ResNet18, ResNet34, ResNet50, ResNet101, ResNet152
+from models.simple_vector_decoder import SimpleVectorDecoder
+from models.mlp_vector_head import MLPVectorHeadFixed, MLPRasterHead
+from models.mlp import MultiLayerPerceptron
 import kornia
-from thesis.utils import log_all_images
+from utils import log_all_images
 import pydiffvg
 
 

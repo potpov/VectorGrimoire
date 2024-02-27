@@ -2,10 +2,10 @@ import torch
 from torch import nn
 from torch import Tensor
 from torch.nn import functional as F
-from .base import BaseVAE
-from .layers.improved_transformer import TransformerDecoderLayerGlobalImproved
-from .layers.transformer import TransformerDecoder
-from .vector_decoder import VectorDecoder
+from models import BaseVAE
+from models.layers.improved_transformer import TransformerDecoderLayerGlobalImproved
+from models.layers.transformer import TransformerDecoder
+from models.vector_decoder import VectorDecoder
 import wandb
 import pydiffvg
 import numpy as np

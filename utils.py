@@ -209,9 +209,9 @@ def log_all_images(images: List[Tensor], log_key="validation", caption="Captions
     common_size = images[0].shape[-2:]
     resizer = Resize(common_size, antialias=True)
 
-    image_result = make_grid(images[0], nrow=4, padding=5, pad_value=0.5)
+    image_result = make_grid(images[0], nrow=4, padding=5, pad_value=0.2)
     for image in images[1:]:
-        image_result = torch.concat((image_result, make_grid(resizer(image), nrow=4, padding=5, pad_value=0.5)), dim=-1)
+        image_result = torch.concat((image_result, make_grid(resizer(image), nrow=4, padding=5, pad_value=0.2)), dim=-1)
 
     wandb.log({log_key: wandb.Image(image_result, caption=caption)})
 
@@ -240,8 +240,9 @@ def log_images(recons: Tensor, real_imgs: Tensor, log_key="validation", captions
         ),
         dim=-1
     )
-
-    wandb.log({log_key: wandb.Image(image_result, caption=captions)})
+    return log_key, wandb.Image(image_result, caption=captions)
+    WandbLogger.log_image(key=log_key, images=image_result, caption=captions)
+    # wandb.log({log_key: wandb.Image(image_result, caption=captions)})
 
 
 def get_rank() -> int:

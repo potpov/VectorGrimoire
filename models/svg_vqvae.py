@@ -6,15 +6,16 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 import wandb
-from thesis.utils import log_all_images, tensor_to_histogram_image, calculate_global_positions, shapes_to_drawing, svg_string_to_tensor, add_points_to_image
-from .resnet import ResNet, BasicBlock
-from .vq_vae import VectorQuantizer
-from .mlp_vector_head import MLPVectorHeadFixed
-from .mlp import MultiLayerPerceptron
+from utils import log_all_images, tensor_to_histogram_image, calculate_global_positions, shapes_to_drawing, svg_string_to_tensor
+from models.resnet import ResNet, BasicBlock
+from models.vq_vae import VectorQuantizer
+from models.mlp_vector_head import MLPVectorHeadFixed
+from models.mlp import MultiLayerPerceptron
 from vector_quantize_pytorch import FSQ
 from x_transformers import TransformerWrapper, Decoder
 from transformers import BertModel
 from svgwrite import Drawing
+
 
 class DeconvResNet(nn.Module):
     def __init__(self):
@@ -45,7 +46,7 @@ class DeconvResNet(nn.Module):
 
         return x, {}
 
-class VQ_Transformer_deprecated(nn.Module):
+class VQ_Transformer(nn.Module):
     """
     Stage 2 of the SVG-VQ-VAE pipeline.
     """
@@ -59,7 +60,7 @@ class VQ_Transformer_deprecated(nn.Module):
                 text_encoder_str: str = "bert-base-uncased",
                  **kwargs) -> None:
         
-        super(VQ_Transformer_deprecated, self).__init__()
+        super(VQ_Transformer, self).__init__()
 
         self.num_tokens = num_tokens
         self.max_seq_len = max_seq_len
@@ -144,6 +145,7 @@ class VQ_Transformer_deprecated(nn.Module):
                     break
         return input_tokens, reason
 
+
 class Vector_VQVAE(nn.Module):
     """
     Vector quantized pre-training of an autoencoder for SVG primitives.
@@ -172,6 +174,7 @@ class Vector_VQVAE(nn.Module):
         assert vector_decoder_model in ["mlp", "raster_conv"], "vector_decoder_model must be one of ['mlp', 'raster_conv']"
         assert geometric_constraint in ["inner_distance", None], f"geometric_constraint must be one of ['inner_distance'], but was {geometric_constraint}"
 
+        self.stroke_width_predictor = stroke_width_predictor
         self.vector_decoder_model = vector_decoder_model
         self.quantized_dim = quantized_dim
         self.image_loss = image_loss
