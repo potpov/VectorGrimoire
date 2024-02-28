@@ -14,7 +14,7 @@ from utils import svg2paths2, disvg, raster, get_single_paths, get_similar_lengt
 import copy
 import random
 import math
-from thesis.tokenizer import VQTokenizer
+from tokenizer import VQTokenizer
 
 class Legacy_VQDataset(Dataset):
     """

@@ -174,7 +174,6 @@ class Vector_VQVAE(nn.Module):
         assert vector_decoder_model in ["mlp", "raster_conv"], "vector_decoder_model must be one of ['mlp', 'raster_conv']"
         assert geometric_constraint in ["inner_distance", None], f"geometric_constraint must be one of ['inner_distance'], but was {geometric_constraint}"
 
-        self.stroke_width_predictor = stroke_width_predictor
         self.vector_decoder_model = vector_decoder_model
         self.quantized_dim = quantized_dim
         self.image_loss = image_loss

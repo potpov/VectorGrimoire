@@ -1,7 +1,7 @@
 import gradio as gr
 import pandas as pd
 from torchvision.transforms import ToPILImage
-from thesis.utils import svg2paths2, raster, disvg
+from utils import svg2paths2, raster, disvg
 
 
 # Load your CSV file

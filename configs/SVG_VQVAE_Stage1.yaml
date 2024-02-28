@@ -16,7 +16,7 @@ data_params:
   width: 128
   train_batch_size: 8
   val_batch_size:  8
-  num_workers: 8
+  num_workers: 0
   individual_max_length : 7.5  # max length of a single stroke, decides the width/height of rendered shapes
   stroke_width: 0.7  # IMPORTANT: this must scale with individiual_max_length as they together define the image
   # max_shapes_per_svg: 32

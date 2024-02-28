@@ -1,7 +1,7 @@
 from torch import Tensor
 import torch
 import numpy as np
-from .utils import shapes_to_drawing, calculate_global_positions, drawing_to_tensor
+from utils import shapes_to_drawing, calculate_global_positions, drawing_to_tensor
 
 
 

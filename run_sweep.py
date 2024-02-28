@@ -9,8 +9,8 @@ from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import WandbLogger, TensorBoardLogger
 from pytorch_lightning import seed_everything
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, LearningRateFinder, EarlyStopping
-from thesis.dataset import MNISTDataset, MNISTppDataset, NounProjectDataset, EmojiDataset, MNISTDatasetCSVG, CausalSVGDataModule
-from thesis.models import VAEctorGen, VectorGPT, VanillaVAE, VectorVAEnLayers
+from dataset import MNISTDataset, MNISTppDataset, NounProjectDataset, EmojiDataset, MNISTDatasetCSVG, CausalSVGDataModule
+from models import VAEctorGen, VectorGPT, VanillaVAE, VectorVAEnLayers
 import wandb
 from utils import get_rank
 import torch

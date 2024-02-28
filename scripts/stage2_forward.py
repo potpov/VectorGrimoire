@@ -2,9 +2,9 @@ import os
 import torch
 import yaml
 import numpy as np
-from thesis.dataset import VQDataset
-from thesis.models import VQ_SVG_Stage2,Vector_VQVAE
-from thesis.tokenizer import VQTokenizer
+from dataset import VQDataset
+from models import VQ_SVG_Stage2,Vector_VQVAE
+from tokenizer import VQTokenizer
 
 path = "/scratch2/moritz_data/glyphazzn/tokenized/full_training_text_tokens.npy"
 path2 = "/scratch2/moritz_data/glyphazzn/tokenized/full_training_vq_tokens.npy"

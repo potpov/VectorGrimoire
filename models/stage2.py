@@ -6,7 +6,7 @@ from transformers import BertModel
 from x_transformers import Decoder
 from torch import Tensor
 from x_transformers.x_transformers import TokenEmbedding, AbsolutePositionalEmbedding
-# from thesis.tokenizer import VQTokenizer
+# from tokenizer import VQTokenizer
 
 class VQ_Decoder(nn.Module):
     def __init__(self,

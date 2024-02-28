@@ -6,12 +6,12 @@ from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import WandbLogger, TensorBoardLogger
 from pytorch_lightning import seed_everything
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, LearningRateFinder, EarlyStopping
-from thesis.dataset import VQDataModule
-from thesis.models import VQ_SVG_Stage2, Vector_VQVAE
-from thesis.tokenizer import VQTokenizer
-from thesis.experiment import SVG_VQVAE_Stage2_Experiment
+from dataset import VQDataModule
+from models import VQ_SVG_Stage2, Vector_VQVAE
+from tokenizer import VQTokenizer
+from experiment import SVG_VQVAE_Stage2_Experiment
 import wandb
-from thesis.utils import get_rank
+from utils import get_rank
 import torch
 from pytorch_lightning.profilers import SimpleProfiler
 
@@ -108,6 +108,7 @@ runner = Trainer(
     val_check_interval=0.3,
     log_every_n_steps=int(config['exp_params']["train_log_interval"]),
     profiler=profiler,
+    strategy="ddp_find_unused_parameters_true",
     **config['trainer_params']
 )
 
@@ -136,4 +137,3 @@ except KeyboardInterrupt:
     print(profiler.summary())
     with open("profiler_results_stage2.txt", "w+") as f:
         f.write(profiler.summary())
-
