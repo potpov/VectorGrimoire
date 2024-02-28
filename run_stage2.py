@@ -49,7 +49,7 @@ if args.wandb:
         project=config["logging_params"]["project"],
         log_model=True,
         entity=entity,
-        mode="disabled" if args.debug else "online",
+        mode="offline" if args.debug else "online",
     )
     if current_process_rank == 0:
         wandb_logger.experiment.config.update(config)
@@ -102,11 +102,8 @@ runner = Trainer(
         ModelCheckpoint(save_top_k=3,
                         dirpath=os.path.join(config['logging_params']['save_dir'], "checkpoints"),
                         monitor="val_loss",
-                        save_last=True,
-                        every_n_train_steps=10000),
+                        save_last=True),
     ],
-    val_check_interval=0.3,
-    log_every_n_steps=int(config['exp_params']["train_log_interval"]),
     profiler=profiler,
     strategy="ddp_find_unused_parameters_true",
     **config['trainer_params']
