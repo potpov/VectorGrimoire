@@ -8,8 +8,8 @@ from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import WandbLogger, TensorBoardLogger
 from pytorch_lightning import seed_everything
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, LearningRateFinder, EarlyStopping
-from thesis.dataset import MNISTDataset, MNISTppDataset, NounProjectDataset, EmojiDataset, MNISTDatasetCSVG, CausalSVGDataModule, NewCausalSVGDataModule, CenterShapeLayersFromSVGDataModule, VQDataModule, GlyphazznStage1Datamodule
-from thesis.models import VAEctorGen, VectorGPT, VanillaVAE, VectorVAEnLayers, VectorGPTv2, Vector_VQVAE
+from thesis.dataset import MNISTDataset, MNISTppDataset, NounProjectDataset, EmojiDataset, MNISTDatasetCSVG, CausalSVGDataModule, NewCausalSVGDataModule, CenterShapeLayersFromSVGDataModule, VQDataModule, GlyphazznStage1Datamodule, GenericRasterDatamodule
+from thesis.models import VAEctorGen, VectorGPT, VanillaVAE, VectorVAEnLayers, VectorGPTv2, Vector_VQVAE, VectorVAEnLayers
 from thesis.experiment import VAEXperiment, VectorGPTExperiment, VectorGPTExperimentv2, VectorVQVAE_Experiment_Stage1, SVG_VQVAE_Stage2_Experiment
 import wandb
 from thesis.utils import get_rank
@@ -29,12 +29,14 @@ DATASETMAP = {
     "centeredShapeLayers" : CenterShapeLayersFromSVGDataModule,
     "tokens" : VQDataModule,
     "stage1" : GlyphazznStage1Datamodule,
+    "raster_figr8" : GenericRasterDatamodule,
 }
 
 MODELS = {
     "VanillaVAE": VanillaVAE,
     "VAEctorGen": VAEctorGen,
     "VectorVAEnLayers": VectorVAEnLayers,
+    "Im2Vec": VectorVAEnLayers,
     "VectorGPT": VectorGPT,
     "VectorGPTv2": VectorGPTv2,
     "SVG_VAQVAE": Vector_VQVAE,

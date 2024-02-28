@@ -1,7 +1,7 @@
 import os
 import torch
 from torch import Tensor
-from typing import List, Optional, Sequence, Union
+from typing import Any, List, Optional, Sequence, Union
 from pytorch_lightning import LightningDataModule
 from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
@@ -1013,7 +1013,106 @@ class MyDataset(Dataset):
 
     def __getitem__(self, idx):
         pass
+import torchvision.transforms as transforms
+class GenericRasterDataset(Dataset):
+    def __init__(self,
+                 csv_path:str,
+                 train:bool,
+                 img_size:int = 128,
+                 channels:int=3,
+                 invert:bool = True) -> None:
+        super(GenericRasterDataset).__init__()
 
+        self.csv_path = csv_path
+        self.train = train
+        self.invert = invert
+        self.img_size = img_size
+        self.channels = channels
+
+        self.df = pd.read_csv(self.csv_path)
+        self.class2idx = {class_name: idx for idx, class_name in enumerate(self.df["class"].unique())}
+        self.df = self.df[self.df["split"] == ("train" if self.train else "test")].reset_index(drop=True)
+
+        self.transforms = transforms.Compose([
+            transforms.Resize((self.img_size, self.img_size)),
+            transforms.RandomInvert(p=1.0 * self.invert),
+            transforms.ToTensor()
+        ])
+
+    def __getitem__(self, index) -> Tensor:
+        img = Image.open(self.df.iloc[index]["full_path"])
+        label = self.class2idx[self.df.iloc[index]["class"]]
+        img = self.transforms(img)
+        if self.channels != img.shape[0]:
+            img = img.repeat(self.channels, 1, 1)
+        return img, label
+    
+    def __len__(self) -> int:
+        return len(self.df)
+
+class GenericRasterDatamodule(LightningDataModule):
+    def __init__(self,
+                 csv_path:str,
+                 img_size:int = 128,
+                 channels:int = 3,
+                 train_batch_size:int = 32,
+                val_batch_size:int = 32,
+                num_workers:int = 4,
+                 invert:bool = True,
+                 **kwargs) -> None:
+        
+        super().__init__()
+
+        self.csv_path = csv_path
+        self.img_size = img_size
+        self.invert = invert
+        self.train_batch_size = train_batch_size
+        self.val_batch_size = val_batch_size
+        self.num_workers = num_workers
+        self.channels = channels
+
+    def setup(self, stage: Optional[str] = None) -> None:
+        self.train_dataset = GenericRasterDataset(
+            self.csv_path,
+            train=True,
+            img_size=self.img_size,
+            invert=self.invert,
+            channels=self.channels
+        )
+
+        self.val_dataset = GenericRasterDataset(
+            self.csv_path,
+            train=False,
+            img_size=self.img_size,
+            invert=self.invert,
+            channels=self.channels
+        )
+    def train_dataloader(self) -> DataLoader:
+        return DataLoader(
+            self.train_dataset,
+            batch_size=self.train_batch_size,
+            num_workers=self.num_workers,
+            shuffle=True,
+            pin_memory=True,
+        )
+
+    def val_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
+        return DataLoader(
+            self.val_dataset,
+            batch_size=self.val_batch_size,
+            num_workers=self.num_workers,
+            shuffle=False,
+            pin_memory=False,
+        )
+
+    def test_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
+        return DataLoader(
+            self.val_dataset,
+            batch_size=16,
+            num_workers=self.num_workers,
+            shuffle=False,
+            pin_memory=False,
+        )
 
 class MNIST(Dataset):
     """
