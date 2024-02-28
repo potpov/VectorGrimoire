@@ -1,16 +1,16 @@
 from typing import Iterable, List, Tuple, Union
-from thesis.utils import calculate_global_positions, shapes_to_drawing, drawing_to_tensor
+from utils import calculate_global_positions, shapes_to_drawing, drawing_to_tensor
 
 import numpy as np
-from thesis.models.svg_vqvae import Vector_VQVAE
+from models.svg_vqvae import Vector_VQVAE
 import torch
 from torch import Tensor
 from svgwrite import Drawing
 from transformers import BertTokenizer, BertModel,PreTrainedTokenizerBase
 from torch import nn
-from thesis.svg_fixing import get_fixed_svg_render 
+from svg_fixing import get_fixed_svg_render 
 
-class VQTokenizer:
+class VQTokenizer(nn.Module):
     """
     Tokenizer for the SVG-VQVAE model. It tokenizes the patches of the rasterized SVGs and their middle positions + some special tokens + text conditioning.
 
@@ -31,6 +31,8 @@ class VQTokenizer:
                  use_text_encoder_only: bool = False,
                  codebook_size:int = None,
                  **kwargs) -> None:
+
+        super(VQTokenizer, self).__init__()
         self.text_encoder_str = text_encoder_str
         self.full_image_res = full_image_res
         self.tokens_per_patch = tokens_per_patch
@@ -116,7 +118,10 @@ class VQTokenizer:
         """
         tokens = torch.tensor(self.text_tokenizer.encode(text, add_special_tokens=True), device = self.device)
         return tokens
-        
+
+    def forward(self):
+        pass
+    
     def tokenize(self, patches: Tensor, positions: Tensor, text:str, return_np_uint16:bool = False) -> Union[Tensor, Tensor] | Union[np.ndarray, np.ndarray]:
         """
         Tokenizes the patches and positions of the rasterized SVGs. Padding is done in the dataloader dynamically to avoid requiring a fixed context length during pre-tokenization.

@@ -3,13 +3,13 @@ import random
 import torch
 from torch import Tensor
 import wandb
-from thesis.models import BaseVAE
+from models import BaseVAE
 from torch import nn
 from torch.nn import functional as F
 from PIL import Image
 from typing import List
 
-from thesis.utils import fig2data, make_tensor
+from utils import fig2data, make_tensor
 import pydiffvg
 import math
 import numpy as np

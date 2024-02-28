@@ -174,6 +174,7 @@ class MLPVectorHeadFixed(nn.Module):
                  imsize=32,
                  color_output=False,
                  alpha_prediction = False,
+                 stroke_width_predictor: bool = True,
                  max_stroke_width: float = 10.0):
         super(MLPVectorHeadFixed, self).__init__()
 
@@ -182,6 +183,7 @@ class MLPVectorHeadFixed(nn.Module):
         self.imsize = imsize
         self.segments = segments
         self.latent_dim = latent_dim
+        self.stroke_width_predictor = stroke_width_predictor
 
         # 4 points bezier with n_segments -> 3*n_segments + 1 points
         self.point_predictor = nn.Sequential(
@@ -189,8 +191,7 @@ class MLPVectorHeadFixed(nn.Module):
             nn.SELU(),
             nn.Linear(self.latent_dim, self.latent_dim),
             nn.SELU(),
-            nn.Linear(self.latent_dim, 
-                         2*(self.segments*3 + 1)),
+            nn.Linear(self.latent_dim, 2 * (self.segments * 3 + 1)),
             nn.Sigmoid()  # bound spatial extent
         )
 
@@ -221,7 +222,15 @@ class MLPVectorHeadFixed(nn.Module):
 
         feats = z
         all_points = self.point_predictor(feats)
-        all_widths = self.stroke_predictor(feats) * self.stroke_width
+
+        all_width = self.stroke_predictor(feats)
+        if self.stroke_width_predictor:
+            all_widths = self.stroke_predictor(feats) * self.stroke_width
+        else:
+            # we block the stroke width to 4.7 which globally means 0.7
+            # a more proper way to compute this would be checking the longest stroke in the dataset before-hand
+            all_widths = torch.ones_like(all_width) * 4.7
+
         all_widths = torch.max(all_widths, torch.ones_like(all_widths)*self.min_stroke_width)  # enforce min stroke width
 
         # logging_dict["stroke_width"] = wandb.Histogram(all_widths.detach().cpu().flatten())
@@ -242,13 +251,14 @@ class MLPVectorHeadFixed(nn.Module):
         # max_width = self.stroke_width[1]
         # all_widths = (max_width - min_width) * all_widths + min_width
 
-        all_points = all_points.view(
-            bs, 1, self.segments*3+1, 2)
+        all_points = all_points.view(bs, 1, self.segments * 3 + 1, 2)
 
-        output, scenes = self.bezier_render(all_points, all_widths, all_alphas,
-                                         colors=all_colors,
-                                         canvas_size=self.imsize,
-                                         primitive = primitive)
+        output, scenes = self.bezier_render(
+            all_points, all_widths, all_alphas,
+            colors=all_colors,
+            canvas_size=self.imsize,
+            primitive=primitive
+        )
 
         # map to [-1, 1]
         # output = output*2.0 - 1.0

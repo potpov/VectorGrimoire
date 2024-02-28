@@ -10,11 +10,11 @@ import glob
 import pandas as pd
 import numpy as np
 import string
-from thesis.utils import svg2paths2, disvg, raster, get_single_paths, get_similar_length_paths, check_for_continouity, get_rasterized_segments, all_paths_to_max_diff, Path, svg_string_to_tensor
+from utils import svg2paths2, disvg, raster, get_single_paths, get_similar_length_paths, check_for_continouity, get_rasterized_segments, all_paths_to_max_diff, Path, svg_string_to_tensor
 import copy
 import random
 import math
-from thesis.tokenizer import VQTokenizer
+from tokenizer import VQTokenizer
 
 class Legacy_VQDataset(Dataset):
     """
@@ -25,73 +25,49 @@ class Legacy_VQDataset(Dataset):
         self.split = pd.read_csv(csv_path)
         self.train = train
         self.context_length = context_length
-        self.min_context_length = min_context_length
         if self.train:
-            vq_data: np.ndarray = np.load(self.split[self.split["split"] == "train"]["vq_token_path"].iloc[0])
-            text_data: np.ndarray = np.load(self.split[self.split["split"] == "train"]["text_token_path"].iloc[0])
+            self.vq_data: np.ndarray = np.load(self.split[self.split["split"] == "train"]["vq_token_path"].iloc[0])
+            self.text_data: np.ndarray = np.load(self.split[self.split["split"] == "train"]["text_token_path"].iloc[0])
         else:
-            vq_data: np.ndarray = np.load(self.split[self.split["split"] == "test"]["vq_token_path"].iloc[0])
-            text_data: np.ndarray = np.load(self.split[self.split["split"] == "test"]["text_token_path"].iloc[0])
-        print(f"Loaded datasets. \nVQ data shape: {vq_data.shape} and dtype: {vq_data.dtype}\nText data shape: {text_data.shape} and dtype: {text_data.dtype}")
+            self.vq_data: np.ndarray = np.load(self.split[self.split["split"] == "test"]["vq_token_path"].iloc[0])
+            self.text_data: np.ndarray = np.load(self.split[self.split["split"] == "test"]["text_token_path"].iloc[0])
+        print(f"Loaded datasets. \nVQ data shape: {self.vq_data.shape} and dtype: {self.vq_data.dtype}\nText data shape: {self.text_data.shape} and dtype: {self.text_data.dtype}")
         print("Processing...")
 
-        bert_cls_token = 101
-        bert_sep_token = 102
-        bert_pad_token = 0
+        cls_token = 101
         sos_token = 0
         bos_token = 1
-        self.eos_token = 2
-        self.pad_token = 3  # needed in getitem method
+        eos_token = 2
+        pad_token = 3
 
-        text_data = np.split(text_data, np.where(text_data == bert_cls_token)[0])[1:]
-        vq_data = np.split(vq_data, np.where(vq_data == bos_token)[0])[1:]
-        self.max_text_length = max([len(x) for x in text_data])
-        
-        # pad the text_data to the same length
-        self.text_tokens = []
-        self.vq_tokens = []
-        skipped = 0
-        for i, _ in enumerate(text_data):
-            if len(vq_data[i]) + self.max_text_length + 2 <= self.context_length and len(vq_data[i]) >= self.min_context_length:  # +2 for <SOS> and <EOS>
-                padded_text = np.append(text_data[i], np.zeros(self.max_text_length - len(text_data[i]), dtype=np.ushort) + bert_pad_token)
-                vq_with_eos = np.append(vq_data[i], np.zeros(1, dtype=np.ushort) + self.eos_token)
-                final_padded_vq = np.append(vq_with_eos, np.zeros(self.context_length - self.max_text_length - len(vq_with_eos) - 1, dtype=np.ushort) + self.pad_token)  # -1 because SOS token is prefixed to the sequence later
-                self.text_tokens.append(padded_text)
-                self.vq_tokens.append(final_padded_vq)
-            else:
-                skipped += 1
-        
-        self.text_tokens = np.stack(self.text_tokens)
-        self.vq_tokens = np.stack(self.vq_tokens)
-        self.text_attention_masks = (self.text_tokens != 0).astype(np.int64)
+        self.text_data = np.split(self.text_data, np.where(self.text_data == cls_token)[0])[1:]  # as 101 is the <CLS> token
 
-        assert len(self.text_tokens) == len(self.vq_tokens), "Text and VQ tokens should have the same shape."
-        assert self.text_tokens[0,0] == bert_cls_token, "First token in text tokens should be the BERT CLS token."
-        assert self.vq_tokens[0,0] == bos_token, "First token in VQ tokens should be the BOS token."
-        assert self.text_attention_masks[0,0] == 1, "First token in text attention masks should be 1."
+        self.vq_data = np.split(self.vq_data, np.where(self.vq_data == bos_token)[0])[1:]  # as 1 is the <BOS> token
+        # self.vq_data = [x for x in self.vq_data if len(x) < self.context_length - 1]  # -1 so we can shift one position for the target
+        assert len(self.vq_data) == len(self.text_data), f"VQ ({len(self.vq_data)}) and text {len(self.text_data)} data should have the same length."
+        self.data = [np.append(x, y) for x, y in zip(self.vq_data, self.text_data)]
+        # now add the SOS at index=0 and EOS token at last index to each sequence
+        self.data = [np.append(np.insert(array, 0, sos_token), eos_token) for array in self.data]
+        self.data = [x for x in self.data if len(x) < self.context_length - 1]  # remove sequences that are too long
 
+        for i, array in enumerate(self.data):
+            if len(array) < self.context_length:
+                self.data[i] = np.append(array, np.zeros(self.context_length - len(array), dtype=np.ushort) + pad_token)
+        self.data = np.stack(self.data)
         print("Finished processing dataset.")
-        print(f"Dataset now with shape {self.vq_tokens.shape} and dtype: {self.vq_tokens.dtype}")
-        print(f"[INFO] Skipped {skipped} samples because they were too long or too short. That is {np.round(skipped / len(self.text_tokens) * 100, decimals=2)}% of the dataset.")
+        print(f"Dataset now with shape {self.data.shape} and dtype: {self.data.dtype}")
 
 
     def __len__(self):
-        return len(self.vq_tokens)
+        return len(self.data)
 
     def __getitem__(self, idx:int):
-        """
-        IMPORTANT
-        text tokens have their special tokens and padding already included.
-        vq tokens have their special tokens (BOS and EOS) and padding already included.
-        only SOS needs to be prefixed after the data is loaded.
-        """
-        text_tokens = torch.from_numpy(self.text_tokens[idx].astype(np.int32)).long()
-        vq_tokens = torch.from_numpy(self.vq_tokens[idx].astype(np.int32)).long()
-        vq_targets = torch.roll(vq_tokens, -1)
-        vq_targets[-1] = self.pad_token
-        attention_mask = torch.from_numpy(self.text_attention_masks[idx].astype(np.int32)).long()
-
-        return text_tokens, attention_mask, vq_tokens, vq_targets, torch.ones(1).to(text_tokens.device)*self.pad_token
+        row = self.data[idx]
+        # TODO this might need to be changed so the targets are SVG only and inputs are SVG + text
+        inputs = torch.from_numpy(row.astype(np.int32)).long()
+        targets = torch.from_numpy(np.roll(row, -1).astype(np.int32)).long()
+        targets[-1] = 2  # <PAD> token
+        return inputs, targets
     
 
 class VQDataset(Dataset):
@@ -351,7 +327,7 @@ class VQDataModule(LightningDataModule):
     def test_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
         return DataLoader(
             self.val_dataset,
-            batch_size=self.val_batch_size,
+            batch_size=16,
             num_workers=self.num_workers,
             shuffle=False,
             pin_memory=False,
@@ -388,7 +364,6 @@ class GlyphazznStage1Dataset(Dataset):
                  channels: int,
                  width: int,
                  train: bool = True,
-                 subset:str = "all",
                  individual_min_length: float = 1.,
                  individual_max_length: float = 10.,
                  stroke_width: float = 0.3,
@@ -442,11 +417,13 @@ class GlyphazznStage1Dataset(Dataset):
         a single input path is cropped into segments of approx length `length`. I say "approx" because we divide the path into same length segments, which will not be exactly `length` long.
         """
         segments = []
-        num_iters = math.ceil(path.length() / length)
-        for i in range(num_iters):
-            cropped_segment = path.cropped(i/num_iters, (i+1)/num_iters)
-            segments.append(cropped_segment)
-
+        try:
+            num_iters = math.ceil(path.length() / length)
+            for i in range(num_iters):
+                cropped_segment = path.cropped(i/num_iters, (i+1)/num_iters)
+                segments.append(cropped_segment)
+        except Exception as e:
+            pass
         return segments
 
     def get_similar_length_paths(self, single_paths, max_length: float = 5., filter_min_length:bool = False):
@@ -505,6 +482,8 @@ class GlyphazznStage1Dataset(Dataset):
         imgs = torch.stack(rasterized_segments)  # (n_shapes, channels, width, width)
         centers = torch.tensor(centers)  # (n_shapes, 2)
         labels = torch.ones(imgs.size(0)) * label
+        if self.return_filename:
+            return imgs, labels.int(), centers, description, svg_path
         return imgs, labels.int(), centers, description
     
     def _get_full_item(self, index:int) -> List[Tensor]:
@@ -584,7 +563,6 @@ class GlyphazznStage1Datamodule(LightningDataModule):
             self.channels,
             self.width,
             train=True,
-            subset=self.subset,
             individual_max_length=self.individual_max_length,
             stroke_width=self.stroke_width,
             max_shapes_per_svg=self.max_shapes_per_svg,
@@ -596,7 +574,6 @@ class GlyphazznStage1Datamodule(LightningDataModule):
             self.channels,
             self.width,
             train=False,
-            subset=self.subset,
             individual_max_length=self.individual_max_length,
             stroke_width=self.stroke_width,
             max_shapes_per_svg=self.max_shapes_per_svg,

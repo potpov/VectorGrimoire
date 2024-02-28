@@ -6,7 +6,7 @@ import torchvision.utils as vutils
 import matplotlib.pyplot as plt
 from PIL import Image
 import os
-from thesis.models import VanillaVAE
+from models import VanillaVAE
 from typing import List
 
 def get_clip_score(images:List, descriptions:List, model_str:str, device="cuda"):
