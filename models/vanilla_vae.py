@@ -1,6 +1,6 @@
 from typing import List
 import torch
-from models import BaseVAE
+from .base import BaseVAE
 from torch import nn
 from torch import Tensor
 from torch.nn import functional as F

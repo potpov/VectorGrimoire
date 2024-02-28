@@ -42,7 +42,7 @@ NOTE: all scripts must be modified, paths are hard-coded
 ### process for VQ-VAE pipeline
 For the first step we would actually just need SVGs, not even normalized as the dataloader `CenterShapeLayersFromSVGDataset` automatically splits paths. However, for the second stage (transformer training) we need normalized versions of the SVG data anyway (for the positions), so just generate the normalized versions first and you're good.
 
-- normalize with deepsvg in `deepsvg/dataset/preprocess.py`
+- normalize with deepsvg in `deepsvg/dataset/preprocess.py` (must be run with `python -m dataset.preprocess` in the deepsvg directory)
 
 ## DATA
 ### Fonts

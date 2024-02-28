@@ -1,35 +1,61 @@
+stage1_params:
+  name: "SVG_VAQVAE"  # always keep this "VectorGPT"
+  vector_decoder_model: "mlp" # "mlp" or "raster_conv"
+  quantized_dim: 512
+  codebook_size: 4096  # will be ignored for FSQ
+  image_loss: "mse"  # "pyramid" or "mse"
+  single_code_representation: true
+  vq_method: "fsq"  # "vqvae", "FSQ", "vqtorch"
+  fsq_levels: [7,5,5,5,5]  # will determine codebook_size, see Table 1 of FSQ paper - [7,5,5,5,5] for 4096 (e.g. StrokeNUWA), [8,5,5,5] for 1024
+  num_segments: 2
+  geometric_constraint: "inner_distance"
+  geometric_constraint_weight: 0.1
+  checkpoint_path: "/scratch/mcipriano/cache/svg/moritz_geometric.ckpt"
+
 model_params:
-  name: "VQ_Transformer"
-  num_tokens: 17387
-  max_seq_len: 256
-  dim: 512
-  depth: 12
+  name: "VQ_SVG_Stage2"
+  max_seq_len: 512  # 512
+  dim: 512 # 512
+  depth: 16  # 12
   heads: 8
+  text_encoder_str: "bert-base-uncased"
+  use_alibi_positional_bias : False
 
 data_params:
-  dataset: "tokens"  # must be in the DATASETMAP in run.py
-  csv_path: "/scratch2/moritz_data/glyphazzn/B_simplified/tokenized/split.csv"  # root path for CausalSVGDataModule in dataset.py
-  train_batch_size: 8
-  val_batch_size:  8
+  dataset: "figr8"
+  csv_path: "/scratch/datasets/svg/figr8/tokenized/stage2_final.csv"  # root path for CausalSVGDataModule in dataset.py
+  vq_token_npy_path: "/scratch/datasets/svg/figr8/tokenized/tokenized.npy"
+  train_batch_size: 64  #32
+  val_batch_size:  64  # 32
   num_workers: 8
+  width: 128
+  min_context_length: 10  # all samples below this will be removed from the dataset
+  fraction_of_strokenuwa_inputs: 0.0
+  fraction_of_class_only_inputs: 0.9  # fraction of samples that will only have the "class" entry of the dataframe as input
+  fraction_of_blank_inputs: 0.1  # fraction of samples that will have empty text input
+  fraction_of_iconshop_chatgpt_inputs: 0.0
+  shuffle_vq_order: True  # whether to shuffle the order of the VQ tokens, its not really "shuffling", but more cutting the sequence into two parts and switching their order
+  use_pre_computed_text_tokens_only: False  # if True, the text tokens that were pre-computed will be used as input, if False, the text will be tokenized in the dataloader (according to the specified fractions).
 
 exp_params:
-  lr: 0.00002  # 0.00002
-  checkpoint_path: "/scratch2/moritz_logs/SVG_VQVAE/Stage1/glyphazzn_B_simplified_single_code/checkpoints/last-v3.ckpt"
+  lr: 0.0006  # 0.00002
   weight_decay: 1.e-4  # specify positive float to enable, start experimenting with 1.e-4/1.e-3
-  scheduler_gamma: 0.98  # 0.95 is a good starting value
-  train_log_interval: 100 # len(dataset) / train_batch_size / desired_logging_frequency
+  scheduler_gamma: 0.96  # 0.95 is a good starting value
+  train_log_interval: 0.05  # decides how often full generations are made and logged
+  val_log_interval: 0.1
+  metric_log_interval: 0.4
   manual_seed: 1265
+  post_process: False  # whether to log with svg fixing
 
 trainer_params:
   devices: -1  # always keep at -1 as this takes all available GPUs specified through CUDA_VISIBLE_DEVICES
-  max_epochs: 250  # dsnt matter too much, got early stopping implemented
-  accumulate_grad_batches: 2
+  max_epochs: 300  # dsnt matter too much, got early stopping implemented
+#  accumulate_grad_batches: 2
 
 logging_params:
-  # entity: "aiis-chair"  # comment to use default wandb entity "mfeuer"
+  entity: "aiis-chair"  # comment to use default wandb entity "mfeuer"
   project: "thesis"  # your wandb project name
-  save_dir: "/scratch2/moritz_logs/VQ_Transformer/glyphazzn_B_simplified_single_code"
-  name: "VQ_Transformer glyphazzn_B, single code representation"  # name of the run in wandb
+  save_dir: "/scratch/mcipriano/results/svg/SVG_VQVAE/Stage2/figr8"
+  name: "Stage 2 Figr8, single code representation, text enc. frozen"  # name of the run in wandb
   version: 0
-  author: "Moritz"  # will be a tag in wandb
+  author: "Marco"  # will be a tag in wandb

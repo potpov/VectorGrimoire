@@ -6,6 +6,7 @@ from models.vaectorgen import VAEctorGen
 from .vectorGPT import VectorGPT
 from .vectorGPTv2 import VectorGPTv2
 from .svg_vqvae import Vector_VQVAE, VQ_Transformer
+from .stage2 import VQ_SVG_Stage2
 
 vae_models = {"VanillaVAE": VanillaVAE, 
               "VQVAE": VQVAE,

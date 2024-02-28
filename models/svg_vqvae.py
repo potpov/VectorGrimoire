@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 import wandb
-from utils import log_all_images, tensor_to_histogram_image
+from utils import log_all_images, tensor_to_histogram_image, calculate_global_positions, shapes_to_drawing, svg_string_to_tensor
 from models.resnet import ResNet, BasicBlock
 from models.vq_vae import VectorQuantizer
 from models.mlp_vector_head import MLPVectorHeadFixed
@@ -15,6 +15,7 @@ from vector_quantize_pytorch import FSQ
 from x_transformers import TransformerWrapper, Decoder
 from transformers import BertModel
 from svgwrite import Drawing
+
 
 class DeconvResNet(nn.Module):
     def __init__(self):
@@ -164,16 +165,28 @@ class Vector_VQVAE(nn.Module):
                  single_code_representation: bool = True,
                  vq_method:str = "fsq",
                  fsq_levels:list =[8,5,5,5],
+                 num_segments:int = 1,
+                 geometric_constraint: str = None,
+                 geometric_constraint_weight: float = 0.1,
                  **kwargs) -> None:
         super(Vector_VQVAE, self).__init__()
 
         assert vector_decoder_model in ["mlp", "raster_conv"], "vector_decoder_model must be one of ['mlp', 'raster_conv']"
+        assert geometric_constraint in ["inner_distance", None], f"geometric_constraint must be one of ['inner_distance'], but was {geometric_constraint}"
 
         self.vector_decoder_model = vector_decoder_model
         self.quantized_dim = quantized_dim
         self.image_loss = image_loss
         self.vq_method = vq_method.lower()
         self.fsq_levels = fsq_levels
+        self.num_segments = num_segments
+        if geometric_constraint is not None:
+            self.geometric_constraint = geometric_constraint
+            self.geometric_constraint_weight = geometric_constraint_weight
+        else:
+            self.geometric_constraint = "None"
+            self.geometric_constraint_weight = 0.0
+
         if self.vq_method == "fsq":
             self.codebook_size = np.prod(fsq_levels)
         else:
@@ -204,7 +217,7 @@ class Vector_VQVAE(nn.Module):
         
         if self.vector_decoder_model == "mlp":
             self.decoder = MLPVectorHeadFixed(latent_dim = self.latent_dim,
-                                              segments = 1,
+                                              segments = self.num_segments,
                                               imsize = 128,
                                               max_stroke_width=20.)
         elif self.vector_decoder_model == "raster_conv":
@@ -265,7 +278,7 @@ class Vector_VQVAE(nn.Module):
                 quantized_inputs, indices = self.quantize_layer.forward(encoding)
                 vq_loss = torch.tensor(0.)
                 if logging:
-                    vq_logging_dict = {"codebook_histogram":wandb.Image(tensor_to_histogram_image(indices.detach().flatten().cpu()))}
+                    vq_logging_dict = {"codebook_histogram":wandb.Image(tensor_to_histogram_image(indices.detach().flatten().cpu()), caption="histogram of codebook indices")}
                     
             # flatten it for MLP digestion
             quantized_inputs = quantized_inputs.view(bs, self.latent_dim)
@@ -316,10 +329,22 @@ class Vector_VQVAE(nn.Module):
             wandb.log(recons_loss_contributions)
         return recon_loss
 
+    def _get_mean_inner_distance(self,
+                        points: Tensor) -> Tensor:
+        """
+        mean inner distance is defined as the distance between start and end point of each segment of the path
+        """
+        inner_dists = []
+        for i in range(self.num_segments):
+            inner_dist = torch.cdist(points[:,:,i*3,:], points[:,:,(i+1)*3,:])
+            inner_dists.append(inner_dist.mean())
+        return torch.mean(torch.tensor(inner_dists))
+
     def loss_function(self,
                       reconstructions: Tensor,
                       gt_images: Tensor,
                       vq_loss: Tensor,
+                      points: Tensor,
                       log_loss: bool = False,
                       **kwargs) -> dict:
         if self.image_loss == "mse":
@@ -328,10 +353,20 @@ class Vector_VQVAE(nn.Module):
             recons_loss = self.gaussian_pyramid_loss(reconstructions, gt_images, down_sample_steps=3, log_loss=log_loss)
         else:
             raise NotImplementedError("Only mse and pyramid loss implemented for now.")
-        loss = recons_loss + vq_loss
+        if self.geometric_constraint == "inner_distance":
+            max_dist = torch.cdist(torch.tensor([[0.0,0.0]]), torch.tensor([[1.0,1.0]])).item()
+            mean_inner_distance = self._get_mean_inner_distance(points)
+            # loss is weighted by the mean of black pixels, so that short strokes are not penalized as much
+            geometric_loss = (max_dist - mean_inner_distance) * (1- gt_images).mean()
+        else:
+            geometric_loss = 0.0
+        
+        loss = recons_loss + vq_loss + self.geometric_constraint_weight * geometric_loss
+
         return {'loss': loss,
                 'Reconstruction_Loss': recons_loss,
-                'VQ_Loss':vq_loss}
+                'VQ_Loss':vq_loss,
+                self.geometric_constraint+"_loss" : self.geometric_constraint_weight * geometric_loss}
     
 
     def generate(self, x: Tensor, **kwargs) -> Tensor:
@@ -358,7 +393,7 @@ class Vector_VQVAE(nn.Module):
             - reconstructed_drawing (Drawing): Reconstructed drawing (use to save svg)
             - rasterized_reconstructions (Tensor): Rasterized reconstructions
         """
-        [reconstructions, input, all_points, vq_loss], logging_dict = self.forward(patches)
+        [reconstructions, input, all_points, vq_loss], logging_dict = self.forward(patches, logging = False)
         global_shapes = calculate_global_positions(all_points, padded_individual_max_length, gt_center_positions)[:,0]
         reconstructed_drawing = shapes_to_drawing(global_shapes, stroke_width=stroke_width, w=rendered_w)
         rasterized_reconstructions = svg_string_to_tensor(reconstructed_drawing.tostring())
