@@ -136,7 +136,8 @@ class VQ_SVG_Stage2(nn.Module):
     def generate(self,
                  text_tokens: Tensor,
                  attention_mask: Tensor,
-                 vq_tokens: Tensor) -> Union[Tensor, str]:
+                 vq_tokens: Tensor,
+                 temperature:float = 0.0) -> Union[Tensor, str]:
         """
         Returns the generated sequence of VQ tokens and the reason for stopping the generation.
         """
@@ -166,7 +167,10 @@ class VQ_SVG_Stage2(nn.Module):
                     required_token = "patch"
                 
                 # get the last predicted token
-                last_token = predictions[:, -1:, :].argmax(dim=-1)
+                if temperature > 0:
+                    pass
+                else:
+                    last_token = predictions[:, -1:, :].argmax(dim=-1)
                 # check if the last token is the <EOS> token
                 # append the last token to the input tokens
                 vq_tokens = torch.cat([vq_tokens, last_token], dim=1)

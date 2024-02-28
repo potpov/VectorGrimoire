@@ -12,6 +12,11 @@ df = pd.read_csv(df_path)
 if 'manual_label' not in df.columns:
     df['manual_label'] = None
 
+def svg_file_path_to_image(path):
+    paths, attributes, svg_attributes = svg2paths2(path)
+    return_tensor = raster(disvg(paths, stroke_widths=[0.5]*len(paths),paths2Drawing=True), out_h=224, out_w = 224)
+    return ToPILImage()(return_tensor)
+
 # Function to load and display the SVG file as a base64-encoded image
 def show_svg(svg_path):
     # with open(svg_path, 'r') as file:
@@ -33,10 +38,6 @@ def save_df():
     df.to_csv(df_path, index=False, escapechar='\\')
     return "DataFrame saved manually."
 
-def svg_file_path_to_image(path):
-    paths, attributes, svg_attributes = svg2paths2(path)
-    return_tensor = raster(disvg(paths, stroke_widths=[0.5]*len(paths),paths2Drawing=True), out_h=224, out_w = 224)
-    return ToPILImage()(return_tensor)
 
 # Gradio interface
 with gr.Blocks(theme=gr.themes.Soft()) as demo:

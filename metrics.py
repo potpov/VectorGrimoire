@@ -7,6 +7,19 @@ import matplotlib.pyplot as plt
 from PIL import Image
 import os
 from thesis.models import VanillaVAE
+from typing import List
+
+def get_clip_score(images:List, descriptions:List, model_str:str, device="cuda"):
+    pass
+
+def get_fid_score(images:List, model_str:str, device="cuda"):
+    pass
+
+
+
+
+
+########## LEGACY ##########
 
 def _load_vanilla_vae(config_path: str, weights_path:str, device:str = "cuda:0"):
     with open(config_path, 'r') as file:

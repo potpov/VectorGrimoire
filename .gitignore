@@ -10,12 +10,14 @@ test.png
 wandb/*
 *.ckpt
 !inference.ipynb
+!visualizations.ipynb
 configs/*.yaml
 !VectorGPT.yaml
 !VectorGPTv2.yaml
 !VectorGPT_sweep_basis.yaml
 !SVG_VQVAE_Stage1.yaml
 !SVG_VQVAE_Stage2.yaml
+!Im2Vec_figr8.yaml
 images/*
 scripts/output/
 

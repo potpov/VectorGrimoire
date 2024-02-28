@@ -78,7 +78,7 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
             texts = [self.tokenizer.decode_text(text_tokens[i]) for i in range(bs)]
             # filter out empty texts
             relevant_idxs = [i for i in range(bs) if len(texts[i]) > 0]
-            generations = [self._generate_rasterized_sample(text_tokens[i:i+1,:], text_attention_mask[i:i+1,:], vq_tokens[i:i+1, :1], post_process=post_process) for i in relevant_idxs]
+            generations = [self._generate_rasterized_sample(text_tokens[i:i+1,:], text_attention_mask[i:i+1,:], vq_tokens[i:i+1, :1], post_process=post_process).to(self.curr_device) for i in relevant_idxs]
             texts = [texts[i] for i in relevant_idxs]
             metric = clip_score(generations, texts, "openai/clip-vit-base-patch16")
         return metric, generations, texts
