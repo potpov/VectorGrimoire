@@ -7,6 +7,7 @@ from x_transformers import Decoder
 from torch import Tensor
 from x_transformers.x_transformers import TokenEmbedding, AbsolutePositionalEmbedding
 # from tokenizer import VQTokenizer
+import math
 
 class VQ_Decoder(nn.Module):
     def __init__(self,
@@ -133,13 +134,50 @@ class VQ_SVG_Stage2(nn.Module):
         out = out[:, text_tokens.shape[-1] + 1:]  # remove the predictions for the text token range +1 (<SOS> token that was added during embedding)
         return out, {}
     
+    def _top_p(self, logits, thres = 0.9, **kwargs):
+        if kwargs:
+            print("Unused kwargs in top-p sampling:", kwargs)
+        # credit: lucidrains
+        sorted_logits, sorted_indices = torch.sort(logits, descending = True)
+        cum_probs = torch.cumsum(F.softmax(sorted_logits, dim = -1), dim = -1)
+
+        sorted_indices_to_remove = cum_probs > thres
+        sorted_indices_to_remove = F.pad(sorted_indices_to_remove, (1, -1), value = False)
+
+        sorted_logits[sorted_indices_to_remove] = float('-inf')
+        return sorted_logits.scatter(1, sorted_indices, sorted_logits)
+
+    def _top_k(self, logits, frac_num_tokens = 0.1, k = None, **kwargs):
+        if kwargs:
+            print("Unused kwargs in top-k sampling:", kwargs)
+        # credit: lucidrains
+        num_tokens = logits.shape[-1]
+
+        k = k if k is not None else math.ceil(frac_num_tokens * num_tokens)
+        k = min(k, num_tokens)
+
+        val, ind = torch.topk(logits, k)
+        probs = torch.full_like(logits, float('-inf'))
+        probs.scatter_(1, ind, val)
+        return probs
+    
     def generate(self,
                  text_tokens: Tensor,
                  attention_mask: Tensor,
                  vq_tokens: Tensor,
-                 temperature:float = 0.0) -> Union[Tensor, str]:
+                 temperature:float = 0.0,
+                 sampling_method:str = None,
+                 sampling_kwargs:dict = {}) -> Union[Tensor, str]:
         """
         Returns the generated sequence of VQ tokens and the reason for stopping the generation.
+
+        Args:
+            - text_tokens (Tensor): The input text tokens
+            - attention_mask (Tensor): The attention mask for the input text tokens
+            - vq_tokens (Tensor): The input VQ tokens
+            - temperature (float, optional): The temperature for the sampling. Defaults to 0.0.
+            - sampling_method (str, optional): The sampling method to use. Defaults to None. Must be one of `top_p` or `top_k`.
+            - sampling_kwargs (dict, optional): The sampling kwargs to use. Defaults to {}. `top_p` expects a `thres` key and `top_k` expects a `k` key (or `frac_num_tokens`).
         """
         
         assert self.pos_idx_range[0] >= self.patch_idx_range[1], "pos_idx_range must start after patch_idx_range ends"
@@ -157,24 +195,35 @@ class VQ_SVG_Stage2(nn.Module):
         with torch.no_grad():
             while vq_tokens.shape[1] < self.max_seq_len:
                 predictions, _ = self.forward(text_tokens, attention_mask ,vq_tokens)
-                predictions[:, -1, self.special_token_mapping["<PAD>"]] = -torch.inf  # mask the padding token
+                logits = predictions[:, -1]
+
+                logits[:, self.special_token_mapping["<PAD>"]] = -torch.inf  # mask the padding token
                 if required_token == "patch":
-                    predictions[:, -1, self.pos_idx_range[0]:self.pos_idx_range[1]] = -torch.inf
+                    logits[:, self.pos_idx_range[0]:self.pos_idx_range[1]] = -torch.inf
                     required_token = "pos"
                 elif required_token == "pos":
-                    predictions[:, -1, self.patch_idx_range[0]:self.patch_idx_range[1]] = -torch.inf
-                    predictions[:, -1, self.special_token_mapping["<EOS>"]] = -torch.inf  # cannot end on a patch token
+                    logits[:, self.patch_idx_range[0]:self.patch_idx_range[1]] = -torch.inf
+                    logits[:, self.special_token_mapping["<EOS>"]] = -torch.inf  # cannot end on a patch token
                     required_token = "patch"
                 
-                # get the last predicted token
+                # sampling
                 if temperature > 0:
-                    pass
+                    if sampling_method == "top_p":
+                        filtered_logits = self._top_p(logits, **sampling_kwargs)
+                    elif sampling_method == "top_k":
+                        filtered_logits = self._top_k(logits, **sampling_kwargs)
+                    else:
+                        filtered_logits = logits
+                    probs = F.softmax(filtered_logits / temperature, dim=-1)
+                    sample = torch.multinomial(probs, 1)
                 else:
-                    last_token = predictions[:, -1:, :].argmax(dim=-1)
+                    sample = logits.argmax(dim=-1) # might need keepdim=True
                 # check if the last token is the <EOS> token
                 # append the last token to the input tokens
-                vq_tokens = torch.cat([vq_tokens, last_token], dim=1)
-                if last_token.item() == self.special_token_mapping["<EOS>"]:
+                if sample.ndim < 2:
+                    sample = sample.unsqueeze(0)
+                vq_tokens = torch.cat([vq_tokens, sample], dim=1)
+                if sample.item() == self.special_token_mapping["<EOS>"]:
                     reason = "EOS token reached"
                     break
                 elif text_tokens.shape[1] + vq_tokens.shape[1] + 2 >= self.max_seq_len:

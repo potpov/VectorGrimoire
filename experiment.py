@@ -1,12 +1,13 @@
 import gc
 import random
+from typing import List, Tuple, Union
 import torch
 from torch import Tensor
 from torch import optim
 import wandb
 from models import BaseVAE, VectorVAEnLayers, VectorGPT, VectorGPTv2, Vector_VQVAE, VQ_SVG_Stage2
 import pytorch_lightning as pl
-from utils import log_images, log_all_images
+from utils import log_images, log_all_images, get_side_by_side_reconstruction, add_points_to_image, get_merged_image_for_logging
 from torchmetrics.image.fid import FrechetInceptionDistance
 from torchmetrics.multimodal.clip_score import CLIPScore
 import torch.nn.functional as F
@@ -57,16 +58,18 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
         return out, logging_dict
 
     def _generate_rasterized_sample(self, text_tokens: Tensor, text_attention_mask: Tensor, vq_tokens: Tensor,
+                                    temperature:float = 0.0, sampling_method: str = None, sampling_kwargs:dict = {},
                                     post_process: bool = True, draw_context_red: bool = True) -> Tensor:
         """
         Args:
-            text_tokens (Tensor): (1, t)
-            text_attention_mask (Tensor): (1, t)
-            vq_tokens (Tensor): (1, input_context_len_you_want)
+            - text_tokens (Tensor): (1, t)
+            - text_attention_mask (Tensor): (1, t)
+            - vq_tokens (Tensor): (1, input_context_len_you_want)
         """
         num_input_context_tokens = vq_tokens.shape[-1] // 2
         with torch.no_grad():
-            generation, reason = self.model.generate(text_tokens, text_attention_mask, vq_tokens)
+            generation, reason = self.model.generate(text_tokens, text_attention_mask, vq_tokens,
+                                                     temperature=temperature, sampling_method=sampling_method,sampling_kwargs=sampling_kwargs)
             if generation.ndim > 1:
                 generation = generation[0]
         if draw_context_red:
@@ -76,7 +79,7 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
             return self.tokenizer._tokens_to_image_tensor(generation, post_process=post_process)
 
     def _get_clip_score_for_batch(self, text_tokens: Tensor, text_attention_mask: Tensor, vq_tokens: Tensor,
-                                  post_process: bool = True) -> Tensor:
+                                  post_process: bool = True, temperatures:List=None) -> Tuple[Tensor, List, List]:
         """
         gets clip scores for 0-context generations of a batch of text tokens
         """
@@ -90,7 +93,8 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
                     text_tokens[i:i + 1, :],
                     text_attention_mask[i:i + 1, :],
                     vq_tokens[i:i + 1, :1],
-                    post_process=post_process
+                    post_process=post_process,
+                    temperature=temperatures[i] if temperatures is not None else 0.0
                 ).to(self.curr_device) for i in relevant_idxs
             ]
             texts = [texts[i] for i in relevant_idxs]
@@ -105,36 +109,46 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
             out, logging_dict = self.forward(text_tokens, text_attention_mask, vq_tokens, logging=True)
             text_condition = self.tokenizer.decode_text(text_tokens[0])
             rasterized_gt = self.tokenizer._tokens_to_image_tensor(vq_targets[:1], post_process=self.post_process)
+
+            # every third batch use temp = 0
+            if batch_idx % (self.train_log_interval * 3) == 0:
+                temperature = 0.0
+            else:
+                temperature = random.uniform(0.2, 1.5)
+
             context_0_generation = self._generate_rasterized_sample(text_tokens[:1, :], text_attention_mask[:1, :],
-                                                                    vq_tokens[:1, :1], post_process=self.post_process)
+                                                                    vq_tokens[:1, :1], post_process=self.post_process,
+                                                                    temperature=temperature)
             context_5_generation = self._generate_rasterized_sample(text_tokens[:1, :], text_attention_mask[:1, :],
-                                                                    vq_tokens[:1, :6], post_process=self.post_process)
+                                                                    vq_tokens[:1, :6], post_process=self.post_process,
+                                                                    temperature=temperature)
             context_10_generation = self._generate_rasterized_sample(text_tokens[:1, :], text_attention_mask[:1, :],
-                                                                     vq_tokens[:1, :11], post_process=self.post_process)
-            k, i = log_all_images([rasterized_gt, context_0_generation, context_5_generation, context_10_generation],
-                           log_key="train/rasterized_samples",
-                           caption=f"GT: {text_condition}, Gen. only text context, Gen. text + 5 vq tok, Gen. text + 10 vq tok")
+                                                                     vq_tokens[:1, :11], post_process=self.post_process,
+                                                                     temperature=temperature)
+            images = [rasterized_gt, context_0_generation, context_5_generation, context_10_generation]
             self.trainer.logger.log_image(
-                key=k,
-                caption=[f"GT: {text_condition}, Gen. only text context, Gen. text + 5 vq tok, Gen. text + 10 vq tok"],
-                images=[i],
+                key="train/rasterized_samples",
+                caption=[f"GT: {text_condition}, temp: {round(temperature, ndigits=2)}, VQ context is marked red."] * len(images),
+                images=images,
             )
         else:
             out, logging_dict = self.forward(text_tokens, text_attention_mask, vq_tokens, logging=False)
 
         if batch_idx % self.train_metric_log_interval == 0 and self.wandb:
             with torch.no_grad():
-                num_samples = 4
+                num_samples = 8
+                temperatures = [random.uniform(0.0, 1.5) for _ in range(num_samples)]
                 clip_score_metric, generations, texts = self._get_clip_score_for_batch(
                     text_tokens[:num_samples],
                     text_attention_mask[:num_samples],
                     vq_tokens[:num_samples],
-                    post_process=self.post_process
+                    post_process=self.post_process,
+                    temperatures=temperatures
                 )
                 self.log("train/clip_score", clip_score_metric, rank_zero_only=True, logger=True, on_step=True)
                 self.trainer.logger.log_image(
                     key="train/generated_samples",
-                    caption=texts,
+                    caption=[text+f", temp: {round(temperatures[i], ndigits=2)}" for i, text in enumerate(texts)],
                     images=generations,
                 )
 
@@ -168,7 +182,7 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
         )
 
         self.log_dict(loss_dict, logger=True, rank_zero_only=True)
-        self.log("train_loss", loss_dict["loss"], rank_zero_only=True, logger=True, prog_bar=True)
+        self.log("train_loss", loss_dict["loss"].detach().item(), rank_zero_only=True)
         return loss_dict["loss"]
 
     def on_train_epoch_end(self):
@@ -182,43 +196,53 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
         self.curr_device = text_tokens.device
 
         with torch.no_grad():
-            if batch_idx % self.train_log_interval == 0:
+            if batch_idx % self.train_log_interval == 0 and self.wandb:
                 out, logging_dict = self.forward(text_tokens, text_attention_mask, vq_tokens, logging=True)
                 text_condition = self.tokenizer.decode_text(text_tokens[0])
+
+                # every third batch use temp = 0
+                if batch_idx % (self.train_log_interval * 3) == 0:
+                    temperature = 0.0
+                else:
+                    temperature = random.uniform(0.2, 1.5)
+
                 rasterized_gt = self.tokenizer._tokens_to_image_tensor(vq_targets[:1], post_process=self.post_process)
                 context_0_generation = self._generate_rasterized_sample(text_tokens[:1, :], text_attention_mask[:1, :],
                                                                         vq_tokens[:1, :1],
-                                                                        post_process=self.post_process)
+                                                                        post_process=self.post_process,
+                                                                        temperature=temperature)
                 context_5_generation = self._generate_rasterized_sample(text_tokens[:1, :], text_attention_mask[:1, :],
                                                                         vq_tokens[:1, :6],
-                                                                        post_process=self.post_process)
+                                                                        post_process=self.post_process,
+                                                                        temperature=temperature)
                 context_10_generation = self._generate_rasterized_sample(text_tokens[:1, :], text_attention_mask[:1, :],
                                                                          vq_tokens[:1, :11],
-                                                                         post_process=self.post_process)
-                if self.wandb:
-                    k, i = log_all_images([rasterized_gt, context_0_generation, context_5_generation, context_10_generation],
-                                   log_key="val/rasterized_samples",
-                                   caption=f"GT: {text_condition}, Gen. only text context, Gen. text + 5 vq tok, Gen. text + 10 vq tok")
-                    self.trainer.logger.log_image(
-                        key=k,
-                        caption=[f"GT: {text_condition}, Gen. only text context, Gen. text + 5 vq tok, Gen. text + 10 vq tok"],
-                        images=[i],
-                    )
+                                                                         post_process=self.post_process,
+                                                                         temperature=temperature)
+                
+                images = [rasterized_gt, context_0_generation, context_5_generation, context_10_generation]
+                self.trainer.logger.log_image(
+                    key="val/rasterized_samples",
+                    caption=[f"GT: {text_condition}, temp: {round(temperature, ndigits=2)}, VQ context is marked red."] * len(images),
+                    images=images,
+                )
             else:
                 out, logging_dict = self.forward(text_tokens, text_attention_mask, vq_tokens, logging=False)
 
             if batch_idx % self.val_metric_log_interval == 0 and self.wandb:
-                num_samples = 4
+                num_samples = 8
+                temperatures = [random.uniform(0.0, 1.5) for _ in range(num_samples)]
                 clip_score_metric, generations, texts = self._get_clip_score_for_batch(
                     text_tokens[:num_samples],
                     text_attention_mask[:num_samples],
                     vq_tokens[:num_samples],
-                    post_process=self.post_process
+                    post_process=self.post_process,
+                    temperatures=temperatures
                 )
                 self.log("val/clip_score", clip_score_metric, rank_zero_only=True, logger=True)
                 self.trainer.logger.log_image(
                     key="val/generated_samples",
-                    caption=texts,
+                    caption=[text+f", temp: {round(temperatures[i], ndigits=2)}" for i, text in enumerate(texts)],
                     images=generations,
                 )
 
@@ -248,7 +272,7 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
             pred_logits=pred_logits,
         )
 
-        self.log("val_loss", loss_dict["loss"], rank_zero_only=True, logger=True)
+        self.log("val_loss", loss_dict["loss"], sync_dist=True)
         return loss_dict["loss"]
 
     def on_validation_end(self) -> None:

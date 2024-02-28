@@ -215,6 +215,19 @@ def log_all_images(images: List[Tensor], log_key="validation", caption="Captions
     # return log_key, wandb.Image(image_result, caption=caption)
     # wandb.log({log_key: wandb.Image(image_result, caption=caption)})
 
+def get_merged_image_for_logging(images: List[Tensor]) -> Tensor:
+    """
+    resized and merges all images of a list into a single loggable tensor
+    """
+    common_size = images[0].shape[-2:]
+    resizer = Resize(common_size, antialias=True)
+    images = [resizer(image) for image in images]
+
+    merged_image = make_grid(images, nrow=math.ceil(np.sqrt(len(images))), padding=5, pad_value=0.2)
+
+    return merged_image
+
+
 def log_images(recons: Tensor, real_imgs: Tensor, log_key="validation", captions="Captions not set"):
 
     # if get_rank() != 0:
