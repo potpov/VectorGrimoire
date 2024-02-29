@@ -179,6 +179,7 @@ class Vector_VQVAE(nn.Module):
         self.quantized_dim = quantized_dim
         self.image_loss = image_loss
         self.vq_method = vq_method.lower()
+        assert self.vq_method == "fsq", "Please use FSQ."
         self.fsq_levels = fsq_levels
         self.num_segments = num_segments
         self.num_codes_per_shape = num_codes_per_shape
