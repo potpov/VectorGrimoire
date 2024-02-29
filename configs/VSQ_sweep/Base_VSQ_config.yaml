@@ -37,7 +37,5 @@ trainer_params:
 logging_params:
   # entity: "aiis-chair"  # comment to use default wandb entity "mfeuer"
   project: "thesis"  # your wandb project name
-  save_dir: "/scratch2/moritz_logs/SVG_VQVAE/VSQ/XXX"
-  name: "SVG_VQVAE figr8 VSQ, ID: XXX"  # name of the run in wandb
   version: 0
   author: "Moritz"  # will be a tag in wandb

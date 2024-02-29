@@ -140,10 +140,13 @@ class VQDataset(Dataset):
             print(f"[WARNING] Number of samples in the numpy array and the csv file do not match. Numpy array has {len(self.vq_numpy_array)} samples, csv has {len(self.split)} samples.")
             input("Want to continue? Press any button.")
         
-        if train:
-            self.split = self.split[self.split["split"] == "train"].reset_index(drop=True)
-        else:
+        if train is None:
             self.split = self.split[self.split["split"] == "test"].reset_index(drop=True)
+        else:
+            if train:
+                self.split = self.split[self.split["split"] == "train"].reset_index(drop=True)
+            else:
+                self.split = self.split[self.split["split"] == "val"].reset_index(drop=True)
 
         self.split["index_in_numpy_array"] = self.split["index_in_numpy_array"].astype(int)
         samples_before_filtering = len(self.split)
@@ -304,6 +307,22 @@ class VQDataModule(LightningDataModule):
             use_pre_computed_text_tokens_only = self.use_pre_computed_text_tokens_only,
         )
 
+        self.test_dataset = VQDataset(
+            self.csv_path,
+            self.vq_token_npy_path,
+            tokenizer=self.tokenizer,
+            context_length=self.context_length,
+            dataset=self.dataset,
+            train=None,
+            min_context_length=self.min_context_length,
+            fraction_of_class_only_inputs = self.fraction_of_class_only_inputs,
+            fraction_of_blank_inputs = self.fraction_of_blank_inputs,
+            fraction_of_iconshop_chatgpt_inputs=self.fraction_of_iconshop_chatgpt_inputs,
+            fraction_of_strokenuwa_inputs=self.fraction_of_strokenuwa_inputs,
+            shuffle_vq_order = self.shuffle_vq_order,
+            use_pre_computed_text_tokens_only = self.use_pre_computed_text_tokens_only,
+        )
+
     #       ===============================================================
 
     def train_dataloader(self) -> DataLoader:
@@ -326,7 +345,7 @@ class VQDataModule(LightningDataModule):
 
     def test_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
         return DataLoader(
-            self.val_dataset,
+            self.test_dataset,
             batch_size=16,
             num_workers=self.num_workers,
             shuffle=False,
@@ -385,10 +404,13 @@ class GlyphazznStage1Dataset(Dataset):
 
         self.df = pd.read_csv(csv_path)
         self.class2id = {id_name: class_name for class_name, id_name in enumerate(self.df["class"].unique())}
-        self.df = self.df[self.df["split"] == ("train" if self.train else "test")].reset_index(drop=True)
-        if not train:
-            print("[INFO] Subsampling test set to 1000 samples.")
-            self.df = self.df.sample(min(1000, len(self.df)), random_state=42).reset_index(drop=True)
+        if train is None:
+            self.df = self.df[self.df["split"] == "test"].reset_index(drop=True)
+        else:
+            if train:
+                self.df = self.df[self.df["split"] == "train"].reset_index(drop=True)
+            else:
+                self.df = self.df[self.df["split"] == "val"].reset_index(drop=True)
 
     def crop_path_into_segments(self, path:Path, length:float = 5.):
         """
@@ -556,6 +578,17 @@ class GlyphazznStage1Datamodule(LightningDataModule):
             use_single_paths=self.use_single_paths
         )
 
+        self.test_dataset = GlyphazznStage1Dataset(
+            self.csv_path,
+            self.channels,
+            self.width,
+            train=None,
+            individual_max_length=self.individual_max_length,
+            stroke_width=self.stroke_width,
+            max_shapes_per_svg=self.max_shapes_per_svg,
+            use_single_paths=self.use_single_paths
+        )
+
     #       ===============================================================
 
     def collate_fn(self, batch):
@@ -587,7 +620,7 @@ class GlyphazznStage1Datamodule(LightningDataModule):
 
     def test_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
         return DataLoader(
-            self.val_dataset,
+            self.test_dataset,
             batch_size=16,
             num_workers=self.num_workers,
             shuffle=False,
