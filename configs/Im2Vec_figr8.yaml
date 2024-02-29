@@ -1,10 +1,10 @@
 model_params:
   name: "VectorVAEnLayers"
   in_channels: 3
-  latent_dim: 128
+  latent_dim: 256
   loss_fn: 'MSE'
-  paths: 20
-  T: 20
+  paths: 10
+  T: 10
   beta: 0
   radius: 3
   scale_factor: 1
@@ -18,18 +18,18 @@ model_params:
 
 data_params:
   dataset: "raster_figr8"
-  csv_path: "/scratch2/moritz_data/raster_figr8/split.csv"
+  csv_path: "/scratch2/moritz_data/raster_figr8/split_only_star.csv"
   img_size: 64
-  train_batch_size: 32
-  val_batch_size:  32
-  num_workers: 4
+  train_batch_size: 64
+  val_batch_size:  64
+  num_workers: 16
   invert: True
   channels: 3
 
 exp_params:
   LR: 0.0001
-  weight_decay: 0.0
-  scheduler_gamma: 0.95
+  weight_decay: 1.e-4
+  scheduler_gamma: 0.99
   grow: True
   manual_seed: 12345
   train_log_interval: 20
@@ -37,14 +37,14 @@ exp_params:
   resample_circle_segments: True
 
 trainer_params:
-  devices: 1
-  max_epochs: 300
+  devices: -1
+  max_epochs: 350
   accumulate_grad_batches: 2
 
 logging_params:
   entity: "aiis-chair-students"  # comment to use default wandb entity "mfeuer"
   project: "generative-svg"  # your wandb project name
-  save_dir: "/scratch2/moritz_logs/Im2Vec/figr8"
-  name: "Im2Vec Figr8"  # name of the run in wandb
+  save_dir: "/scratch2/moritz_logs/Im2Vec/figr8_star_64"
+  name: "Im2Vec Figr8 - Star only 64"  # name of the run in wandb
   version: 0
   author: "Moritz"  # will be a tag in wandb

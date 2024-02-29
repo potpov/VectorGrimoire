@@ -380,17 +380,8 @@ class GlyphazznStage1Dataset(Dataset):
         self.channels = channels
         self.width = width
         self.train = train
-        self.subset = subset
         self.use_single_paths = use_single_paths
         print("[GlyphazznStage1Dataset] loading df...")
-        dfs = []
-        # for top_level_dir in self.top_level_dirs:
-        #     df = pd.read_csv(os.path.join(top_level_dir, "split.csv"))
-        #     if train is not None:
-        #         df = df[df["split"] == ("train" if self.train else "test")].reset_index(drop=True)
-        #     else:
-        #         print("[WARNING] Using the whole dataset! Train was None.")
-        #     dfs.append(df)
 
         self.df = pd.read_csv(csv_path)
         self.class2id = {id_name: class_name for class_name, id_name in enumerate(self.df["class"].unique())}
@@ -398,19 +389,6 @@ class GlyphazznStage1Dataset(Dataset):
         if not train:
             print("[INFO] Subsampling test set to 1000 samples.")
             self.df = self.df.sample(min(1000, len(self.df)), random_state=42).reset_index(drop=True)
-
-        # if self.subset == "all":
-        #     self.df = self.df
-        # elif self.subset == "numbers":
-        #     self.df = self.df[self.df["class"].str in [str(i) for i in range(10)]]
-        # elif self.subset == "letters":
-        #     self.df = self.df[self.df["class"].str in string.ascii_letters]
-        # elif self.subset == "lowercase":
-        #     self.df = self.df[self.df["class"].str in string.ascii_lowercase]
-        # elif self.subset == "uppercase":
-        #     self.df = self.df[self.df["class"].str in string.ascii_uppercase]
-        # else:
-        #     raise ValueError(f"Subset {self.subset} not recognized.")
 
     def crop_path_into_segments(self, path:Path, length:float = 5.):
         """
@@ -482,8 +460,6 @@ class GlyphazznStage1Dataset(Dataset):
         imgs = torch.stack(rasterized_segments)  # (n_shapes, channels, width, width)
         centers = torch.tensor(centers)  # (n_shapes, 2)
         labels = torch.ones(imgs.size(0)) * label
-        if self.return_filename:
-            return imgs, labels.int(), centers, description, svg_path
         return imgs, labels.int(), centers, description
     
     def _get_full_item(self, index:int) -> List[Tensor]:
@@ -1010,16 +986,24 @@ class GenericRasterDataset(Dataset):
         self.class2idx = {class_name: idx for idx, class_name in enumerate(self.df["class"].unique())}
         self.df = self.df[self.df["split"] == ("train" if self.train else "test")].reset_index(drop=True)
 
-        self.transforms = transforms.Compose([
+        self.regular_transforms = transforms.Compose([
             transforms.Resize((self.img_size, self.img_size)),
-            transforms.RandomInvert(p=1.0 * self.invert),
             transforms.ToTensor()
         ])
+
+        self.invert_transforms = transforms.RandomInvert(p=1.0)
+
 
     def __getitem__(self, index) -> Tensor:
         img = Image.open(self.df.iloc[index]["full_path"])
         label = self.class2idx[self.df.iloc[index]["class"]]
-        img = self.transforms(img)
+        if self.invert:
+            img = self.regular_transforms(img)
+            # if img.mean() > 0.7: # 1.0 is white
+            img = self.invert_transforms(img)
+        else:
+            img = self.regular_transforms(img)
+
         if self.channels != img.shape[0]:
             img = img.repeat(self.channels, 1, 1)
         return img, label
