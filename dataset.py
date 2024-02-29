@@ -1000,6 +1000,142 @@ class MyDataset(Dataset):
     def __getitem__(self, idx):
         pass
 import torchvision.transforms as transforms
+from utils import drawing_to_tensor
+
+class GenericRasterizedSVGDataset(Dataset):
+    def __init__(self,
+                 csv_path:str,
+                 train:bool,
+                 img_size:int = 128,
+                 channels:int = 3,
+                 fill:bool = True,
+                 **kwargs) -> None:
+        super(GenericRasterizedSVGDataset).__init__()
+
+        self.csv_path = csv_path
+        self.train = train
+        self.img_size = img_size
+        self.channels = channels
+        self.fill = fill
+        if "subset" in kwargs:
+            self.subset = kwargs["subset"]
+        else:
+            self.subset = None
+
+        self.df = pd.read_csv(self.csv_path)
+        self.class2idx = {class_name: idx for idx, class_name in enumerate(self.df["class"].unique())}
+        self.idx2class = {idx: class_name for class_name, idx in self.class2idx.items()}
+
+        if self.train is None:
+            self.df = self.df[self.df["split"] == "test"].reset_index(drop=True)
+        else:
+            if self.train:
+                self.df = self.df[self.df["split"] == "train"].reset_index(drop=True)
+            else:
+                self.df = self.df[self.df["split"] == "val"].reset_index(drop=True)
+
+        if self.subset is not None:
+            print(f"Using subset {self.subset}")
+            if isinstance(self.subset, list):
+                self.df = self.df[self.df["class"].isin(self.subset)].reset_index(drop=True)
+            else:
+                self.df = self.df[self.df["class"] == self.subset].reset_index(drop=True)
+
+    def _rasterize_svg(self, svg_path, img_size, fill):
+        paths, attributes, svg_attributes = svg2paths2(svg_path)
+        for i in range(len(attributes)):
+            if "fill" in attributes[i]:
+                attributes[i]["fill"] = "black" if fill else "none"
+            attributes[i]["stroke-width"] = "0.6"
+        rasterized = disvg(paths, viewbox = svg_attributes["viewBox"], dimensions = (img_size, img_size), attributes = attributes, paths2Drawing=True)
+        return drawing_to_tensor(rasterized)
+    
+    def __getitem__(self, index) -> Tensor:
+        img = self._rasterize_svg(self.df.iloc[index]["simplified_svg_file_path"], self.img_size, self.fill)
+        label = self.class2idx[self.df.iloc[index]["class"]]
+        return img, label
+
+    def __len__(self) -> int:
+        return len(self.df)
+
+class GenericRasterizedSVGDataModule(LightningDataModule):
+    def __init__(self,
+                 csv_path:str,
+                 fill:bool,
+                 img_size:int = 128,
+                 channels:int = 3,
+                 train_batch_size:int = 16,
+                 val_batch_size: int = 16,
+                 num_workers:int = 4,
+                 **kwargs
+                 ) -> None:
+        super().__init__()
+
+        self.csv_path = csv_path
+        self.img_size = img_size
+        self.channels = channels
+        self.fill = fill
+        self.train_batch_size = train_batch_size
+        self.val_batch_size = val_batch_size
+        self.num_workers = num_workers
+        self.kwargs = kwargs
+
+    def setup(self, stage: Optional[str] = None) -> None:
+        self.train_dataset = GenericRasterizedSVGDataset(
+            self.csv_path,
+            train=True,
+            img_size=self.img_size,
+            fill=self.fill,
+            channels=self.channels,
+            **self.kwargs
+        )
+
+        self.val_dataset = GenericRasterizedSVGDataset(
+            self.csv_path,
+            train=False,
+            img_size=self.img_size,
+            fill=self.fill,
+            channels=self.channels,
+            **self.kwargs
+        )
+
+        self.test_dataset = GenericRasterizedSVGDataset(
+            self.csv_path,
+            train=None,
+            img_size=self.img_size,
+            fill=self.fill,
+            channels=self.channels,
+            **self.kwargs
+        )
+    def train_dataloader(self) -> DataLoader:
+        return DataLoader(
+            self.train_dataset,
+            batch_size=self.train_batch_size,
+            num_workers=self.num_workers,
+            shuffle=True,
+            pin_memory=True,
+        )
+
+    def val_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
+        return DataLoader(
+            self.val_dataset,
+            batch_size=self.val_batch_size,
+            num_workers=self.num_workers,
+            shuffle=False,
+            pin_memory=False,
+        )
+
+    def test_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
+        return DataLoader(
+            self.test_dataset,
+            batch_size=16,
+            num_workers=self.num_workers,
+            shuffle=False,
+            pin_memory=False,
+        )
+
+
+
 class GenericRasterDataset(Dataset):
     def __init__(self,
                  csv_path:str,
