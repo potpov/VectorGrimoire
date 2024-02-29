@@ -1,3 +1,13 @@
+# paper notes
+## VSQ experiment
+| ID                    | 0    | 1    | 2    | 3    | 4          | 5    | 6    | 7    | 8    | 9          | 10   | 11   | 12   | 13   | 14         |
+|-----------------------|------|------|------|------|------------|------|------|------|------|------------|------|------|------|------|------------|
+| num_codes_per_shape   | 1    | 1    | 2    | 2    | 1          | 1    | 1    | 2    | 2    | 1          | 1    | 1    | 2    | 2    | 1          |
+| individual_max_length | 0.3  | 0.3  | 0.3  | 0.3  | 0.3        | 0.5  | 0.5  | 0.5  | 0.5  | 0.5        | 0.8  | 0.8  | 0.8  | 0.8  | 0.8        |
+| num_segments          | 1    | 2    | 1    | 2    | 2          | 1    | 2    | 1    | 2    | 2          | 1    | 2    | 1    | 2    | 2          |
+| geometric_constraint  | null | null | null | null | inner_dist | null | null | null | null | inner_dist | null | null | null | null | inner_dist |
+| stroke_width          | 0.4  | 0.4  | 0.4  | 0.4  | 0.4        | 0.66 | 0.66 | 0.66 | 0.66 | 0.66       | 1.06 | 1.06 | 1.06 | 1.06 | 1.06       |
+
 # thesis
 Master's thesis on conditional SVG generative models.
 ## Setup

@@ -23,6 +23,7 @@ images/*
 scripts/output/
 *.json
 profiler_results*.txt
+configs/VSQ_sweep/VSQ_*.yaml
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

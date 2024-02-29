@@ -1,0 +1,43 @@
+model_params:
+  name: "SVG_VAQVAE"
+  quantized_dim: 512
+  fsq_levels: [7,5,5,5,5]  # will determine codebook_size, see Table 1 of FSQ paper - [7,5,5,5,5] for 4096 (e.g. StrokeNUWA), [8,5,5,5] for 1024
+  num_codes_per_shape: 1
+  num_segments: 1
+  geometric_constraint: null # "inner_distance"
+  geometric_constraint_weight: 0.2
+
+data_params:
+  dataset: "stage1"
+  csv_path: "datasets/figr8_final_paper_split.csv"  # root path for CausalSVGDataModule in dataset.py
+  stroke_width: 0.4  # IMPORTANT: this must scale with individiual_max_length as they together define the image
+  channels: 3
+  width: 128
+  train_batch_size: 2
+  val_batch_size:  4
+  num_workers: 8
+  individual_max_length : 3.0  # max length of a single stroke, decides the width/height of rendered shapes
+  max_shapes_per_svg: 64  # influences batch size
+
+exp_params:
+  lr: 0.00002  # lower than usual LR for diffvg-related stuff
+  weight_decay: 1.e-4
+  scheduler_gamma: 0.98
+  train_log_interval: 0.01
+  val_log_interval: 0.1
+  manual_seed: 42
+  # continue_checkpoint: ""
+
+trainer_params:
+  devices: -1
+  max_epochs: 250  # this influences the scheduler
+  accumulate_grad_batches: 2
+  val_check_interval: 0.1
+
+logging_params:
+  # entity: "aiis-chair"  # comment to use default wandb entity "mfeuer"
+  project: "thesis"  # your wandb project name
+  save_dir: "/scratch2/moritz_logs/SVG_VQVAE/VSQ/XXX"
+  name: "SVG_VQVAE figr8 VSQ, ID: XXX"  # name of the run in wandb
+  version: 0
+  author: "Moritz"  # will be a tag in wandb

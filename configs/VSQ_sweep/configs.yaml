@@ -1,0 +1,90 @@
+0:
+  num_codes_per_shape: 1
+  individual_max_length: 0.3
+  num_segments: 1
+  geometric_constraint: null
+  stroke_width: 0.4
+1:
+  num_codes_per_shape: 1
+  individual_max_length: 0.3
+  num_segments: 2
+  geometric_constraint: null
+  stroke_width: 0.4
+2:
+  num_codes_per_shape: 2
+  individual_max_length: 0.3
+  num_segments: 1
+  geometric_constraint: null
+  stroke_width: 0.4
+3:
+  num_codes_per_shape: 2
+  individual_max_length: 0.3
+  num_segments: 2
+  geometric_constraint: null
+  stroke_width: 0.4
+4:
+  num_codes_per_shape: 1
+  individual_max_length: 0.3
+  num_segments: 2
+  geometric_constraint: "inner_dist"
+  stroke_width: 0.4
+5:
+  num_codes_per_shape: 1
+  individual_max_length: 0.5
+  num_segments: 1
+  geometric_constraint: null
+  stroke_width: 0.66
+6:
+  num_codes_per_shape: 1
+  individual_max_length: 0.5
+  num_segments: 2
+  geometric_constraint: null
+  stroke_width: 0.66
+7:
+  num_codes_per_shape: 2
+  individual_max_length: 0.5
+  num_segments: 1
+  geometric_constraint: null
+  stroke_width: 0.66
+8:
+  num_codes_per_shape: 2
+  individual_max_length: 0.5
+  num_segments: 2
+  geometric_constraint: null
+  stroke_width: 0.66
+9:
+  num_codes_per_shape: 1
+  individual_max_length: 0.5
+  num_segments: 2
+  geometric_constraint: "inner_dist"
+  stroke_width: 0.66
+10:
+  num_codes_per_shape: 1
+  individual_max_length: 0.8
+  num_segments: 1
+  geometric_constraint: null
+  stroke_width: 1.06
+11:
+  num_codes_per_shape: 1
+  individual_max_length: 0.8
+  num_segments: 2
+  geometric_constraint: null
+  stroke_width: 1.06
+12:
+  num_codes_per_shape: 2
+  individual_max_length: 0.8
+  num_segments: 1
+  geometric_constraint: null
+  stroke_width: 1.06
+13:
+  num_codes_per_shape: 2
+  individual_max_length: 0.8
+  num_segments: 2
+  geometric_constraint: null
+  stroke_width: 1.06
+14:
+  num_codes_per_shape: 1
+  individual_max_length: 0.8
+  num_segments: 2
+  geometric_constraint: "inner_dist"
+  stroke_width: 1.06
