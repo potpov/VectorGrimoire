@@ -326,30 +326,39 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
                  lr: float = 0.0003,
                  weight_decay: float = 0.0,
                  scheduler_gamma: float = 0.99,
-                 train_log_interval: int = 30,
+                 train_log_interval: float = 0.05,
+                 val_log_interval:float = 0.1,
                  manual_seed: int = 42,
-                 min_lr: float = 0.0000001,
-                 total_steps: int = 450000,
-                 eval_steps: int = 3000,
-                 step_size: int = 3000,
-                 scheduler_type: str = "none",
+                 min_lr: float = 1.e-6,
+                 step_lr_epoch_step_size: int = 30,
+                 scheduler_type: str = "cosine",
                  wandb: bool = True,
                  datamodule = None,
+                 max_epochs:int=300,
                  **kwargs) -> None:
         super(VectorVQVAE_Experiment_Stage1, self).__init__()
+
+        assert train_log_interval < 1 and train_log_interval >= 0, f"train log interval should be a fraction of the total number of batches in [0, 1), got {train_log_interval}"
+        # assert metric_log_interval < 1 and metric_log_interval >= 0, f"metric log interval should be a fraction of the total number of batches in [0, 1), got {metric_log_interval}"
+        # self.train_log_interval = max(1, int(train_log_interval * num_batches_train))
+        self.num_batches_train = len(datamodule.train_dataloader())
+        self.num_batches_val = len(datamodule.val_dataloader())
 
         self.model = model
         self.vector_decoder_model = vector_decoder_model
         self.lr = lr
-        self.total_steps = total_steps
+        self.total_steps = max_epochs * self.num_batches_train
         self.min_lr = min_lr
         self.weight_decay = weight_decay
         self.scheduler_gamma = scheduler_gamma
-        self.train_log_interval = train_log_interval
+        self.train_log_interval =  max(1, int(train_log_interval * self.num_batches_train))
+        self.val_log_interval = max(1, int(val_log_interval * self.num_batches_val))
         self.manual_seed = manual_seed
         self.curr_device = None
         self.wandb = wandb
         self.datamodule = datamodule
+        self.scheduler_type = scheduler_type
+        self.step_size = step_lr_epoch_step_size
 
     def forward(self, input_images: Tensor, logging=False,**kwargs) -> list:
         out, logging_dict = self.model.forward(input_images, logging=logging, **kwargs)
@@ -424,7 +433,7 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
                 points=all_points,
             )
             # log_reconstructions = add_points_to_image(all_points, reconstructions[:,:3,:,:], image_scale=reconstructions.shape[-1])
-            if batch_idx % self.train_log_interval == 0 and self.wandb:
+            if batch_idx % self.val_log_interval == 0 and self.wandb:
                 logging_dict = {f"val/{key}": value for key, value in logging_dict.items()}
                 wandb.log(logging_dict)
                 random_idx = random.randint(0, len(self.datamodule.val_dataset))

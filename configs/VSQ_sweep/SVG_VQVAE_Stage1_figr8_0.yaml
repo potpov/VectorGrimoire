@@ -1,0 +1,50 @@
+model_params:
+  name: "SVG_VAQVAE"
+  vector_decoder_model: "mlp" # "mlp" or "raster_conv"
+  quantized_dim: 512
+  codebook_size: null  # will be ignored for FSQ
+  image_loss: "mse"  # "pyramid" or "mse"
+  num_codes_per_shape: 4
+  vq_method: "fsq"  # "vqvae", "FSQ", "vqtorch"
+  fsq_levels: [7,5,5,5,5]  # will determine codebook_size, see Table 1 of FSQ paper - [7,5,5,5,5] for 4096 (e.g. StrokeNUWA), [8,5,5,5] for 1024
+  num_segments: 2
+  geometric_constraint: null # "inner_distance"
+  geometric_constraint_weight: 0.1
+
+data_params:
+  dataset: "stage1"  # must be in the DATASETMAP in run.py
+  csv_path: "./datasets/figr8_final_paper_split.csv"  # root path for CausalSVGDataModule in dataset.py
+  channels: 3  # use 3
+  width: 128
+  train_batch_size: 2
+  val_batch_size:  4
+  num_workers: 8
+  individual_max_length : 3.0  # max length of a single stroke, decides the width/height of rendered shapes
+  stroke_width: 0.4  # IMPORTANT: this must scale with individiual_max_length as they together define the image
+  subset: "all"
+  use_single_paths: False
+  max_shapes_per_svg: 32
+
+exp_params:
+  lr: 0.00002  # 0.00002
+  weight_decay: 1.e-4  # specify positive float to enable, start experimenting with 1.e-4/1.e-3
+  scheduler_gamma: 0.98  # 0.95 is a good starting value
+  train_log_interval: 0.01
+  val_log_interval: 0.1
+  manual_seed: 1265
+  # continue_checkpoint: "/scratch2/moritz_logs/SVG_VQVAE/Stage1/figr8_complex/checkpoints/last-v1.ckpt"  # path to a checkpoint to continue training from
+
+trainer_params:
+  devices: -1  # always keep at -1 as this takes all available GPUs specified through CUDA_VISIBLE_DEVICES
+  max_epochs: 250  # dsnt matter too much, got early stopping implemented
+  accumulate_grad_batches: 2
+  val_check_interval: 0.1
+
+
+logging_params:
+  # entity: "aiis-chair"  # comment to use default wandb entity "mfeuer"
+  project: "thesis"  # your wandb project name
+  save_dir: "/scratch2/moritz_logs/SVG_VQVAE/Stage1/figr8_sweep"
+  name: "SVG_VQVAE figr8 Stage1, sweep"  # name of the run in wandb
+  version: 1
+  author: "Moritz"  # will be a tag in wandb

@@ -102,39 +102,42 @@ else:
 print("Loading dataset...")
 if config['model_params']['name'] == "VectorGPT":
     data = DATASETMAP[config["data_params"]["dataset"]](**config["data_params"])
+    data.setup()
     experiment = VectorGPTExperiment(model, **config['exp_params'], wandb = args.wandb)
 elif config['model_params']['name'] == "VectorGPTv2":
     data = DATASETMAP[config["data_params"]["dataset"]](**config["data_params"])
+    data.setup()
     experiment = VectorGPTExperimentv2(model, **config['exp_params'], wandb = args.wandb)
 elif config['model_params']['name'] == "SVG_VAQVAE":
     data = DATASETMAP[config["data_params"]["dataset"]](**config["data_params"])
-    experiment = VectorVQVAE_Experiment_Stage1(model, **config['exp_params'], wandb = args.wandb, datamodule = data)
+    data.setup()
+    experiment = VectorVQVAE_Experiment_Stage1(model,
+                                               **config['exp_params'],
+                                               wandb = args.wandb,
+                                               datamodule = data,
+                                               max_epochs=config["trainer_params"]["max_epochs"])
 elif config['model_params']['name'] == "VQ_Transformer":
-    data = DATASETMAP[config["data_params"]["dataset"]](**config["data_params"], context_length = config["model_params"]["max_seq_len"])
-    experiment = SVG_VQVAE_Stage2_Experiment(model, **config['exp_params'], wandb = args.wandb)
+    raise ValueError("VQ_Transformer is deprecated, please use run_stage2.py instead.")
 else:
     data = DATASETMAP[config["data_params"]["dataset"]](**config["data_params"])
+    data.setup()
     experiment = VAEXperiment(model, config['exp_params'])
 
-print("Setting up data...")
-data.setup()
-print("Setting up trainer...")
 profiler = SimpleProfiler(dirpath=os.path.join(config['logging_params']['save_dir']))
 runner = Trainer(
     logger=wandb_logger,
-    strategy='ddp_find_unused_parameters_true',
+    # strategy='ddp_find_unused_parameters_true',
     callbacks=[
         LearningRateMonitor(logging_interval="epoch", log_momentum=True),
         #  LearningRateFinder(early_stop_threshold=None, num_training_steps=200),
         EarlyStopping("val_loss", 0.005, 10, verbose=True),
-        ModelCheckpoint(save_top_k=2,
+        ModelCheckpoint(save_top_k=3,
                         dirpath=os.path.join(config['logging_params']['save_dir'], "checkpoints"),
                         monitor="val_loss",
                         save_last=True,
                         every_n_train_steps=1500),
     ],
     #  overfit_batches=20,
-    log_every_n_steps=max(int(config['exp_params']["train_log_interval"] / 10), 5),
     profiler=profiler,
     **config['trainer_params']
 )

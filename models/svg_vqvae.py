@@ -15,6 +15,7 @@ from vector_quantize_pytorch import FSQ
 from x_transformers import TransformerWrapper, Decoder
 from transformers import BertModel
 from svgwrite import Drawing
+from einops import rearrange
 
 
 class DeconvResNet(nn.Module):
@@ -162,7 +163,7 @@ class Vector_VQVAE(nn.Module):
                  quantized_dim: int = 256,
                  codebook_size: int = 512,
                  image_loss: str = "mse",
-                 single_code_representation: bool = True,
+                 num_codes_per_shape: int = 1,
                  vq_method:str = "fsq",
                  fsq_levels:list =[8,5,5,5],
                  num_segments:int = 1,
@@ -180,6 +181,8 @@ class Vector_VQVAE(nn.Module):
         self.vq_method = vq_method.lower()
         self.fsq_levels = fsq_levels
         self.num_segments = num_segments
+        self.num_codes_per_shape = num_codes_per_shape
+
         if geometric_constraint is not None:
             self.geometric_constraint = geometric_constraint
             self.geometric_constraint_weight = geometric_constraint_weight
@@ -196,9 +199,9 @@ class Vector_VQVAE(nn.Module):
                               [2, 2, 2, 2],
                               10,
                               skip_linear=True)  # outputs (b, 512, 4, 4) - final W x H essentially decides the number of quantized vectors that form a single image, here its 4*4=16
-        if single_code_representation:
-            self.encoder = nn.Sequential(self.encoder,
-                                         nn.Conv2d(512, self.quantized_dim, kernel_size=4, stride=4, padding=0))  # no ReLU here, we want to keep the negative values for the quantization
+
+        self.encoder = nn.Sequential(self.encoder,
+                                        nn.Conv2d(512, self.quantized_dim * self.num_codes_per_shape, kernel_size=4, stride=4, padding=0))  # no ReLU here, we want to keep the negative values for the quantization
 
         if self.vq_method == "vqvae":
             self.quantize_layer = VectorQuantizer(num_embeddings = self.codebook_size,
@@ -216,7 +219,7 @@ class Vector_VQVAE(nn.Module):
         self.latent_dim = self.quantized_dim
         
         if self.vector_decoder_model == "mlp":
-            self.decoder = MLPVectorHeadFixed(latent_dim = self.latent_dim,
+            self.decoder = MLPVectorHeadFixed(latent_dim = self.quantized_dim * self.num_codes_per_shape,
                                               segments = self.num_segments,
                                               imsize = 128,
                                               max_stroke_width=20.)
@@ -231,6 +234,8 @@ class Vector_VQVAE(nn.Module):
         :return: (Tensor) latent codes
         """
         result = self.encoder.forward(input)
+        if self.num_codes_per_shape > 1:
+            result = rearrange(result, 'b (c2 c) h w -> b c2 (c h) w', c2=self.quantized_dim)
         # result = self.mapping_layer(result.view(-1, 512 * 4 * 4))
         if quantize:
             result = self.quantize_layer.forward(result)  # this might change the result return type to list
@@ -281,11 +286,15 @@ class Vector_VQVAE(nn.Module):
                     vq_logging_dict = {"codebook_histogram":wandb.Image(tensor_to_histogram_image(indices.detach().flatten().cpu()), caption="histogram of codebook indices")}
                     
             # flatten it for MLP digestion
-            quantized_inputs = quantized_inputs.view(bs, self.latent_dim)
+            # quantized_inputs = quantized_inputs.permute(0,2,1,3)
+            quantized_inputs = rearrange(quantized_inputs, 'b d (c h) w -> b (d c) h w', c=self.num_codes_per_shape)
+            quantized_inputs = quantized_inputs.view(bs, self.quantized_dim * self.num_codes_per_shape)
             # print("quantized_inputs: ", quantized_inputs.shape)
         elif self.vector_decoder_model == "raster_conv":
             quantized_inputs, vq_loss = self.quantize_layer(encoding)
         
+        # re-merge the quantized codes
+        # quantized_inputs = rearrange(quantized_inputs, 'b d (c h) w -> b (d c) h w', c=self.num_codes_per_shape)
         out, decode_logging_dict = self.decode(quantized_inputs)  # for mlp out is [output, scenes, all_points, all_widths]
         reconstructions = out[0]
         all_points = out[2]
