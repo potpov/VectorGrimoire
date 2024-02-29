@@ -211,9 +211,9 @@ class VectorVAEnLayers(VectorVAE):
             shape_output = self.divide_shape(outputs[:, i, :]) # [bs, latent_size] - just a RELU
             shape_latent = self.final_shape_latent(shape_output) # [bs, latent_size] - actual MLP
             all_points = self.decode(shape_latent)#, point_predictor=self.point_predictor[i])
-            if("log_path_length" in kwargs.keys() and self.wandb_logging):
-                if(kwargs["log_path_length"]):
-                    self.log_path_lengths(all_points*self.imsize, current_shape_idx=i)
+            # if("log_path_length" in kwargs.keys() and self.wandb_logging):
+            #     if(kwargs["log_path_length"]):
+            #         self.log_path_lengths(all_points*self.imsize, current_shape_idx=i)
 
             # print(torch.isfinite(all_points).all())
             # import pdb; pdb.set_trace()

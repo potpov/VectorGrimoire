@@ -362,9 +362,9 @@ class CNNVectorDecoder(VectorDecoder):
                 all_points = all_points
 
 
-            if("log_path_length" in kwargs.keys() and self.wandb_logging):
-                if(kwargs["log_path_length"]):
-                    self.log_path_lengths(all_points*self.imsize, current_shape_idx=i)
+            # if("log_path_length" in kwargs.keys() and self.wandb_logging):
+            #     if(kwargs["log_path_length"]):
+            #         self.log_path_lengths(all_points*self.imsize, current_shape_idx=i)
 
             # print(torch.isfinite(all_points).all())
             # import pdb; pdb.set_trace()
