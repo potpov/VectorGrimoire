@@ -604,7 +604,7 @@ class GlyphazznStage1Datamodule(LightningDataModule):
             batch_size=self.train_batch_size,
             num_workers=self.num_workers,
             shuffle=True,
-            pin_memory=True,
+            pin_memory=False,
             collate_fn=self.collate_fn
         )
 
@@ -1113,7 +1113,7 @@ class GenericRasterizedSVGDataModule(LightningDataModule):
             batch_size=self.train_batch_size,
             num_workers=self.num_workers,
             shuffle=True,
-            pin_memory=True,
+            pin_memory=False,
         )
 
     def val_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
@@ -1223,7 +1223,7 @@ class GenericRasterDatamodule(LightningDataModule):
             batch_size=self.train_batch_size,
             num_workers=self.num_workers,
             shuffle=True,
-            pin_memory=True,
+            pin_memory=False,
         )
 
     def val_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
