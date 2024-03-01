@@ -39,3 +39,5 @@ logging_params:
   project: "thesis"  # your wandb project name
   version: 0
   author: "Moritz"  # will be a tag in wandb
+  id: null
+  allow_val_change: False  # allow changing values in this config w.r.t. the run that you're continuing (good for changing loss weightings mid-run)

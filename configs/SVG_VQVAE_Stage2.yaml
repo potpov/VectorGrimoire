@@ -59,3 +59,5 @@ logging_params:
   name: "Stage 2 Figr8, single code representation, text enc. frozen"  # name of the run in wandb
   version: 0
   author: "Marco"  # will be a tag in wandb
+  id: null  # id of wandb run to continue
+  allow_val_change: False  # allow changing values in this config w.r.t. the run that you're continuing (good for changing loss weightings mid-run)

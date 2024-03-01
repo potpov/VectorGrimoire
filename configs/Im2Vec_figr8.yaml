@@ -49,3 +49,6 @@ logging_params:
   name: "Im2Vec Figr8 - Star only"  # name of the run in wandb
   version: 0
   author: "Moritz"  # will be a tag in wandb
+  id: null  # id of wandb run to continue
+  allow_val_change: False  # allow changing values in this config w.r.t. the run that you're continuing (good for changing loss weightings mid-run)
+  

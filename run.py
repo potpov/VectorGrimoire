@@ -69,6 +69,15 @@ if args.debug:
 
 current_process_rank = get_rank()
 
+if "continue_checkpoint" in config["exp_params"] and config["exp_params"]["continue_checkpoint"] is not None:
+    assert os.path.exists(config["exp_params"]["continue_checkpoint"]), f"checkpoint {config['exp_params']['continue_checkpoint']} does not exist"
+    print(f"Found checkpoint to continue training from: {config['exp_params']['continue_checkpoint']}")
+    if "id" not in config["logging_params"]:
+        print(f"wandb id must be set in logging_params to continue the logging in wandb")
+        input("Press Enter to continue without continuing in wandb or CTRL+C to cancel")
+else:
+    assert "id" not in config["logging_params"], f"wandb id must not be set if not continuing from a checkpoint"
+
 if args.wandb:
     if "entity" not in config['logging_params']:
         entity = "mfeuer"
@@ -82,9 +91,12 @@ if args.wandb:
         log_model=True,
         entity=entity,
         mode="disabled" if args.debug else "online",
+        resume="must" if "continue_checkpoint" in config["exp_params"] else "allow",
+        id=config["logging_params"]["id"] if "id" in config["logging_params"] else None
     )
     if current_process_rank == 0:
-        wandb_logger.experiment.config.update(config)
+        allow_val_change = True if config["logging_params"].get("allow_val_change") else False
+        wandb_logger.experiment.config.update(config, allow_val_change=allow_val_change)
 else:
     wandb_logger = TensorBoardLogger(
         save_dir=config['logging_params']['save_dir'],
