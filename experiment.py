@@ -1012,6 +1012,8 @@ class VAEXperiment(pl.LightningModule):
                                             optimizer_idx=optimizer_idx,
                                             batch_idx = batch_idx,
                                             log_loss_images = True)
+            with torch.no_grad():
+                self.sample_images()
         else:
             results = self.forward(real_img, labels = labels)
             train_loss = self.model.loss_function(*results,

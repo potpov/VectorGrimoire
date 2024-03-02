@@ -88,8 +88,8 @@ class VQDataset(Dataset):
                  context_length: int,
                  dataset:str,
                  min_context_length: int = 10,
-                fraction_of_strokenuwa_inputs:float= 0.7,
-                fraction_of_class_only_inputs:float= 0.2,
+                fraction_of_strokenuwa_inputs:float= 0.0,
+                fraction_of_class_only_inputs:float= 0.9,
                 fraction_of_blank_inputs:float= 0.1,
                 fraction_of_iconshop_chatgpt_inputs:float= 0.0,
                  shuffle_vq_order:bool=True,
@@ -102,20 +102,23 @@ class VQDataset(Dataset):
         self.context_length = context_length
         self.min_context_length = min_context_length
 
-        sum_of_fractions = fraction_of_class_only_inputs + fraction_of_blank_inputs + fraction_of_strokenuwa_inputs + fraction_of_iconshop_chatgpt_inputs
+        sum_of_fractions = fraction_of_class_only_inputs + fraction_of_blank_inputs + fraction_of_strokenuwa_inputs + fraction_of_iconshop_chatgpt_inputs if train else 0.0
         assert dataset in ["figr8", "fonts"], f"Dataset must be either 'figr8' or 'fonts', got {dataset}."
         assert sum_of_fractions <= 1, f"All fractions must be less or equal to 1, got {sum_of_fractions}."
 
-        self.fraction_of_class_only_inputs = fraction_of_class_only_inputs
-        self.fraction_of_blank_inputs = fraction_of_blank_inputs
-        self.fraction_of_strokenuwa_inputs = fraction_of_strokenuwa_inputs
-        self.fraction_of_iconshop_chatgpt_inputs = fraction_of_iconshop_chatgpt_inputs
+        self.fraction_of_class_only_inputs = fraction_of_class_only_inputs if train else 0.0
+        self.fraction_of_blank_inputs = fraction_of_blank_inputs if train else 0.0
+        self.fraction_of_strokenuwa_inputs = fraction_of_strokenuwa_inputs if train else 0.0
+        self.fraction_of_iconshop_chatgpt_inputs = fraction_of_iconshop_chatgpt_inputs if train else 0.0
         self.dataset = dataset
 
         if sum_of_fractions < 1:
             self.fraction_of_full_description_inputs = 1 - sum_of_fractions
         else:
-            self.fraction_of_full_description_inputs = 0
+            self.fraction_of_full_description_inputs = 0.
+
+        if not train or train is None:
+            self.fraction_of_full_description_inputs = 1.0
 
         self.use_pre_computed_text_tokens_only = use_pre_computed_text_tokens_only
         self.shuffle_vq_order = shuffle_vq_order
@@ -184,15 +187,29 @@ class VQDataset(Dataset):
     
     def _get_tokenized_text(self, row):
         if self.dataset == "fonts":
-            text_to_tokenize = np.random.choice([row["class"], row["description"], ""],
-                                             p=[self.fraction_of_class_only_inputs, self.fraction_of_full_description_inputs, self.fraction_of_blank_inputs])
+            text_to_tokenize = np.random.choice([row["class"], 
+                                                 row["description"], 
+                                                 ""],
+                                             p=[self.fraction_of_class_only_inputs, 
+                                                self.fraction_of_full_description_inputs, 
+                                                self.fraction_of_blank_inputs])
             if text_to_tokenize in "ABCDEFGHIJKLMNOPQRSTUVWXYZ" and len(text_to_tokenize) == 1:
                 text_to_tokenize = f"capital {text_to_tokenize}"
             text_tokens = self.tokenizer.tokenize_text(text_to_tokenize)
             return text_tokens
         elif self.dataset == "figr8":
-            text_to_tokenize = np.random.choice([row["class"], row["strokenuwa_prompt"], row["iconshop_sentence_prompt"],""],
-                                                p=[self.fraction_of_class_only_inputs, self.fraction_of_strokenuwa_inputs, self.fraction_of_iconshop_chatgpt_inputs, self.fraction_of_blank_inputs])
+            text_to_tokenize = np.random.choice([row.get("class"), 
+                                                 row.get("strokenuwa_prompt"), 
+                                                 row.get("iconshop_sentence_prompt"), 
+                                                 row.get("description"),
+                                                 ""],
+                                                p=[self.fraction_of_class_only_inputs, 
+                                                   self.fraction_of_strokenuwa_inputs, 
+                                                   self.fraction_of_iconshop_chatgpt_inputs, 
+                                                   self.fraction_of_full_description_inputs,
+                                                   self.fraction_of_blank_inputs])
+            if text_to_tokenize is None:
+                text_to_tokenize = ""
             text_tokens = self.tokenizer.tokenize_text(text_to_tokenize)
             return text_tokens
 
@@ -275,53 +292,58 @@ class VQDataModule(LightningDataModule):
 
 
     def setup(self, stage: Optional[str] = None) -> None:
-        self.train_dataset = VQDataset(
-            self.csv_path,
-            self.vq_token_npy_path,
-            tokenizer=self.tokenizer,
-            context_length=self.context_length,
-            dataset=self.dataset,
-            train=True,
-            min_context_length=self.min_context_length,
-            fraction_of_class_only_inputs = self.fraction_of_class_only_inputs,
-            fraction_of_blank_inputs = self.fraction_of_blank_inputs,
-            fraction_of_iconshop_chatgpt_inputs=self.fraction_of_iconshop_chatgpt_inputs,
-            fraction_of_strokenuwa_inputs=self.fraction_of_strokenuwa_inputs,
-            shuffle_vq_order = self.shuffle_vq_order,
-            use_pre_computed_text_tokens_only = self.use_pre_computed_text_tokens_only,
-        )
+        if stage not in ["train", "test", "val"]:
+            stage = None
 
-        self.val_dataset = VQDataset(
-            self.csv_path,
-            self.vq_token_npy_path,
-            tokenizer=self.tokenizer,
-            context_length=self.context_length,
-            dataset=self.dataset,
-            train=False,
-            min_context_length=self.min_context_length,
-            fraction_of_class_only_inputs = self.fraction_of_class_only_inputs,
-            fraction_of_blank_inputs = self.fraction_of_blank_inputs,
-            fraction_of_iconshop_chatgpt_inputs=self.fraction_of_iconshop_chatgpt_inputs,
-            fraction_of_strokenuwa_inputs=self.fraction_of_strokenuwa_inputs,
-            shuffle_vq_order = self.shuffle_vq_order,
-            use_pre_computed_text_tokens_only = self.use_pre_computed_text_tokens_only,
-        )
+        if stage is None or stage == "train":
+            self.train_dataset = VQDataset(
+                self.csv_path,
+                self.vq_token_npy_path,
+                tokenizer=self.tokenizer,
+                context_length=self.context_length,
+                dataset=self.dataset,
+                train=True,
+                min_context_length=self.min_context_length,
+                fraction_of_class_only_inputs = self.fraction_of_class_only_inputs,
+                fraction_of_blank_inputs = self.fraction_of_blank_inputs,
+                fraction_of_iconshop_chatgpt_inputs=self.fraction_of_iconshop_chatgpt_inputs,
+                fraction_of_strokenuwa_inputs=self.fraction_of_strokenuwa_inputs,
+                shuffle_vq_order = self.shuffle_vq_order,
+                use_pre_computed_text_tokens_only = self.use_pre_computed_text_tokens_only,
+            )
 
-        self.test_dataset = VQDataset(
-            self.csv_path,
-            self.vq_token_npy_path,
-            tokenizer=self.tokenizer,
-            context_length=self.context_length,
-            dataset=self.dataset,
-            train=None,
-            min_context_length=self.min_context_length,
-            fraction_of_class_only_inputs = self.fraction_of_class_only_inputs,
-            fraction_of_blank_inputs = self.fraction_of_blank_inputs,
-            fraction_of_iconshop_chatgpt_inputs=self.fraction_of_iconshop_chatgpt_inputs,
-            fraction_of_strokenuwa_inputs=self.fraction_of_strokenuwa_inputs,
-            shuffle_vq_order = self.shuffle_vq_order,
-            use_pre_computed_text_tokens_only = self.use_pre_computed_text_tokens_only,
-        )
+        if stage is None or stage == "val":
+            self.val_dataset = VQDataset(
+                self.csv_path,
+                self.vq_token_npy_path,
+                tokenizer=self.tokenizer,
+                context_length=self.context_length,
+                dataset=self.dataset,
+                train=False,
+                min_context_length=self.min_context_length,
+                fraction_of_class_only_inputs = self.fraction_of_class_only_inputs,
+                fraction_of_blank_inputs = self.fraction_of_blank_inputs,
+                fraction_of_iconshop_chatgpt_inputs=self.fraction_of_iconshop_chatgpt_inputs,
+                fraction_of_strokenuwa_inputs=self.fraction_of_strokenuwa_inputs,
+                shuffle_vq_order = self.shuffle_vq_order,
+                use_pre_computed_text_tokens_only = self.use_pre_computed_text_tokens_only,
+            )
+        if stage is None or stage == "test":
+            self.test_dataset = VQDataset(
+                self.csv_path,
+                self.vq_token_npy_path,
+                tokenizer=self.tokenizer,
+                context_length=self.context_length,
+                dataset=self.dataset,
+                train=None,
+                min_context_length=self.min_context_length,
+                fraction_of_class_only_inputs = self.fraction_of_class_only_inputs,
+                fraction_of_blank_inputs = self.fraction_of_blank_inputs,
+                fraction_of_iconshop_chatgpt_inputs=self.fraction_of_iconshop_chatgpt_inputs,
+                fraction_of_strokenuwa_inputs=self.fraction_of_strokenuwa_inputs,
+                shuffle_vq_order = self.shuffle_vq_order,
+                use_pre_computed_text_tokens_only = self.use_pre_computed_text_tokens_only,
+            )
 
     #       ===============================================================
 
