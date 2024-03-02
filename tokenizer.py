@@ -235,7 +235,7 @@ class VQTokenizer(nn.Module):
         assert tokens.size(0) > 3, f"Tokens should have at least 4 elements, got {tokens.size(0)}"
         if not ignore_special_tokens:
             assert tokens[0] == self.special_token_mapping["<BOS>"], f"First token should be <BOS>, got {tokens[0]}"
-            assert tokens[-1] == self.special_token_mapping["<EOS>"], f"Last token should be <EOS>, got {tokens[-1]}"
+            assert tokens[-1] == self.special_token_mapping["<EOS>"] or tokens[-1] == self.special_token_mapping["<PAD>"], f"Last token should be <EOS> or <PAD>, got {tokens[-1]}"
         if tokens[-1] == self.special_token_mapping["<EOS>"]:
             tokens = tokens[:-1]
         if tokens[0] == self.special_token_mapping["<BOS>"]:
