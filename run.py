@@ -92,7 +92,7 @@ if args.wandb:
         entity=entity,
         mode="disabled" if args.debug else "online",
         resume="must" if "continue_checkpoint" in config["exp_params"] else "allow",
-        id=config["logging_params"]["id"] if "id" in config["logging_params"] else None
+        id=config["logging_params"].get("id")
     )
     if current_process_rank == 0:
         allow_val_change = True if config["logging_params"].get("allow_val_change") else False

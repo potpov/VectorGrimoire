@@ -262,6 +262,7 @@ class VQDataModule(LightningDataModule):
         context_length: int,
         train_batch_size: int,
         val_batch_size: int,
+        test_batch_size:int = 32,
         num_workers: int = 0,
         min_context_length: int = 10,
         fraction_of_class_only_inputs: float = 0.2,
@@ -279,6 +280,7 @@ class VQDataModule(LightningDataModule):
         self.vq_token_npy_path= vq_token_npy_path
         self.train_batch_size = train_batch_size
         self.val_batch_size = val_batch_size
+        self.test_batch_size = test_batch_size
         self.num_workers = num_workers
         self.context_length = context_length
         self.tokenizer = tokenizer
@@ -368,7 +370,7 @@ class VQDataModule(LightningDataModule):
     def test_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
         return DataLoader(
             self.test_dataset,
-            batch_size=16,
+            batch_size=self.test_batch_size,
             num_workers=self.num_workers,
             shuffle=False,
             pin_memory=False,
