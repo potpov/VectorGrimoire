@@ -1,6 +1,6 @@
 import os
+from typing import List
 import yaml
-from dataset import VQDataModule
 from models import VQ_SVG_Stage2, Vector_VQVAE
 from tokenizer import VQTokenizer
 from experiment import SVG_VQVAE_Stage2_Experiment
@@ -12,6 +12,12 @@ import torchvision.utils as vutils
 from PIL import Image
 from torch import Tensor
 from tqdm import tqdm
+from torch.utils.data import DataLoader
+from torchmetrics.image.fid import FrechetInceptionDistance
+from torchmetrics.multimodal.clip_score import CLIPScore
+from transformers import AutoProcessor, CLIPModel
+from dataset import GenericRasterizedSVGDataset, GlyphazznStage1Datamodule, VQDataModule
+from torch import nn
 
 from torchvision.utils import make_grid, save_image
 torch.cuda.is_available()
@@ -61,13 +67,13 @@ def load_stage2_model(config_path, ckpt_path, device,dataset:str = None, test_ba
     data.setup(stage="test")
     return model, vq_model, tokenizer, data, config
 
-def generate_test_set_stage2(model, tokenizer, ds, vq_context:int, temperature:float, device, n=None):
+def generate_test_set_stage2(model, tokenizer, dl:DataLoader, vq_context:int, temperature:float, device, n=None):
     model = model.eval()
-    generated_images = []
+    generated_shapes = []
     captions = []
     if n is None:
-        n = len(ds)+1
-    for text_tokens, attention_mask, vq_tokens, _, _ in tqdm(ds, total=n-1):
+        n = len(dl)+1
+    for text_tokens, attention_mask, vq_tokens, _, _ in tqdm(dl, total=n-1):
         bs = text_tokens.shape[0]
         text_tokens = text_tokens.to(device)
         attention_mask = attention_mask.to(device)
@@ -77,14 +83,14 @@ def generate_test_set_stage2(model, tokenizer, ds, vq_context:int, temperature:f
             vq_tokens = torch.ones((bs, 1), device = device, dtype=torch.int64) * tokenizer.special_token_mapping.get("<BOS>")
         generation, reason = model.generate(text_tokens, attention_mask, vq_tokens, temperature = temperature)
         if generation.ndim > 1:
-            generated_images.append([gen for gen in generation.cpu()])
+            generated_shapes.append([gen for gen in generation.cpu()])
             captions.append([tokenizer.decode_text(text_tok) for text_tok in text_tokens])
         else:
-            generated_images.append(generation.cpu())
+            generated_shapes.append(generation.cpu())
             captions.append(tokenizer.decode_text(text_tokens))
-        if len(generated_images) >= n:
+        if len(generated_shapes) >= n:
             break
-    return generated_images, captions
+    return generated_shapes, captions
 
 def save_generations_with_captions(generations, captions, tokenizer, vq_context:int=0,title:str="", save_path = "generated_images.png"):
     ax_dim = int(np.ceil(np.sqrt(len(generations))))
@@ -124,10 +130,6 @@ def save_svg(tokenizer:VQTokenizer,
                                         num_strokes_to_paint=num_strokes_to_paint)
     drawing.saveas(save_path, pretty=True) 
 
-from torchmetrics.image.fid import FrechetInceptionDistance
-from transformers import AutoProcessor, CLIPModel
-from dataset import GenericRasterizedSVGDataset
-from torch import nn
 class CLIPWrapper(nn.Module):
     def __init__(self, model, processor, device):
         super().__init__()
@@ -145,16 +147,36 @@ class CLIPWrapper(nn.Module):
 
 @torch.no_grad()
 def compute_fid_score(generated_images, real_images, device, model_str:str = "openai/clip-vit-base-patch32"):
+    print(f"Computing FID with model {model_str} on device {device}")
     model = CLIPModel.from_pretrained(model_str)
     processor = AutoProcessor.from_pretrained(model_str)
     wrapper = CLIPWrapper(model, processor, device)
     fid = FrechetInceptionDistance(feature=wrapper, normalize=True)
     fid = fid.to(device)
-    generated_images = torch.stack(generated_images).to(device)
-    real_images = torch.stack(real_images).to(device)
-    fid.update(generated_images, real=False)
-    fid.update(real_images, real=True)
+    bs = 32
+    print("Adding generated images...")
+    for i in tqdm(range(0, len(generated_images), bs)):
+        generated_images_batch = torch.stack(generated_images[i:i+bs]).to(device)
+        fid.update(generated_images_batch, real=False)
+    print("Adding real images...")
+    for i in tqdm(range(0, len(real_images), bs)):
+        real_images_batch = torch.stack(real_images[i:i+bs]).to(device)
+        fid.update(real_images_batch, real=True)
+
     return fid.compute()
+
+@torch.no_grad()
+def compute_clip_score(generated_images:List, captions:List, device, model_str:str = "openai/clip-vit-base-patch32"):
+    print(f"Computing CLIP score with model {model_str} on device {device}")
+    metric = CLIPScore(model_name_or_path=model_str)
+    metric = metric.to(device)
+    bs = 32
+    for i in tqdm(range(0, len(generated_images), bs)):
+        generated_images_batch = torch.stack(generated_images[i:i+bs]).to(device)
+        captions_batch = captions[i:i+bs]
+        metric.update(generated_images_batch, captions_batch)
+
+    return metric.compute()
 
 def benchmark_stage2_sgamo(config_path:str, 
                            ckpt_path:str, 
@@ -164,12 +186,18 @@ def benchmark_stage2_sgamo(config_path:str,
                            padded_individual_max_length:float, 
                            stroke_width:float,
                            num_batches:int,
+                           num_real_images:int,
                            test_batch_size:int, 
                            max_num_svgs:int, 
                            device, 
-                           temperature:float = 0.0,):
+                           temperature:float = 0.0,
+                           clip_model = "openai/clip-vit-base-patch32",
+                           **kwargs):
     if not os.path.exists(out_dir):
         os.makedirs(out_dir)
+    else:
+        print(f"Warning: {out_dir} already exists. Overwriting files...")
+
     print("Loading stage2 model...")
     model, vq_model, tokenizer, data, config = load_stage2_model(config_path, ckpt_path, device, dataset=dataset, test_batch_size=test_batch_size)
 
@@ -179,33 +207,73 @@ def benchmark_stage2_sgamo(config_path:str,
     flattened_generated_vq_tokens = [gen for sublist in generated_vq_tokens for gen in sublist]
     flattened_prompts = [cap for sublist in prompts for cap in sublist]
 
-    print("Rasterizing stage 2 generations...")
-    # each svg has bezier_points and positions
-    generated_svgs = [tokenizer.decode(x.to(tokenizer.device), ignore_special_tokens=False) for x in flattened_generated_vq_tokens]
-    unfixed_renderings = [get_svg_render(bezier_points, positions, num_strokes_to_paint=vq_context) for bezier_points, positions in generated_svgs]
-    pc_fixed_renderings = [get_fixed_svg_render(bezier_points, positions, num_strokes_to_paint=vq_context, method="min_dist_clip") for bezier_points, positions in generated_svgs]
-    pi_fixed_renderings = [get_fixed_svg_render(bezier_points, positions, num_strokes_to_paint=vq_context, method="min_dist_interpolate") for bezier_points, positions in generated_svgs]
+    print("Decoding tokens into shapes...")
+    generated_svgs = []
+    for x in tqdm(flattened_generated_vq_tokens):
+        generated_svgs.append(tokenizer.decode(x.to(tokenizer.device), ignore_special_tokens=False))
+    
+    print("Fixing svgs...")
+    unfixed_renderings = []
+    pc_fixed_renderings = []
+    pi_fixed_renderings = []
+    for bezier_points, positions in tqdm(generated_svgs):
+        num_strokes_to_paint = min(vq_context, len(positions))
+        unfixed_renderings.append(get_svg_render(bezier_points, positions, num_strokes_to_paint=num_strokes_to_paint))
+        pc_fixed_renderings.append(get_fixed_svg_render(bezier_points, positions, num_strokes_to_paint=num_strokes_to_paint, method="min_dist_clip"))
+        pi_fixed_renderings.append(get_fixed_svg_render(bezier_points, positions, num_strokes_to_paint=num_strokes_to_paint, method="min_dist_interpolate"))
     
     rasterized_ds = GenericRasterizedSVGDataset(config["data_params"]["csv_path"],
                                     train=None,
                                     fill=False,
                                     img_size=480)
-
+    
+    print("Loading rasterized GT images...")
+    random.seed(42)
+    indices = random.sample(range(len(rasterized_ds)), num_real_images)
+    real_imgs = [rasterized_ds[i][0] for i in indices]
     print("Computing FID score...")
-    unfixed_fid_score = compute_fid_score(unfixed_renderings, [rasterized_ds[i][0] for i in range(len(rasterized_ds))], device)
-    pc_fixed_fid_score = compute_fid_score(pc_fixed_renderings, [rasterized_ds[i][0] for i in range(len(rasterized_ds))], device)
-    pi_fixed_fid_score = compute_fid_score(pi_fixed_renderings, [rasterized_ds[i][0] for i in range(len(rasterized_ds))], device)
+    unfixed_fid_score = compute_fid_score(unfixed_renderings, real_imgs, device, model_str = clip_model)
+    pc_fixed_fid_score = compute_fid_score(pc_fixed_renderings, real_imgs, device, model_str = clip_model)
+    pi_fixed_fid_score = compute_fid_score(pi_fixed_renderings, real_imgs, device, model_str = clip_model)
+
+    # white_baseline_fid_score = compute_fid_score([torch.ones((3, 480, 480), dtype=torch.float32, device=device) for _ in range(len(real_imgs))], real_imgs, device, model_str = clip_model)
+    # black_baseline_fid_score = compute_fid_score([torch.zeros((3, 480, 480), dtype=torch.float32, device=device) for _ in range(len(real_imgs))], real_imgs, device, model_str = clip_model)
 
     print(f"Unfixed FID: {unfixed_fid_score}")
     print(f"PC fixed FID: {pc_fixed_fid_score}")
     print(f"PI fixed FID: {pi_fixed_fid_score}")
+    # print(f"White baseline FID: {white_baseline_fid_score}")
+    # print(f"Black baseline FID: {black_baseline_fid_score}")
 
     with open(os.path.join(out_dir, "results_fid_sgamo.txt"), "w+") as f:
         f.write(f"num_samples: {num_batches*test_batch_size}\n")
         f.write(f"Unfixed FID: {unfixed_fid_score}\n")
         f.write(f"PC fixed FID: {pc_fixed_fid_score}\n")
         f.write(f"PI fixed FID: {pi_fixed_fid_score}\n")
+        # f.write(f"White baseline FID: {white_baseline_fid_score}\n")
+        # f.write(f"Black baseline FID: {black_baseline_fid_score}\n")
 
+    print("Computing CLIP scores...")
+    unfixed_clip_score = compute_clip_score(unfixed_renderings, flattened_prompts, device, model_str = clip_model)
+    pc_fixed_clip_score = compute_clip_score(pc_fixed_renderings, flattened_prompts, device, model_str = clip_model)
+    pi_fixed_clip_score = compute_clip_score(pi_fixed_renderings, flattened_prompts, device, model_str = clip_model)
+
+    # white_baseline_clip_score = compute_clip_score([torch.ones((3, 480, 480), dtype=torch.float32, device=device) for _ in range(len(flattened_prompts))], flattened_prompts, device, model_str = clip_model)
+    # black_baseline_clip_score = compute_clip_score([torch.zeros((3, 480, 480), dtype=torch.float32, device=device) for _ in range(len(flattened_prompts))], flattened_prompts, device, model_str = clip_model)
+
+    print(f"Unfixed CLIP score: {unfixed_clip_score}")
+    print(f"PC fixed CLIP score: {pc_fixed_clip_score}")
+    print(f"PI fixed CLIP score: {pi_fixed_clip_score}")
+    # print(f"White baseline CLIP score: {white_baseline_clip_score}")
+    # print(f"Black baseline CLIP score: {black_baseline_clip_score}")
+
+    with open(os.path.join(out_dir, "results_clip_sgamo.txt"), "w+") as f:
+        f.write(f"num_samples: {num_batches*test_batch_size}\n")
+        f.write(f"Unfixed CLIP score: {unfixed_clip_score}\n")
+        f.write(f"PC fixed CLIP score: {pc_fixed_clip_score}\n")
+        f.write(f"PI fixed CLIP score: {pi_fixed_clip_score}\n")
+        # f.write(f"White baseline CLIP score: {white_baseline_clip_score}\n")
+        # f.write(f"Black baseline CLIP score: {black_baseline_clip_score}\n")
 
     print("Saving stage 2 generations...")
     os.makedirs(os.path.join(out_dir,"svgs","unfixed"), exist_ok=True)
@@ -214,7 +282,7 @@ def benchmark_stage2_sgamo(config_path:str,
     prompt_string = "\n".join(flattened_prompts)
     with open(os.path.join(out_dir,"svgs","prompts.txt"), "w") as f:
         f.write(prompt_string)
-    for i, (bezier_points, positions) in enumerate(generated_svgs):
+    for i, (bezier_points, positions) in tqdm(enumerate(generated_svgs), total=min(len(generated_svgs),max_num_svgs)):
         if i >= max_num_svgs:
             break
         save_svg(tokenizer, bezier_points, positions, padded_individual_max_length, stroke_width, os.path.join(out_dir,"svgs","unfixed", f"unfixed_{i}.svg"), num_strokes_to_paint=vq_context)
@@ -226,32 +294,60 @@ def benchmark_stage2_sgamo(config_path:str,
     save_image(make_grid(pc_fixed_renderings[:max_single_image], nrow=int(ceil(sqrt(max_single_image)))), os.path.join(out_dir,"pc_fixed_renderings.png"))
     save_image(make_grid(pi_fixed_renderings[:max_single_image], nrow=int(ceil(sqrt(max_single_image)))), os.path.join(out_dir,"pi_fixed_renderings.png"))
 
-def main():
-    stage2_config_path = "/scratch2/moritz_logs/SVG_VQVAE/Stage2/filtered_fonts_full_single_code/wandb/run-20240226_191349-ro48a2jp/files/config.yaml"
-    stage2_ckpt_path = "/scratch2/moritz_logs/SVG_VQVAE/Stage2/filtered_fonts_full_single_code/checkpoints/last-v1.ckpt"
-    out_dir = "images/benchmark/sgamo/stage2/fonts"
-    vq_context = 0
-    padded_individual_max_length = 9.5
-    stroke_width = 0.4
-    num_batches = 100
-    test_batch_size = 64
-    max_num_svgs = 2000
+def main(eval_config_path):
+    random.seed(42)
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    
+    with open(eval_config_path, 'r') as file:
+        try:
+            eval_config = yaml.safe_load(file)
+        except yaml.YAMLError as exc:
+            print(exc)
 
-    print(f"Will be generating {num_batches*test_batch_size} samples...")
+    print(f"Found {len(eval_config)} eval configurations: {list(eval_config.keys())}")
+    for k,v in eval_config.items():
+        if v["type"].lower() == "stage2":
+            print(f"Running eval on {k}...")
+            with open(os.path.join(v["out_base_dir"],"config.yaml"), 'w+') as file:
+                try:
+                    yaml.dump(v, file)
+                except yaml.YAMLError as exc:
+                    print(exc)
 
-    benchmark_stage2_sgamo(stage2_config_path,
-                           stage2_ckpt_path, 
-                           "fonts", 
-                           out_dir, 
-                           vq_context, 
-                           padded_individual_max_length, 
-                           stroke_width, 
-                           num_batches, 
-                           test_batch_size, 
-                           max_num_svgs, 
-                           device,
-                           temperature=0.0)
+            for vq_context in tqdm(v["vq_contexts"]):
+                out_dir = os.path.join(v["out_base_dir"],f"vq_context_{vq_context}_t0")
+                benchmark_stage2_sgamo(**v,
+                                       out_dir=out_dir,
+                                       device=device)
+        elif v["type"].lower() == "stage1" or v["type"].lower() == "vsq":
+            print(f"Running eval on {k}...")
+            pass
+
+
+
+    config_path = "configs/VSQ_sweep/0.yaml"
+    ckpt_path = "/scratch2/gesùbambino/VSQ/0.ckpt"
+    with open(config_path, 'r') as file:
+        try:
+            config = yaml.safe_load(file)
+        except yaml.YAMLError as exc:
+            print(exc)
+    if "wandb_version" in config.keys():
+        config = map_wand_config(config)
+
+    # adjust for inference
+    config['data_params']["max_shapes_per_svg"] = 300
+
+    model = Vector_VQVAE(**config['model_params']).to(device).eval()
+
+    state_dict = torch.load(ckpt_path, map_location=device)["state_dict"]
+    model.load_state_dict({k.replace("model.", ""): v for k, v in state_dict.items()})
+
+    test_batch_size = 16
+    dm = GlyphazznStage1Datamodule(**config['data_params'], test_batch_size=test_batch_size)
+    dm.setup(stage="test")
+    dl = dm.test_dataloader()
 
 if __name__ == "__main__":
-    main()
+    eval_config_path = "configs/eval_test.yaml"
+    main(eval_config_path)
