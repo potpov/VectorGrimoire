@@ -412,6 +412,7 @@ class GlyphazznStage1Dataset(Dataset):
                  stroke_width: float = 0.3,
                  max_shapes_per_svg: int = 64,
                  use_single_paths:bool = False,
+                 return_index = False,
                  **kwargs):
         super(GlyphazznStage1Dataset, self)
         print(f"[INFO] These keywords were provided in GlyphazznStage1Dataset but are not used: {kwargs.keys()}")
@@ -424,6 +425,7 @@ class GlyphazznStage1Dataset(Dataset):
         self.width = width
         self.train = train
         self.use_single_paths = use_single_paths
+        self.return_index = return_index
         print("[GlyphazznStage1Dataset] loading df...")
 
         self.df = pd.read_csv(csv_path)
@@ -506,7 +508,10 @@ class GlyphazznStage1Dataset(Dataset):
         imgs = torch.stack(rasterized_segments)  # (n_shapes, channels, width, width)
         centers = torch.tensor(centers)  # (n_shapes, 2)
         labels = torch.ones(imgs.size(0)) * label
-        return imgs, labels.int(), centers, description
+        if self.return_index:
+            return imgs, labels.int(), centers, description, index
+        else:
+            return imgs, labels.int(), centers, description
     
     def _get_full_item(self, index:int) -> List[Tensor]:
         """
@@ -563,6 +568,7 @@ class GlyphazznStage1Datamodule(LightningDataModule):
         stroke_width: float = 0.3,
         subset:str = "all",
         use_single_paths:bool = False,
+        return_index = False,
         **kwargs,
     ):
         super().__init__()
@@ -580,6 +586,7 @@ class GlyphazznStage1Datamodule(LightningDataModule):
         self.subset = subset
         self.max_shapes_per_svg = max_shapes_per_svg
         self.use_single_paths = use_single_paths
+        self.return_index = return_index
 
     def setup(self, stage: Optional[str] = None) -> None:
         if stage not in ["train", "test", "val"]:
@@ -594,7 +601,8 @@ class GlyphazznStage1Datamodule(LightningDataModule):
                 individual_max_length=self.individual_max_length,
                 stroke_width=self.stroke_width,
                 max_shapes_per_svg=self.max_shapes_per_svg,
-                use_single_paths=self.use_single_paths
+                use_single_paths=self.use_single_paths,
+                return_index = self.return_index
             )
 
         if stage is None or stage == "val":
@@ -606,7 +614,8 @@ class GlyphazznStage1Datamodule(LightningDataModule):
                 individual_max_length=self.individual_max_length,
                 stroke_width=self.stroke_width,
                 max_shapes_per_svg=self.max_shapes_per_svg,
-                use_single_paths=self.use_single_paths
+                use_single_paths=self.use_single_paths,
+                return_index = self.return_index
             )
 
         if stage is None or stage == "test":
@@ -618,17 +627,24 @@ class GlyphazznStage1Datamodule(LightningDataModule):
                 individual_max_length=self.individual_max_length,
                 stroke_width=self.stroke_width,
                 max_shapes_per_svg=self.max_shapes_per_svg,
-                use_single_paths=self.use_single_paths
+                use_single_paths=self.use_single_paths,
+                return_index = self.return_index
             )
 
     #       ===============================================================
 
     def collate_fn(self, batch):
-        imgs, labels, centers, descriptions = zip(*batch)
+        if self.return_index:
+            imgs, labels, centers, descriptions, idxs = zip(*batch)
+        else:
+            imgs, labels, centers, descriptions = zip(*batch)
         imgs = torch.concat(imgs)
         labels = torch.concat(labels)
         centers = torch.concat(centers)
-        return imgs, labels, centers, descriptions
+        if self.return_index:
+            return imgs, labels, centers, descriptions, idxs
+        else:
+            return imgs, labels, centers, descriptions
 
     def train_dataloader(self) -> DataLoader:
         return DataLoader(

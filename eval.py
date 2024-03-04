@@ -18,11 +18,13 @@ from torchmetrics.multimodal.clip_score import CLIPScore
 from transformers import AutoProcessor, CLIPModel
 from dataset import GenericRasterizedSVGDataset, GlyphazznStage1Datamodule, VQDataModule
 from torch import nn
-
+from math import ceil, sqrt
+import random
+import argparse
 from torchvision.utils import make_grid, save_image
 torch.cuda.is_available()
 from utils import calculate_global_positions, shapes_to_drawing, drawing_to_tensor
-from svg_fixing import get_fixed_svg_drawing, get_fixed_svg_render, get_svg_render
+from svg_fixing import get_fixed_svg_drawing, get_fixed_svg_render, get_svg_render, min_dist_fix
 
 def map_wand_config(config):
     new_config = {}
@@ -103,10 +105,6 @@ def save_generations_with_captions(generations, captions, tokenizer, vq_context:
 
     fig.suptitle(title)
     fig.savefig(save_path, dpi=300)
-
-from math import ceil, sqrt
-import random
-
 
 def save_svg(tokenizer:VQTokenizer, 
              bezier_points: Tensor, 
@@ -193,6 +191,7 @@ def benchmark_stage2_sgamo(config_path:str,
                            temperature:float = 0.0,
                            clip_model = "openai/clip-vit-base-patch32",
                            **kwargs):
+    print("received unused arguments: ", kwargs)
     if not os.path.exists(out_dir):
         os.makedirs(out_dir)
     else:
@@ -294,6 +293,130 @@ def benchmark_stage2_sgamo(config_path:str,
     save_image(make_grid(pc_fixed_renderings[:max_single_image], nrow=int(ceil(sqrt(max_single_image)))), os.path.join(out_dir,"pc_fixed_renderings.png"))
     save_image(make_grid(pi_fixed_renderings[:max_single_image], nrow=int(ceil(sqrt(max_single_image)))), os.path.join(out_dir,"pi_fixed_renderings.png"))
 
+
+def benchmark_vsq_stage1(out_base_dir,
+                         config_path,
+                         ckpt_path,
+                         num_samples,
+                         max_num_svgs,
+                         device,
+                         clip_model = "openai/clip-vit-base-patch32",
+                         **kwargs):
+    print("received unused arguments: ", kwargs)
+    with open(config_path, 'r') as file:
+        try:
+            config = yaml.safe_load(file)
+        except yaml.YAMLError as exc:
+            print(exc)
+    if "wandb_version" in config.keys():
+        config = map_wand_config(config)
+
+    model = Vector_VQVAE(**config['model_params']).to(device).eval()
+
+    state_dict = torch.load(ckpt_path, map_location=device)["state_dict"]
+    model.load_state_dict({k.replace("model.", ""): v for k, v in state_dict.items()})
+
+    dm = GlyphazznStage1Datamodule(**config['data_params'])
+    dm.setup(stage="test")
+    dataset = dm.test_dataset
+    stroke_scale_factor = (dataset.individual_max_length+2) * config["data_params"]["stroke_width"] / 72
+    random.seed(42)
+    sample_idxs = random.sample(range(len(dataset)), num_samples)
+
+    svg_save_dir = os.path.join(out_base_dir, "svgs")
+    for subfolder in ["gt", "recons", "pi", "pc"]:
+        os.makedirs(os.path.join(svg_save_dir, subfolder), exist_ok=True)
+
+    with torch.no_grad():
+        all_gt_drawings = []
+        all_recons_drawings = []
+        all_pi_drawings = []
+        all_pc_drawings = []
+        descriptions = []
+        for idx in tqdm(sample_idxs):
+            w = 480
+            gt_drawing = dataset._get_full_svg_drawing(idx, width=w, as_tensor=False)
+
+            # Reconstruct the SVG drawing
+            patches, labels, positions, description = dataset._get_full_item(idx)
+            descriptions.append(description)
+            patches = patches.to(device)
+            positions = positions.to(device)
+            recons_drawing, _, shapes, stroke_width_predictions = model.reconstruct(patches, positions, dataset.individual_max_length +2, dataset.stroke_width, rendered_w=w, return_shapes=True)
+            stroke_width_predictions = (stroke_width_predictions * stroke_scale_factor).flatten().tolist()
+            # FIXME use real stroke width preds instead of dataset.stroke_width, this might be happening as diffvg uses stroke width differently
+            stroke_width_predictions = [dataset.stroke_width] * len(stroke_width_predictions)
+            pi_fixed_pos = min_dist_fix(shapes.detach().cpu(), method="min_dist_interpolate", max_dist=4.5)
+            extra_strokes = [np.mean(stroke_width_predictions)] * (len(pi_fixed_pos) - len(shapes))
+            pi_drawing = shapes_to_drawing(pi_fixed_pos, stroke_width_predictions + extra_strokes, w=w)
+            pc_fixed_pos = min_dist_fix(shapes.detach().cpu(), method="min_dist_clip", max_dist=4.5)
+            pc_drawing = shapes_to_drawing(pc_fixed_pos, stroke_width_predictions, w=w)
+            all_gt_drawings.append(gt_drawing)
+            all_recons_drawings.append(recons_drawing)
+            all_pi_drawings.append(pi_drawing)
+            all_pc_drawings.append(pc_drawing)
+
+    print("Saving svgs...")
+    for i, idx in tqdm(enumerate(sample_idxs[:max_num_svgs]), total=min(max_num_svgs, num_samples)):
+        # save all svgs
+        all_gt_drawings[i].saveas(os.path.join(svg_save_dir,"gt",f"gt_drawing_{idx}.svg"), pretty=True)
+        all_recons_drawings[i].saveas(os.path.join(svg_save_dir,"recons",f"recons_drawing_{idx}.svg"), pretty=True)
+        all_pi_drawings[i].saveas(os.path.join(svg_save_dir,"pi",f"pi_drawing_{idx}.svg"), pretty=True)
+        all_pc_drawings[i].saveas(os.path.join(svg_save_dir,"pc",f"pc_drawing_{idx}.svg"), pretty=True)
+
+    print("Computing FID score...")
+    all_gt_rasters = [drawing_to_tensor(d) for d in all_gt_drawings]
+    all_recons_rasters = [drawing_to_tensor(d) for d in all_recons_drawings]
+    all_pi_rasters = [drawing_to_tensor(d) for d in all_pi_drawings]
+    all_pc_rasters = [drawing_to_tensor(d) for d in all_pc_drawings]
+
+    fid_recons = compute_fid_score(all_recons_rasters, all_gt_rasters, device, model_str=clip_model)
+    fid_pi = compute_fid_score(all_pi_rasters, all_gt_rasters, device, model_str=clip_model)
+    fid_pc = compute_fid_score(all_pc_rasters, all_gt_rasters, device, model_str=clip_model)
+
+    print(f"FID recons: {fid_recons}")
+    print(f"FID pi: {fid_pi}")
+    print(f"FID pc: {fid_pc}")
+
+    with open(os.path.join(out_base_dir, "results_fid.txt"), "w+") as f:
+        f.write(f"num_samples: {num_samples}\n")
+        f.write(f"FID recons: {fid_recons}\n")
+        f.write(f"FID pi: {fid_pi}\n")
+        f.write(f"FID pc: {fid_pc}\n")
+
+    print("Computing CLIP score...")
+    clip_score_gt = compute_clip_score(all_gt_rasters, descriptions, device, model_str=clip_model)
+    clip_score_recons = compute_clip_score(all_recons_rasters, descriptions, device, model_str=clip_model)
+    clip_score_pi = compute_clip_score(all_pi_rasters, descriptions, device, model_str=clip_model)
+    clip_score_pc = compute_clip_score(all_pc_rasters, descriptions, device, model_str=clip_model)
+
+    print(f"CLIP score gt: {clip_score_gt}")
+    print(f"CLIP score recons: {clip_score_recons}")
+    print(f"CLIP score pi: {clip_score_pi}")
+    print(f"CLIP score pc: {clip_score_pc}")
+
+    with open(os.path.join(out_base_dir, "results_clip.txt"), "w+") as f:
+        f.write(f"num_samples: {num_samples}\n")
+        f.write(f"CLIP score gt: {clip_score_gt}\n")
+        f.write(f"CLIP score recons: {clip_score_recons}\n")
+        f.write(f"CLIP score pi: {clip_score_pi}\n")
+        f.write(f"CLIP score pc: {clip_score_pc}\n")
+
+    print("Computing MSE...")
+    mse_recons = torch.nn.functional.mse_loss(torch.stack(all_recons_rasters), torch.stack(all_gt_rasters)).item()
+    mse_pi = torch.nn.functional.mse_loss(torch.stack(all_pi_rasters), torch.stack(all_gt_rasters)).item()
+    mse_pc = torch.nn.functional.mse_loss(torch.stack(all_pc_rasters), torch.stack(all_gt_rasters)).item()
+
+    print(f"MSE recons: {mse_recons}")
+    print(f"MSE pi: {mse_pi}")
+    print(f"MSE pc: {mse_pc}")
+
+    with open(os.path.join(out_base_dir, "results_mse.txt"), "w+") as f:
+        f.write(f"num_samples: {num_samples}\n")
+        f.write(f"MSE recons: {mse_recons}\n")
+        f.write(f"MSE pi: {mse_pi}\n")
+        f.write(f"MSE pc: {mse_pc}\n")
+
 def main(eval_config_path):
     random.seed(42)
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -308,11 +431,10 @@ def main(eval_config_path):
     for k,v in eval_config.items():
         if v["type"].lower() == "stage2":
             print(f"Running eval on {k}...")
-            with open(os.path.join(v["out_base_dir"],"config.yaml"), 'w+') as file:
-                try:
-                    yaml.dump(v, file)
-                except yaml.YAMLError as exc:
-                    print(exc)
+            if not os.path.exists(v["out_base_dir"]):
+                os.makedirs(v["out_base_dir"])
+            with open(os.path.join(v["out_base_dir"],"config.yaml"), 'w+', encoding="utf-8") as file:
+                yaml.dump(v, file)
 
             for vq_context in tqdm(v["vq_contexts"]):
                 out_dir = os.path.join(v["out_base_dir"],f"vq_context_{vq_context}_t0")
@@ -321,33 +443,16 @@ def main(eval_config_path):
                                        device=device)
         elif v["type"].lower() == "stage1" or v["type"].lower() == "vsq":
             print(f"Running eval on {k}...")
-            pass
+            if not os.path.exists(v["out_base_dir"]):
+                os.makedirs(v["out_base_dir"])
+            with open(os.path.join(v["out_base_dir"],"config.yaml"), 'w+', encoding="utf-8") as file:
+                yaml.dump(v, file)
 
-
-
-    config_path = "configs/VSQ_sweep/0.yaml"
-    ckpt_path = "/scratch2/gesùbambino/VSQ/0.ckpt"
-    with open(config_path, 'r') as file:
-        try:
-            config = yaml.safe_load(file)
-        except yaml.YAMLError as exc:
-            print(exc)
-    if "wandb_version" in config.keys():
-        config = map_wand_config(config)
-
-    # adjust for inference
-    config['data_params']["max_shapes_per_svg"] = 300
-
-    model = Vector_VQVAE(**config['model_params']).to(device).eval()
-
-    state_dict = torch.load(ckpt_path, map_location=device)["state_dict"]
-    model.load_state_dict({k.replace("model.", ""): v for k, v in state_dict.items()})
-
-    test_batch_size = 16
-    dm = GlyphazznStage1Datamodule(**config['data_params'], test_batch_size=test_batch_size)
-    dm.setup(stage="test")
-    dl = dm.test_dataloader()
+            benchmark_vsq_stage1(**v, device = device)
 
 if __name__ == "__main__":
-    eval_config_path = "configs/eval_test.yaml"
-    main(eval_config_path)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", help="Path to the evaluation config yaml file", required=True)  # "configs/eval.yaml"
+    args = parser.parse_args()
+    
+    main(args.config)

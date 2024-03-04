@@ -200,7 +200,7 @@ def stroke_to_path(my_tensor: Tensor):
         all_paths.append(stroke_points_to_bezier(my_tensor[start_idx:end_idx]))
     return Path(*all_paths)
 
-def shapes_to_drawing(shapes:Tensor, stroke_width:float, w=128, num_strokes_to_paint:int = 0) -> Drawing:
+def shapes_to_drawing(shapes:Tensor, stroke_width:float|List, w=128, num_strokes_to_paint:int = 0) -> Drawing:
     """
     expects shapes to be in shape (n, 4, 2)
     """
@@ -210,7 +210,11 @@ def shapes_to_drawing(shapes:Tensor, stroke_width:float, w=128, num_strokes_to_p
     if num_strokes_to_paint > len(all_shapes):
         num_strokes_to_paint = len(all_shapes)
     colors = ["red"] * num_strokes_to_paint + ["black"] * (len(all_shapes) - num_strokes_to_paint)
-    drawing = disvg(all_shapes, stroke_widths=[stroke_width]*len(all_shapes), colors=colors, paths2Drawing=True, viewbox=f"0 0 72 72", dimensions=(w, w))  # I think the 72 comes from the simplified svg files
+    if isinstance(stroke_width, float):
+        stroke_widths = [stroke_width] * len(all_shapes)
+    elif isinstance(stroke_width, list):
+        stroke_widths = stroke_width
+    drawing = disvg(all_shapes, stroke_widths=stroke_widths, colors=colors, paths2Drawing=True, viewbox=f"0 0 72 72", dimensions=(w, w))  # I think the 72 comes from the simplified svg files
     return drawing
 
 def fig2img(fig):
