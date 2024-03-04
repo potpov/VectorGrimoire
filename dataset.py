@@ -556,6 +556,7 @@ class GlyphazznStage1Datamodule(LightningDataModule):
         val_batch_size: int,
         channels: int,
         width: int,
+        test_batch_size:int = 32,
         individual_max_length: float = 10.,
         max_shapes_per_svg:int=64,
         num_workers: int = 0,
@@ -568,6 +569,7 @@ class GlyphazznStage1Datamodule(LightningDataModule):
 
         self.train_batch_size = train_batch_size
         self.val_batch_size = val_batch_size
+        self.test_batch_size = test_batch_size
         self.num_workers = num_workers
         self.csv_path = csv_path
         self.channels = channels
@@ -580,38 +582,44 @@ class GlyphazznStage1Datamodule(LightningDataModule):
         self.use_single_paths = use_single_paths
 
     def setup(self, stage: Optional[str] = None) -> None:
-        self.train_dataset = GlyphazznStage1Dataset(
-            self.csv_path,
-            self.channels,
-            self.width,
-            train=True,
-            individual_max_length=self.individual_max_length,
-            stroke_width=self.stroke_width,
-            max_shapes_per_svg=self.max_shapes_per_svg,
-            use_single_paths=self.use_single_paths
-        )
+        if stage not in ["train", "test", "val"]:
+            stage = None
 
-        self.val_dataset = GlyphazznStage1Dataset(
-            self.csv_path,
-            self.channels,
-            self.width,
-            train=False,
-            individual_max_length=self.individual_max_length,
-            stroke_width=self.stroke_width,
-            max_shapes_per_svg=self.max_shapes_per_svg,
-            use_single_paths=self.use_single_paths
-        )
+        if stage is None or stage == "train":
+            self.train_dataset = GlyphazznStage1Dataset(
+                self.csv_path,
+                self.channels,
+                self.width,
+                train=True,
+                individual_max_length=self.individual_max_length,
+                stroke_width=self.stroke_width,
+                max_shapes_per_svg=self.max_shapes_per_svg,
+                use_single_paths=self.use_single_paths
+            )
 
-        self.test_dataset = GlyphazznStage1Dataset(
-            self.csv_path,
-            self.channels,
-            self.width,
-            train=None,
-            individual_max_length=self.individual_max_length,
-            stroke_width=self.stroke_width,
-            max_shapes_per_svg=self.max_shapes_per_svg,
-            use_single_paths=self.use_single_paths
-        )
+        if stage is None or stage == "val":
+            self.val_dataset = GlyphazznStage1Dataset(
+                self.csv_path,
+                self.channels,
+                self.width,
+                train=False,
+                individual_max_length=self.individual_max_length,
+                stroke_width=self.stroke_width,
+                max_shapes_per_svg=self.max_shapes_per_svg,
+                use_single_paths=self.use_single_paths
+            )
+
+        if stage is None or stage == "test":
+            self.test_dataset = GlyphazznStage1Dataset(
+                self.csv_path,
+                self.channels,
+                self.width,
+                train=None,
+                individual_max_length=self.individual_max_length,
+                stroke_width=self.stroke_width,
+                max_shapes_per_svg=self.max_shapes_per_svg,
+                use_single_paths=self.use_single_paths
+            )
 
     #       ===============================================================
 
@@ -645,7 +653,7 @@ class GlyphazznStage1Datamodule(LightningDataModule):
     def test_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
         return DataLoader(
             self.test_dataset,
-            batch_size=16,
+            batch_size=self.test_batch_size,
             num_workers=self.num_workers,
             shuffle=False,
             pin_memory=False,
