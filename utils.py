@@ -9,12 +9,57 @@ import os
 from torchvision.utils import make_grid
 from torchvision.transforms import Resize
 from svgwrite import Drawing
-from svgpathtools import disvg, CubicBezier
+from svgpathtools import disvg, CubicBezier, Line
 import cairosvg
 from PIL import Image
 from io import BytesIO
 from torchvision.transforms import ToTensor
 import re
+import matplotlib.colors as mcolors
+
+def get_color_gradient(num_colors: int, start_color="red", end_color="blue"):
+    gradient = mcolors.LinearSegmentedColormap.from_list('gradient', [start_color, end_color])
+    colors = [gradient(i / num_colors) for i in range(num_colors)]
+    hex_colors = [mcolors.rgb2hex(color) for color in colors]
+    return hex_colors
+
+def get_rendered_svg_with_gradient(svg_path):
+    base_attribute = {
+        "fill": "none",
+        "fill-opacity": "1.0",
+        "filling": "0",
+        "stroke":"black",
+        "stroke-width":"1",
+    }
+    indicator_attribute = {
+        "fill": "none",
+        "fill-opacity": "1.0",
+        "filling": "0",
+        "stroke":"black",
+        "stroke-width":"0.5",
+        "stroke-opacity" : "0.5",
+    }
+    paths, attributes, svg_attributes = svg2paths2(svg_path)
+    indicators = [Line(x[0].start,end=complex(0.,0.)) for x in paths]
+    flattened_paths = get_flattened_paths(paths)
+
+    num_paths = len(flattened_paths)
+    gradient = get_color_gradient(num_paths, start_color = "red",end_color="black")
+    new_attributes=[]
+    for i in range(num_paths):
+        # Calculate the color for the current path based on the gradient
+        color = gradient[i]
+
+        # Create a separate attribute dictionary for the current path
+        path_attribute = base_attribute.copy()
+        path_attribute['stroke'] = color
+
+        # Add the attribute dictionary to the list
+        new_attributes.append(path_attribute)
+
+    img = drawing_to_tensor(disvg(flattened_paths + indicators, attributes=new_attributes + [indicator_attribute]*len(indicators), paths2Drawing=True))
+    # Use the attributes list when calling disvg
+    return img
 
 def svg_file_path_to_tensor(path, permuted = True, plot=False):
     paths, attributes, svg_attributes = svg2paths2(path)
@@ -162,6 +207,8 @@ def shapes_to_drawing(shapes:Tensor, stroke_width:float, w=128, num_strokes_to_p
     all_shapes = []
     for shape in shapes:
         all_shapes.append(stroke_to_path(shape))
+    if num_strokes_to_paint > len(all_shapes):
+        num_strokes_to_paint = len(all_shapes)
     colors = ["red"] * num_strokes_to_paint + ["black"] * (len(all_shapes) - num_strokes_to_paint)
     drawing = disvg(all_shapes, stroke_widths=[stroke_width]*len(all_shapes), colors=colors, paths2Drawing=True, viewbox=f"0 0 72 72", dimensions=(w, w))  # I think the 72 comes from the simplified svg files
     return drawing
