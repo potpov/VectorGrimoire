@@ -5,7 +5,7 @@ from utils import shapes_to_drawing, calculate_global_positions, drawing_to_tens
 
 
 
-def _get_closest_idxs(tensor1: Tensor, tensor2: Tensor):
+def _get_closest_idxs(tensor1: Tensor, tensor2: Tensor, num_segments:int=1):
     """
     returns the indices of the closest points in tensor1 and tensor2 and the distance between them
     """
@@ -20,8 +20,8 @@ def _get_closest_idxs(tensor1: Tensor, tensor2: Tensor):
     indices = divmod(min_dist_index.item(), dist_matrix.size(1))
 
     # multiply index by three because 0*3 = 0 (start point) and 1*3 = 3 (end point)
-    idx_0 = indices[0] * 3
-    idx_1 = indices[1] * 3
+    idx_0 = indices[0] * 3*num_segments
+    idx_1 = indices[1] * 3*num_segments
 
     return idx_0, idx_1, min_dist.item()
 
@@ -101,7 +101,7 @@ def min_dist_fix(global_positions: Tensor, method: str = "min_dist_clip", max_di
     interpolated_positions = []
     min_dists = []
     for i, stroke in enumerate(global_positions):
-        assert stroke.shape[0] == 4, f"Each stroke must have 4 points (start, control, control, end), got {global_positions.shape[1]} points."
+        num_segments = int((stroke.shape[0] - 1) / 3)
         if i == 0:
             if connect_last:
                 prev_stroke = global_positions[-1]
@@ -110,11 +110,11 @@ def min_dist_fix(global_positions: Tensor, method: str = "min_dist_clip", max_di
         else:
             prev_stroke = global_positions[i-1]  # (4, 2)
 
-        # extract only start and end points of 4-point beziers
-        prev_start_end_points = prev_stroke[0::3]  # (2, 2)
-        curr_start_end_points = stroke[0::3]  # (2, 2)
+        # extract only start and end points of a stroke
+        prev_start_end_points = torch.stack([prev_stroke[0], prev_stroke[-1]])  # (2, 2)
+        curr_start_end_points = torch.stack([stroke[0], stroke[-1]])  # (2, 2)
 
-        closest_idx_prev, closest_idx_curr, min_dist = _get_closest_idxs(prev_start_end_points, curr_start_end_points)
+        closest_idx_prev, closest_idx_curr, min_dist = _get_closest_idxs(prev_start_end_points, curr_start_end_points, num_segments)
         min_dists.append(min_dist)
 
         if max_dist is not None and min_dist > max_dist:
@@ -135,6 +135,10 @@ def min_dist_fix(global_positions: Tensor, method: str = "min_dist_clip", max_di
     if method == "min_dist_interpolate":
         # add the new strokes to the original strokes
         interpolated_positions = torch.stack(interpolated_positions) # (n_interpolations, 4, 2)
+        if interpolated_positions.size(1) != global_positions.size(1):
+            num_repeat = global_positions.size(1) - interpolated_positions.size(1)
+            pad = interpolated_positions[:,-1,:].unsqueeze(1).repeat(1,num_repeat,1)
+            interpolated_positions = torch.cat([interpolated_positions, pad], dim=1)
         global_positions = torch.cat([global_positions, interpolated_positions], dim=0)
     return global_positions
 
