@@ -98,6 +98,7 @@ class VQDataset(Dataset):
         super(VQDataset, self).__init__()
 
         self.split = pd.read_csv(csv_path)
+        self.train = train
 
         self.context_length = context_length
         self.min_context_length = min_context_length
@@ -105,6 +106,8 @@ class VQDataset(Dataset):
         sum_of_fractions = fraction_of_class_only_inputs + fraction_of_blank_inputs + fraction_of_strokenuwa_inputs + fraction_of_iconshop_chatgpt_inputs if train else 0.0
         assert dataset in ["figr8", "fonts"], f"Dataset must be either 'figr8' or 'fonts', got {dataset}."
         assert sum_of_fractions <= 1, f"All fractions must be less or equal to 1, got {sum_of_fractions}."
+
+
 
         self.fraction_of_class_only_inputs = fraction_of_class_only_inputs if train else 0.0
         self.fraction_of_blank_inputs = fraction_of_blank_inputs if train else 0.0
@@ -119,6 +122,12 @@ class VQDataset(Dataset):
 
         if not train or train is None:
             self.fraction_of_full_description_inputs = 1.0
+
+        if dataset == "figr8":
+            assert "class" in self.split.columns if self.fraction_of_class_only_inputs > 0 else True, "Column 'class' is required for figr8 dataset."
+            assert "strokenuwa_prompt" in self.split.columns if self.fraction_of_strokenuwa_inputs > 0 else True, "Column 'strokenuwa_prompt' is required for figr8 dataset."
+            assert "iconshop_sentence_prompt" in self.split.columns if self.fraction_of_iconshop_chatgpt_inputs > 0 else True, "Column 'iconshop_sentence_prompt' is required for figr8 dataset."
+            assert "description" in self.split.columns if self.fraction_of_full_description_inputs > 0 else True, "Column 'description' is required for figr8 dataset."
 
         self.use_pre_computed_text_tokens_only = use_pre_computed_text_tokens_only
         self.shuffle_vq_order = shuffle_vq_order
@@ -145,6 +154,7 @@ class VQDataset(Dataset):
         
         if train is None:
             self.split = self.split[self.split["split"] == "test"].reset_index(drop=True)
+            self.split = self.split.sample(frac=1, random_state=42).reset_index(drop=True)
         else:
             if train:
                 self.split = self.split[self.split["split"] == "train"].reset_index(drop=True)
@@ -209,7 +219,7 @@ class VQDataset(Dataset):
                                                    self.fraction_of_full_description_inputs,
                                                    self.fraction_of_blank_inputs])
             if text_to_tokenize is None:
-                text_to_tokenize = ""
+                text_to_tokenize = "None"
             text_tokens = self.tokenizer.tokenize_text(text_to_tokenize)
             return text_tokens
 
@@ -1057,6 +1067,7 @@ class GenericRasterizedSVGDataset(Dataset):
                  img_size:int = 128,
                  channels:int = 3,
                  fill:bool = True,
+                 stroke_width:float = 0.4,
                  **kwargs) -> None:
         super(GenericRasterizedSVGDataset).__init__()
 
@@ -1065,6 +1076,7 @@ class GenericRasterizedSVGDataset(Dataset):
         self.img_size = img_size
         self.channels = channels
         self.fill = fill
+        self.stroke_width = stroke_width
         if "subset" in kwargs:
             self.subset = kwargs["subset"]
         else:
@@ -1094,7 +1106,7 @@ class GenericRasterizedSVGDataset(Dataset):
         for i in range(len(attributes)):
             if "fill" in attributes[i]:
                 attributes[i]["fill"] = "black" if fill else "none"
-            attributes[i]["stroke-width"] = "0.6"
+            attributes[i]["stroke-width"] = f"{self.stroke_width}"
         rasterized = disvg(paths, viewbox = svg_attributes["viewBox"], dimensions = (img_size, img_size), attributes = attributes, paths2Drawing=True)
         return drawing_to_tensor(rasterized)
     
@@ -1190,7 +1202,8 @@ class GenericRasterDataset(Dataset):
                  train:bool,
                  img_size:int = 128,
                  channels:int=3,
-                 invert:bool = True) -> None:
+                 invert:bool = True,
+                 **kwargs) -> None:
         super(GenericRasterDataset).__init__()
 
         self.csv_path = csv_path

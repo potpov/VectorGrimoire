@@ -1,3 +1,4 @@
+import gc
 import os
 from typing import List
 import yaml
@@ -19,13 +20,14 @@ from transformers import AutoProcessor, CLIPModel
 from dataset import GenericRasterizedSVGDataset, GlyphazznStage1Datamodule, VQDataModule
 from torch import nn
 from math import ceil, sqrt
+import time
 import random
 import argparse
 from torchvision.utils import make_grid, save_image
 torch.cuda.is_available()
 from utils import calculate_global_positions, shapes_to_drawing, drawing_to_tensor
 from svg_fixing import get_fixed_svg_drawing, get_fixed_svg_render, get_svg_render, min_dist_fix
-
+import re 
 def map_wand_config(config):
     new_config = {}
     for k, v in config.items():
@@ -56,11 +58,26 @@ def load_stage2_model(config_path, ckpt_path, device,dataset:str = None, test_ba
     tokenizer = VQTokenizer(vq_model, config["data_params"]["width"], 1, "bert-base-uncased", device = device)
     model = VQ_SVG_Stage2(tokenizer, **config['model_params'], device = device)
     state_dict = torch.load(ckpt_path)["state_dict"]
+    # model.load_state_dict(state_dict)
     try:
         model.load_state_dict(state_dict)
     except:
-        new_dict = {k.replace("model.", ""): v for k, v in state_dict.items()}
-        new_dict = {k.replace("transformer.", "transformer.model."): v for k, v in new_dict.items()}
+        new_dict = state_dict
+        # new_dict = {k.replace("transformer.model.", "model.transformer.model."): v for k, v in new_dict.items()}
+        # new_dict = {k.replace("text_embedder.", "model.text_embedder."): v for k, v in new_dict.items()}
+        new_dict = {k.replace("model.transformer.model.","transformer.model."): v for k, v in new_dict.items()}
+        new_dict = {k.replace("model.text_embedder.","text_embedder."): v for k, v in new_dict.items()}
+        new_dict = {k.replace("model.pos_emb.","pos_emb."): v for k, v in new_dict.items()}
+        new_dict = {k.replace("model.vq_embedding.","vq_embedding."): v for k, v in new_dict.items()}
+        new_dict = {k.replace("model.mapping_layer.","mapping_layer."): v for k, v in new_dict.items()}
+        new_dict = {k.replace("model.final_linear.","final_linear."): v for k, v in new_dict.items()}
+        # new_dict = {k.replace("tokenizer.vq_model", "tokenizer.vq_model.encoder"): v for k, v in new_dict.items()}
+        # new_dict = {k.replace("tokenizer.vq_decoder", "tokenizer.vq_model.decoder"): v for k, v in new_dict.items()}
+        # new_dict = {k.replace("model.", "",1): v for k, v in state_dict.items()}
+        pattern = r"(\.ff\.2\.)(weight|bias)"
+        replacement = r".ff.3.\2"
+        new_dict = {re.sub(pattern,replacement,k): v for k, v in new_dict.items()}
+
         model.load_state_dict(new_dict)
 
     model = model.eval().to(device)
@@ -203,6 +220,9 @@ def benchmark_stage2_sgamo(config_path:str,
     print("Generating test set...")
     generated_vq_tokens, prompts = generate_test_set_stage2(model, tokenizer, data.test_dataloader(), vq_context = vq_context, temperature = temperature, device = device, n=num_batches)
 
+    for prompt in prompts:
+        assert len(prompt) > 1, f"Prompts must not be empty, got: {prompt}"
+
     flattened_generated_vq_tokens = [gen for sublist in generated_vq_tokens for gen in sublist]
     flattened_prompts = [cap for sublist in prompts for cap in sublist]
 
@@ -224,16 +244,27 @@ def benchmark_stage2_sgamo(config_path:str,
     rasterized_ds = GenericRasterizedSVGDataset(config["data_params"]["csv_path"],
                                     train=None,
                                     fill=False,
-                                    img_size=480)
+                                    img_size=480,
+                                    stroke_width=stroke_width,)
     
     print("Loading rasterized GT images...")
     random.seed(42)
     indices = random.sample(range(len(rasterized_ds)), num_real_images)
-    real_imgs = [rasterized_ds[i][0] for i in indices]
+    real_imgs = []
+    for i in tqdm(indices):
+        real_imgs.append(rasterized_ds[i][0])
+
     print("Computing FID score...")
     unfixed_fid_score = compute_fid_score(unfixed_renderings, real_imgs, device, model_str = clip_model)
     pc_fixed_fid_score = compute_fid_score(pc_fixed_renderings, real_imgs, device, model_str = clip_model)
     pi_fixed_fid_score = compute_fid_score(pi_fixed_renderings, real_imgs, device, model_str = clip_model)
+
+    real_imgs_grid = make_grid(real_imgs[:10],nrow=10)
+    unfixed_grid = make_grid(unfixed_renderings[:10],nrow=10)
+    pc_fixed_grid = make_grid(pc_fixed_renderings[:10],nrow=10)
+    pi_fixed_grid = make_grid(pi_fixed_renderings[:10],nrow=10)
+    [save_image(x, os.path.join(out_dir, f"{name}.png")) for x, name in zip([real_imgs_grid, unfixed_grid, pc_fixed_grid, pi_fixed_grid], ["real_imgs", "unfixed", "pc_fixed", "pi_fixed"])]
+
 
     # white_baseline_fid_score = compute_fid_score([torch.ones((3, 480, 480), dtype=torch.float32, device=device) for _ in range(len(real_imgs))], real_imgs, device, model_str = clip_model)
     # black_baseline_fid_score = compute_fid_score([torch.zeros((3, 480, 480), dtype=torch.float32, device=device) for _ in range(len(real_imgs))], real_imgs, device, model_str = clip_model)
@@ -253,9 +284,14 @@ def benchmark_stage2_sgamo(config_path:str,
         # f.write(f"Black baseline FID: {black_baseline_fid_score}\n")
 
     print("Computing CLIP scores...")
+    get_prompt_template = lambda x: f"Black and white icon of {x}, vector art"
+    clip_adjusted_prompts = [get_prompt_template(x) for x in flattened_prompts]
     unfixed_clip_score = compute_clip_score(unfixed_renderings, flattened_prompts, device, model_str = clip_model)
     pc_fixed_clip_score = compute_clip_score(pc_fixed_renderings, flattened_prompts, device, model_str = clip_model)
     pi_fixed_clip_score = compute_clip_score(pi_fixed_renderings, flattened_prompts, device, model_str = clip_model)
+    prompt_adjusted_unfixed_clip_score = compute_clip_score(unfixed_renderings, clip_adjusted_prompts, device, model_str = clip_model)
+    prompt_adjusted_pc_fixed_clip_score = compute_clip_score(pc_fixed_renderings, clip_adjusted_prompts, device, model_str = clip_model)
+    prompt_adjusted_pi_fixed_clip_score = compute_clip_score(pi_fixed_renderings, clip_adjusted_prompts, device, model_str = clip_model)
 
     # white_baseline_clip_score = compute_clip_score([torch.ones((3, 480, 480), dtype=torch.float32, device=device) for _ in range(len(flattened_prompts))], flattened_prompts, device, model_str = clip_model)
     # black_baseline_clip_score = compute_clip_score([torch.zeros((3, 480, 480), dtype=torch.float32, device=device) for _ in range(len(flattened_prompts))], flattened_prompts, device, model_str = clip_model)
@@ -263,14 +299,21 @@ def benchmark_stage2_sgamo(config_path:str,
     print(f"Unfixed CLIP score: {unfixed_clip_score}")
     print(f"PC fixed CLIP score: {pc_fixed_clip_score}")
     print(f"PI fixed CLIP score: {pi_fixed_clip_score}")
+    print(f"Prompt adjusted unfixed CLIP score: {prompt_adjusted_unfixed_clip_score}")
+    print(f"Prompt adjusted PC fixed CLIP score: {prompt_adjusted_pc_fixed_clip_score}")
+    print(f"Prompt adjusted PI fixed CLIP score: {prompt_adjusted_pi_fixed_clip_score}")
     # print(f"White baseline CLIP score: {white_baseline_clip_score}")
     # print(f"Black baseline CLIP score: {black_baseline_clip_score}")
 
     with open(os.path.join(out_dir, "results_clip_sgamo.txt"), "w+") as f:
         f.write(f"num_samples: {num_batches*test_batch_size}\n")
+        f.write("Prompt adjusted template: "+get_prompt_template("X")+"\n")
         f.write(f"Unfixed CLIP score: {unfixed_clip_score}\n")
         f.write(f"PC fixed CLIP score: {pc_fixed_clip_score}\n")
         f.write(f"PI fixed CLIP score: {pi_fixed_clip_score}\n")
+        f.write(f"Prompt adjusted unfixed CLIP score: {prompt_adjusted_unfixed_clip_score}\n")
+        f.write(f"Prompt adjusted PC fixed CLIP score: {prompt_adjusted_pc_fixed_clip_score}\n")
+        f.write(f"Prompt adjusted PI fixed CLIP score: {prompt_adjusted_pi_fixed_clip_score}\n")
         # f.write(f"White baseline CLIP score: {white_baseline_clip_score}\n")
         # f.write(f"Black baseline CLIP score: {black_baseline_clip_score}\n")
 
@@ -293,7 +336,7 @@ def benchmark_stage2_sgamo(config_path:str,
     save_image(make_grid(pc_fixed_renderings[:max_single_image], nrow=int(ceil(sqrt(max_single_image)))), os.path.join(out_dir,"pc_fixed_renderings.png"))
     save_image(make_grid(pi_fixed_renderings[:max_single_image], nrow=int(ceil(sqrt(max_single_image)))), os.path.join(out_dir,"pi_fixed_renderings.png"))
 
-
+@torch.no_grad()
 def benchmark_vsq_stage1(out_base_dir,
                          config_path,
                          ckpt_path,
@@ -402,6 +445,9 @@ def benchmark_vsq_stage1(out_base_dir,
         f.write(f"CLIP score pi: {clip_score_pi}\n")
         f.write(f"CLIP score pc: {clip_score_pc}\n")
 
+    with open(os.path.join(out_base_dir, "descriptions.txt"), "w+", encoding="utf-8") as f:
+        f.write("\n".join(descriptions))
+
     print("Computing MSE...")
     mse_recons = torch.nn.functional.mse_loss(torch.stack(all_recons_rasters), torch.stack(all_gt_rasters)).item()
     mse_pi = torch.nn.functional.mse_loss(torch.stack(all_pi_rasters), torch.stack(all_gt_rasters)).item()
@@ -417,7 +463,7 @@ def benchmark_vsq_stage1(out_base_dir,
         f.write(f"MSE pi: {mse_pi}\n")
         f.write(f"MSE pc: {mse_pc}\n")
 
-def main(eval_config_path):
+def main(eval_config_path, override:bool=False):
     random.seed(42)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     
@@ -433,26 +479,44 @@ def main(eval_config_path):
             print(f"Running eval on {k}...")
             if not os.path.exists(v["out_base_dir"]):
                 os.makedirs(v["out_base_dir"])
+            else:
+                if not override and os.listdir(v["out_base_dir"]) > 0:
+                    print(f"Warning: {v['out_base_dir']} already exists. Skipping...")
+                    continue
+                else:
+                    print(f"Warning: {v['out_base_dir']} already exists. Overwriting files...")
             with open(os.path.join(v["out_base_dir"],"config.yaml"), 'w+', encoding="utf-8") as file:
                 yaml.dump(v, file)
 
             for vq_context in tqdm(v["vq_contexts"]):
                 out_dir = os.path.join(v["out_base_dir"],f"vq_context_{vq_context}_t0")
                 benchmark_stage2_sgamo(**v,
+                                        vq_context = vq_context,
                                        out_dir=out_dir,
                                        device=device)
+                gc.collect()
+                torch.cuda.empty_cache()
         elif v["type"].lower() == "stage1" or v["type"].lower() == "vsq":
             print(f"Running eval on {k}...")
             if not os.path.exists(v["out_base_dir"]):
                 os.makedirs(v["out_base_dir"])
+            else:
+                if not override and os.listdir(v["out_base_dir"]) > 0:
+                    print(f"Warning: {v['out_base_dir']} already exists. Skipping...")
+                    continue
+                else:
+                    print(f"Warning: {v['out_base_dir']} already exists. Overwriting files...")
             with open(os.path.join(v["out_base_dir"],"config.yaml"), 'w+', encoding="utf-8") as file:
                 yaml.dump(v, file)
 
             benchmark_vsq_stage1(**v, device = device)
+            gc.collect()
+            torch.cuda.empty_cache()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", help="Path to the evaluation config yaml file", required=True)  # "configs/eval.yaml"
+    parser.add_argument("--override", help="Override existing output dirs", action="store_true")
     args = parser.parse_args()
-    
-    main(args.config)
+
+    main(args.config, override=args.override)

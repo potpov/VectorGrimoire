@@ -64,6 +64,7 @@ class VQ_SVG_Stage2(nn.Module):
         self.patch_idx_range : Tuple[int, int] = tokenizer._get_patch_idx_range()
         self.pos_idx_range : Tuple[int, int] = tokenizer._get_pos_idx_range()
         self.device = device
+        self.tokenizer = tokenizer
 
         self.dim = dim
         self.depth = depth
