@@ -195,10 +195,10 @@ class VectorVAE(BaseVAE):
 
         return [mu, log_var]
 
-    def raster(self, all_points, color=[0,0,0, 1], verbose=False, white_background=True, **kwargs):
+    def raster(self, all_points, color=[0,0,0, 1], verbose=False, white_background=True, imgsize:int=480,**kwargs):
         assert len(color) == 4
         # print('1:', process.memory_info().rss*1e-6)
-        render_size = self.imsize
+        render_size = imgsize if imgsize is not None else self.imsize
         bs = all_points.shape[0]
         if verbose:
             render_size = render_size*2
@@ -481,7 +481,10 @@ class VectorVAE(BaseVAE):
         if self.beta>0:
             kld_loss = torch.mean(-0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1), dim = 0)
             kld_loss = self.beta*kld_weight * kld_loss
-        recon_loss = recon_loss*10
+        
+        recon_loss = recon_loss*5
+        kld_loss = kld_loss * 3
+        
         loss =  recon_loss + kld_loss + other_losses*self.other_losses_weight
         logs = {'Reconstruction_Loss': recon_loss, 'KLD': -kld_loss, 'aux_loss': aux_loss, 'other losses': other_losses*self.other_losses_weight}
         logs["loss"] = loss
@@ -493,7 +496,8 @@ class VectorVAE(BaseVAE):
 
     def sample(self,
                num_samples:int,
-               current_device: int, **kwargs) -> Tensor:
+               current_device: int,
+                return_points:bool=False, **kwargs) -> Tensor:
         """
         Samples from the latent space and return the corresponding
         image space map.
@@ -507,10 +511,12 @@ class VectorVAE(BaseVAE):
         z = z.to(current_device)
 
         all_points = self.decode(z)
+        if return_points:
+            return all_points
         samples = self.raster(all_points, **kwargs)
         return samples
 
-    def generate(self, x: Tensor, **kwargs) -> Tensor:
+    def generate(self, x: Tensor,return_points=False, **kwargs) -> Tensor:
         """
         Given an input image x, returns the reconstructed image
         :param x: (Tensor) [B x C x H x W]
@@ -518,7 +524,10 @@ class VectorVAE(BaseVAE):
         """
         mu, log_var = self.encode(x)
         z = self.reparameterize(mu, log_var)
-        return  self.raster(self.decode(z), verbose=random.choice([True, False]))
+        all_points = self.decode(z)
+        if return_points:
+            return all_points
+        return  self.raster(all_points, verbose=random.choice([True, False]))
  # .type(torch.FloatTensor).to(device)
 
     def save(self, x, save_dir, name):
