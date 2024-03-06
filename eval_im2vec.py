@@ -28,6 +28,38 @@ from utils import calculate_global_positions, shapes_to_drawing, drawing_to_tens
 from svg_fixing import get_fixed_svg_drawing, get_fixed_svg_render
 import pandas as pd
 from models import VectorVAEnLayers
+
+import gc
+import os
+from typing import List
+import yaml
+from models import VQ_SVG_Stage2, Vector_VQVAE
+from tokenizer import VQTokenizer
+from experiment import SVG_VQVAE_Stage2_Experiment
+import torch
+import random
+import matplotlib.pyplot as plt
+import numpy as np
+import torchvision.utils as vutils
+from PIL import Image
+from torch import Tensor
+from tqdm import tqdm
+from torch.utils.data import DataLoader
+from torchmetrics.image.fid import FrechetInceptionDistance
+from torchmetrics.multimodal.clip_score import CLIPScore
+from transformers import AutoProcessor, CLIPModel
+from dataset import GenericRasterizedSVGDataset, GlyphazznStage1Datamodule, VQDataModule
+from torch import nn
+from math import ceil, sqrt
+import time
+import random
+import argparse
+from torchvision.utils import make_grid, save_image
+torch.cuda.is_available()
+from utils import calculate_global_positions, shapes_to_drawing, drawing_to_tensor
+from svg_fixing import get_fixed_svg_drawing, get_fixed_svg_render, get_svg_render, min_dist_fix
+import re 
+
 def map_wand_config(config):
     new_config = {}
     for k, v in config.items():
@@ -73,6 +105,54 @@ def save_im2vec_points_to_svg(model:VectorVAEnLayers,
         pydiffvg.save_svg(f"{save_base_dir}/{filename}",
                             imsize, imsize, shapes, shape_groups)
 
+class CLIPWrapper(nn.Module):
+    def __init__(self, model, processor, device):
+        super().__init__()
+        self.device = device
+        self.processor = processor
+        self.model = model.to(self.device)
+
+    @torch.no_grad()
+    def forward(self, x):
+        inputs = self.processor(images=x, return_tensors="pt", do_rescale=False)
+        for k, v in inputs.items():
+            if isinstance(v, torch.Tensor):
+                inputs[k] = v.to(self.device)
+        return self.model.get_image_features(**inputs)
+
+@torch.no_grad()
+def compute_fid_score(generated_images, real_images, device, model_str:str = "openai/clip-vit-base-patch32"):
+    print(f"Computing FID with model {model_str} on device {device}")
+    model = CLIPModel.from_pretrained(model_str)
+    processor = AutoProcessor.from_pretrained(model_str)
+    wrapper = CLIPWrapper(model, processor, device)
+    fid = FrechetInceptionDistance(feature=wrapper, normalize=True)
+    fid = fid.to(device)
+    bs = 32
+    print("Adding generated images...")
+    for i in tqdm(range(0, len(generated_images), bs)):
+        generated_images_batch = torch.stack(generated_images[i:i+bs]).to(device)
+        fid.update(generated_images_batch, real=False)
+    print("Adding real images...")
+    for i in tqdm(range(0, len(real_images), bs)):
+        real_images_batch = torch.stack(real_images[i:i+bs]).to(device)
+        fid.update(real_images_batch, real=True)
+
+    return fid.compute()
+
+@torch.no_grad()
+def compute_clip_score(generated_images:List, captions:List, device, model_str:str = "openai/clip-vit-base-patch32",do_rescale=False):
+    print(f"Computing CLIP score with model {model_str} on device {device}")
+    metric = CLIPScore(model_name_or_path=model_str)
+    metric = metric.to(device)
+    bs = 32
+    for i in tqdm(range(0, len(generated_images), bs)):
+        generated_images_batch = torch.stack(generated_images[i:i+bs]).to(device)
+        captions_batch = captions[i:i+bs]
+        metric.update(generated_images_batch, captions_batch,do_rescale=do_rescale)
+
+    return metric.compute()
+
 
 base_path = "/scratch2/moritz_logs/Im2Vec/figr8_star"
 im2vec_config_path = os.path.join(base_path, "wandb/latest-run/files/config.yaml")
@@ -91,7 +171,12 @@ ds = GenericRasterizedSVGDataset(**im2vec_config["data_params"], train=None)
 im2vec = VectorVAEnLayers(**im2vec_config["model_params"])
 state_dict = torch.load(im2vec_model_path)["state_dict"]
 
-num_samples = min(10, len(ds))
+num_samples = min(1000, len(ds))
+out_base_dir = "/scratch2/moritz_logs/benchmark/im2vec/star_figr8"
+# out_base_dir = "/home/mfeuerpfeil/master/thesis/images/im2vec/star_fig8"
+for subdir in ["reconstructions", "samples", "gt"]:
+    os.makedirs(os.path.join(out_base_dir, subdir), exist_ok=True)
+
 
 try:
     im2vec.load_state_dict(state_dict)
@@ -100,19 +185,11 @@ except:
 im2vec = im2vec.eval().to(device)
 im2vec.base_control_features = im2vec.base_control_features.to(device)
 
-
-
-
-
 original_images=[]
+original_images_filled=[]
 reconstruction_points=[]
 
-# out_base_dir = "/scratch2/moritz_logs/benchmark/im2vec/star_fig8"
-out_base_dir = "/home/mfeuerpfeil/master/thesis/images/im2vec/star_fig8"
-for subdir in ["reconstructions", "samples", "originals"]:
-    os.makedirs(os.path.join(out_base_dir, subdir), exist_ok=True)
-
-
+# generate
 with torch.no_grad():
     random.seed(42)
     random_idx = random.sample(range(len(ds)), num_samples)
@@ -120,8 +197,90 @@ with torch.no_grad():
     for i,idx in tqdm(enumerate(random_idx), total=len(random_idx)):
         gt_image = ds[idx][0].to(device)
         reconstruction_points.append(im2vec.generate(gt_image.unsqueeze(0), return_points=True))
-        save_image(ds._rasterize_svg(ds.df.iloc[idx]["simplified_svg_file_path"], 480, fill=True), os.path.join(out_base_dir,"originals",f"original_{idx}_filled.png"))
-        save_image(ds._rasterize_svg(ds.df.iloc[idx]["simplified_svg_file_path"], 480, fill=False), os.path.join(out_base_dir,"originals",f"original_{idx}.png"))
+        
+        filled_original = ds._rasterize_svg(ds.df.iloc[idx]["simplified_svg_file_path"], 480, fill=True)
+        original_images_filled.append(filled_original)
+        save_image(filled_original, os.path.join(out_base_dir,"gt",f"gt_filled_{idx}.png"))
+
+        unfilled_original = ds._rasterize_svg(ds.df.iloc[idx]["simplified_svg_file_path"], 480, fill=False)
+        original_images.append(unfilled_original)
+        save_image(unfilled_original, os.path.join(out_base_dir,"gt",f"gt_unfilled_{idx}.png"))
+
         save_im2vec_points_to_svg(im2vec, samples_points[i], 72,os.path.join(out_base_dir,"samples"),f"im2vec_sample_{idx}.svg")
         save_im2vec_points_to_svg(im2vec, reconstruction_points[i], 72,os.path.join(out_base_dir,"reconstructions"),f"im2vec_reconstruction_{idx}.svg")
+
+# evaluate
+from utils import svg_file_path_to_tensor
+svg_sample_paths = [os.path.join(out_base_dir,"samples",f"im2vec_sample_{idx}.svg") for idx in random_idx]
+svg_reconstruction_paths = [os.path.join(out_base_dir,"reconstructions",f"im2vec_reconstruction_{idx}.svg") for idx in random_idx]
+
+print("rendering svgs")
+sample_renders_filled = [svg_file_path_to_tensor(p, stroke_width=0.4, image_size=480, filling=True) for p in svg_sample_paths]
+reconstruction_renders_filled = [svg_file_path_to_tensor(p, stroke_width=0.4, image_size=480, filling=True) for p in svg_reconstruction_paths]
+
+sample_renders_unfilled = [svg_file_path_to_tensor(p, stroke_width=0.4, image_size=480, filling=False) for p in svg_sample_paths]
+reconstruction_renders_unfilled = [svg_file_path_to_tensor(p, stroke_width=0.4, image_size=480, filling=False) for p in svg_reconstruction_paths]
+
+save_image(make_grid(sample_renders_filled, nrow=5), os.path.join(out_base_dir,"sample_renders_filled.png"))
+save_image(make_grid(reconstruction_renders_filled, nrow=5), os.path.join(out_base_dir,"reconstruction_renders_filled.png"))
+save_image(make_grid(sample_renders_unfilled, nrow=5), os.path.join(out_base_dir,"sample_renders_unfilled.png"))
+save_image(make_grid(reconstruction_renders_unfilled, nrow=5), os.path.join(out_base_dir,"reconstruction_renders_unfilled.png"))
+
+print("computing FID...")
+fid_samples_filled = compute_fid_score(sample_renders_filled, original_images_filled, device)
+fid_reconstructions_filled = compute_fid_score(reconstruction_renders_filled, original_images_filled, device)
+
+fid_samples_unfilled = compute_fid_score(sample_renders_unfilled, original_images, device)
+fid_reconstructions_unfilled = compute_fid_score(reconstruction_renders_unfilled, original_images, device)
+
+print(f"fid_samples_filled: {fid_samples_filled}")
+print(f"fid_reconstructions_filled: {fid_reconstructions_filled}")
+print(f"fid_samples_unfilled: {fid_samples_unfilled}")
+print(f"fid_reconstructions_unfilled: {fid_reconstructions_unfilled}")
+
+get_prompt_template = lambda x: f"Black and white icon of star, vector art"
+print("computing CLIP score...")
+clip_samples_filled_prompt = compute_clip_score(sample_renders_filled, [get_prompt_template(idx) for idx in random_idx], device, do_rescale=False)
+clip_reconstructions_filled_prompt = compute_clip_score(reconstruction_renders_filled, [get_prompt_template(idx) for idx in random_idx], device, do_rescale=False)
+clip_samples_unfilled_prompt = compute_clip_score(sample_renders_unfilled, [get_prompt_template(idx) for idx in random_idx], device, do_rescale=False)
+clip_reconstructions_unfilled_prompt = compute_clip_score(reconstruction_renders_unfilled, [get_prompt_template(idx) for idx in random_idx], device, do_rescale=False)
+
+clip_samples_filled_class = compute_clip_score(sample_renders_filled, ["star" for idx in random_idx], device, do_rescale=False)
+clip_reconstructions_filled_class = compute_clip_score(reconstruction_renders_filled, ["star" for idx in random_idx], device, do_rescale=False)
+clip_samples_unfilled_class = compute_clip_score(sample_renders_unfilled, ["star" for idx in random_idx], device, do_rescale=False)
+clip_reconstructions_unfilled_class = compute_clip_score(reconstruction_renders_unfilled, ["star" for idx in random_idx], device, do_rescale=False)
+
+clip_white_image_baseline = compute_clip_score([torch.ones(3,480,480) for idx in random_idx], ["star" for idx in random_idx], device, do_rescale=False)
+clip_black_image_baseline = compute_clip_score([torch.zeros(3,480,480) for idx in random_idx], ["star" for idx in random_idx], device, do_rescale=False)
+
+print(f"clip_samples_filled_prompt: {clip_samples_filled_prompt}")
+print(f"clip_reconstructions_filled_prompt: {clip_reconstructions_filled_prompt}")
+print(f"clip_samples_unfilled_prompt: {clip_samples_unfilled_prompt}")
+print(f"clip_reconstructions_unfilled_prompt: {clip_reconstructions_unfilled_prompt}")
+
+print(f"clip_samples_filled_class: {clip_samples_filled_class}")
+print(f"clip_reconstructions_filled_class: {clip_reconstructions_filled_class}")
+print(f"clip_samples_unfilled_class: {clip_samples_unfilled_class}")
+print(f"clip_reconstructions_unfilled_class: {clip_reconstructions_unfilled_class}")
+
+print(f"clip_white_image_baseline: {clip_white_image_baseline}")
+print(f"clip_black_image_baseline: {clip_black_image_baseline}")
+
+with open(os.path.join(out_base_dir, "im2vec_results.txt"), "w") as f:
+    f.write(f"num_samples: {len(random_idx)}\n")
+    f.write(f"fid_samples_filled: \t{fid_samples_filled}\n")
+    f.write(f"fid_reconstructions_filled: \t{fid_reconstructions_filled}\n")
+    f.write(f"fid_samples_unfilled: \t{fid_samples_unfilled}\n")
+    f.write(f"fid_reconstructions_unfilled: \t{fid_reconstructions_unfilled}\n")
+    f.write(f"clip_samples_filled_prompt: \t{clip_samples_filled_prompt}\n")
+    f.write(f"clip_reconstructions_filled_prompt: \t{clip_reconstructions_filled_prompt}\n")
+    f.write(f"clip_samples_unfilled_prompt: \t{clip_samples_unfilled_prompt}\n")
+    f.write(f"clip_reconstructions_unfilled_prompt: \t{clip_reconstructions_unfilled_prompt}\n")
+    f.write(f"clip_samples_filled_class: \t{clip_samples_filled_class}\n")
+    f.write(f"clip_reconstructions_filled_class: \t{clip_reconstructions_filled_class}\n")
+    f.write(f"clip_samples_unfilled_class: \t{clip_samples_unfilled_class}\n")
+    f.write(f"clip_reconstructions_unfilled_class: \t{clip_reconstructions_unfilled_class}\n")
+    f.write(f"clip_white_image_baseline: \t{clip_white_image_baseline}\n")
+    f.write(f"clip_black_image_baseline: \t{clip_black_image_baseline}\n")
+
 print("done")

@@ -61,9 +61,18 @@ def get_rendered_svg_with_gradient(svg_path):
     # Use the attributes list when calling disvg
     return img
 
-def svg_file_path_to_tensor(path, permuted = True, plot=False):
+def svg_file_path_to_tensor(path, permuted = False, plot=False, stroke_width=0.5, filling:bool=False,image_size:int=224):
     paths, attributes, svg_attributes = svg2paths2(path)
-    return_tensor = raster(disvg(paths, stroke_widths=[0.5]*len(paths),paths2Drawing=True), out_h=224, out_w = 224)
+    for i, attr in enumerate(attributes):
+        attr["stroke_width"] = f"{stroke_width}"
+        attr["fill"] = "black" if filling else "none"
+
+    if "viewbox" in svg_attributes:
+        viewbox = svg_attributes["viewbox"]
+    else:
+        viewbox = None
+    return_tensor = raster(disvg(paths, attributes=attributes,paths2Drawing=True, viewbox=viewbox), out_h=image_size, out_w = image_size)
+
     if permuted:
         return_tensor = return_tensor.permute(1,2,0)
     if plot:

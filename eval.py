@@ -78,7 +78,14 @@ def load_stage2_model(config_path, ckpt_path, device,dataset:str = None, test_ba
         replacement = r".ff.3.\2"
         new_dict = {re.sub(pattern,replacement,k): v for k, v in new_dict.items()}
 
-        model.load_state_dict(new_dict)
+        missing_keys,unexpected_keys = model.load_state_dict(new_dict,strict=False)
+        assert len(unexpected_keys) == 0, f"Unexpected keys: {unexpected_keys}"
+        if len(missing_keys) > 0:
+            if dataset == "fonts":
+                assert torch.tensor(["tokenizer." in k for k in missing_keys]).all(), f"Missing keys: {missing_keys}"
+            else:
+                assert False, f"Missing keys: {missing_keys}"
+
 
     model = model.eval().to(device)
     text_only_tokenizer = VQTokenizer(None, config["data_params"]["width"], 1, "bert-base-uncased", use_text_encoder_only=True, codebook_size=tokenizer.codebook_size)
@@ -181,7 +188,7 @@ def compute_fid_score(generated_images, real_images, device, model_str:str = "op
     return fid.compute()
 
 @torch.no_grad()
-def compute_clip_score(generated_images:List, captions:List, device, model_str:str = "openai/clip-vit-base-patch32"):
+def compute_clip_score(generated_images:List, captions:List, device, model_str:str = "openai/clip-vit-base-patch32",do_rescale=False):
     print(f"Computing CLIP score with model {model_str} on device {device}")
     metric = CLIPScore(model_name_or_path=model_str)
     metric = metric.to(device)
@@ -189,7 +196,7 @@ def compute_clip_score(generated_images:List, captions:List, device, model_str:s
     for i in tqdm(range(0, len(generated_images), bs)):
         generated_images_batch = torch.stack(generated_images[i:i+bs]).to(device)
         captions_batch = captions[i:i+bs]
-        metric.update(generated_images_batch, captions_batch)
+        metric.update(generated_images_batch, captions_batch,do_rescale=do_rescale)
 
     return metric.compute()
 
@@ -322,8 +329,11 @@ def benchmark_stage2_sgamo(config_path:str,
     os.makedirs(os.path.join(out_dir,"svgs","pc_fixed"), exist_ok=True)
     os.makedirs(os.path.join(out_dir,"svgs","pi_fixed"), exist_ok=True)
     prompt_string = "\n".join(flattened_prompts)
+    clip_adjusted_prompt_string = "\n".join(clip_adjusted_prompts)
     with open(os.path.join(out_dir,"svgs","prompts.txt"), "w") as f:
         f.write(prompt_string)
+    with open(os.path.join(out_dir,"svgs","clip_adjusted_prompts.txt"), "w") as f:
+        f.write(clip_adjusted_prompt_string)
     for i, (bezier_points, positions) in tqdm(enumerate(generated_svgs), total=min(len(generated_svgs),max_num_svgs)):
         if i >= max_num_svgs:
             break
@@ -474,6 +484,9 @@ def main(eval_config_path, override:bool=False):
             print(exc)
 
     print(f"Found {len(eval_config)} eval configurations: {list(eval_config.keys())}")
+    for c in eval_config.values():
+        print(f"Saving dir: {c['out_base_dir']}")
+    input("Press Enter to continue or CTRL+C to cancel")
     for k,v in eval_config.items():
         if v["type"].lower() == "stage2":
             print(f"Running eval on {k}...")
