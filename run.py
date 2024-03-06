@@ -15,7 +15,8 @@ import wandb
 from utils import get_rank
 import torch
 from pytorch_lightning.profilers import SimpleProfiler
-
+import pydiffvg
+print(f"[INFO] diffvg running on GPU: {pydiffvg.get_use_gpu()}")
 torch.set_float32_matmul_precision('high')
 
 DATASETMAP = {

@@ -112,7 +112,7 @@ class VectorVAEnLayers(VectorVAE):
     def forward(self, input: Tensor, **kwargs) -> List[Tensor]:
         mu, log_var = self.encode(input)
         z = self.reparameterize(mu, log_var)
-        output, control_loss = self.decode_and_composite(z, verbose=False, return_overlap_loss=True, **kwargs)
+        output, control_loss = self.decode_and_composite(z, verbose=False, return_overlap_loss=True, img_size=self.imsize,**kwargs)
         return [output, input, mu, log_var, control_loss]
 
     def hard_composite(self, **kwargs):
@@ -197,7 +197,7 @@ class VectorVAEnLayers(VectorVAE):
 
         wandb.log(logging_dict)
 
-    def decode_and_composite(self, z: Tensor, return_overlap_loss=False,return_points=False, **kwargs):
+    def decode_and_composite(self, z: Tensor, return_overlap_loss=False,return_points=False, img_size:int=128, **kwargs):
         bs = z.shape[0]
         layers = []
         n = len(self.colors)
@@ -221,9 +221,9 @@ class VectorVAEnLayers(VectorVAE):
             # print(torch.isfinite(all_points).all())
             # import pdb; pdb.set_trace()
             if("verbose" in kwargs):
-                layer = self.raster(all_points, self.colors[i], verbose=kwargs['verbose'], white_background=False,imgsize=1280)
+                layer = self.raster(all_points, self.colors[i], verbose=kwargs['verbose'], white_background=False, imgsize=img_size)
             else:
-                layer = self.raster(all_points, self.colors[i], white_background=False)
+                layer = self.raster(all_points, self.colors[i], white_background=False,imgsize=img_size)
 
             z_pred = self.z_order(shape_output)
             layers.append(layer)

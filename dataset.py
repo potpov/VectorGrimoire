@@ -442,6 +442,7 @@ class GlyphazznStage1Dataset(Dataset):
         self.class2id = {id_name: class_name for class_name, id_name in enumerate(self.df["class"].unique())}
         if train is None:
             self.df = self.df[self.df["split"] == "test"].reset_index(drop=True)
+            self.df = self.df.sample(frac=1, random_state=42).reset_index(drop=True)
         else:
             if train:
                 self.df = self.df[self.df["split"] == "train"].reset_index(drop=True)
