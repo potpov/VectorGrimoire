@@ -153,10 +153,62 @@ def compute_clip_score(generated_images:List, captions:List, device, model_str:s
 
     return metric.compute()
 
+# # base_path = "/scratch2/moritz_logs/Im2Vec/figr8_star"
+# # base_path = "/scratch2/moritz_logs/Im2Vec/fonts"
+# base_path = "/scratch2/moritz_logs/Im2Vec/fonts_A_final"
+# # base_path = "/scratch2/moritz_logs/Im2Vec/figr8"
+# im2vec_model_path = os.path.join(base_path, "checkpoints/last.ckpt")
+# out_base_dir = "/scratch2/moritz_logs/benchmark/im2vec/fonts_A_final"
+# # out_base_dir = "/scratch2/moritz_logs/benchmark/im2vec/full_figr8"
+# dataset = "fonts"
+# class_name = "capital A"
+fonts_a_config = {
+    "base_path": "/scratch2/moritz_logs/Im2Vec/fonts_A_final",
+    "im2vec_model_path": "checkpoints/last.ckpt",
+    "out_base_dir": "/scratch2/moritz_logs/benchmark/im2vec/fonts_A_final",
+    "dataset": "fonts",
+    "class_name": "capital A"
+}
 
-base_path = "/scratch2/moritz_logs/Im2Vec/figr8_star"
+fonts_full_config = {
+    "base_path": "/scratch2/moritz_logs/Im2Vec/fonts",
+    "im2vec_model_path": "checkpoints/last-v1.ckpt",
+    "out_base_dir": "/scratch2/moritz_logs/benchmark/im2vec/full_fonts_final",
+    "dataset": "fonts",
+    "class_name": "glyph"
+}
+
+figr8_config = {
+    "base_path": "/scratch2/moritz_logs/Im2Vec/figr8",
+    "im2vec_model_path": "checkpoints/last-v2.ckpt",
+    "out_base_dir": "/scratch2/moritz_logs/benchmark/im2vec/figr8",
+    "dataset": "icons",
+    "class_name": ""
+}
+
+##>>>>>>>
+selected_config = fonts_full_config
+##<<<<<<<
+
+base_path = selected_config["base_path"]
+im2vec_model_path = os.path.join(base_path, selected_config["im2vec_model_path"])
+dataset = selected_config["dataset"]
+out_base_dir = selected_config["out_base_dir"]
+class_name = selected_config["class_name"]
+
+# class_name = "SVG"
+
+assert dataset in ["fonts", "icons"]
+if dataset == "icons":
+    get_prompt_template = lambda x: f"Black and white icon of {x}, vector graphic"
+else:
+    get_prompt_template = lambda x: ""
+
+# get_prompt_template = lambda x: f"Black and white icon of A, vector art"
 im2vec_config_path = os.path.join(base_path, "wandb/latest-run/files/config.yaml")
-im2vec_model_path = os.path.join(base_path, "checkpoints/last.ckpt")
+# im2vec_model_path = os.path.join(base_path, "checkpoints/last-v2.ckpt")
+# im2vec_model_path = os.path.join(base_path, "checkpoints/epoch1_before_drastic_beta_change.cküt")
+
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 with open(im2vec_config_path, "r") as f:
@@ -169,11 +221,13 @@ im2vec_config = map_wand_config(im2vec_config)
 
 ds = GenericRasterizedSVGDataset(**im2vec_config["data_params"], train=None)
 im2vec = VectorVAEnLayers(**im2vec_config["model_params"])
-state_dict = torch.load(im2vec_model_path)["state_dict"]
+state_dict = torch.load(im2vec_model_path, map_location=device)["state_dict"]
 
 num_samples = min(1000, len(ds))
-out_base_dir = "/scratch2/moritz_logs/benchmark/im2vec/star_figr8"
-# out_base_dir = "/home/mfeuerpfeil/master/thesis/images/im2vec/star_fig8"
+# out_base_dir = "/scratch2/moritz_logs/benchmark/im2vec/fonts_a"
+# out_base_dir = "/scratch2/moritz_logs/benchmark/im2vec/star_fig8_with_mse"
+if os.path.exists(out_base_dir):
+    input(f"out_base_dir {out_base_dir} already exists, press enter to continue or CTRL+C to cancel")
 for subdir in ["reconstructions", "samples", "gt"]:
     os.makedirs(os.path.join(out_base_dir, subdir), exist_ok=True)
 
@@ -221,10 +275,19 @@ reconstruction_renders_filled = [svg_file_path_to_tensor(p, stroke_width=0.4, im
 sample_renders_unfilled = [svg_file_path_to_tensor(p, stroke_width=0.4, image_size=480, filling=False) for p in svg_sample_paths]
 reconstruction_renders_unfilled = [svg_file_path_to_tensor(p, stroke_width=0.4, image_size=480, filling=False) for p in svg_reconstruction_paths]
 
-save_image(make_grid(sample_renders_filled, nrow=5), os.path.join(out_base_dir,"sample_renders_filled.png"))
-save_image(make_grid(reconstruction_renders_filled, nrow=5), os.path.join(out_base_dir,"reconstruction_renders_filled.png"))
-save_image(make_grid(sample_renders_unfilled, nrow=5), os.path.join(out_base_dir,"sample_renders_unfilled.png"))
-save_image(make_grid(reconstruction_renders_unfilled, nrow=5), os.path.join(out_base_dir,"reconstruction_renders_unfilled.png"))
+print("Computing MSE...")
+mse_filled = torch.nn.functional.mse_loss(torch.stack(reconstruction_renders_filled), torch.stack(original_images_filled))
+mse_unfilled = torch.nn.functional.mse_loss(torch.stack(reconstruction_renders_unfilled), torch.stack(original_images))
+
+print(f"mse_filled: {mse_filled}")
+print(f"mse_unfilled: {mse_unfilled}")
+
+save_image(make_grid(original_images_filled, nrow=25), os.path.join(out_base_dir,"original_images_filled.png"))
+save_image(make_grid(original_images, nrow=25), os.path.join(out_base_dir,"original_images_unfilled.png"))
+save_image(make_grid(sample_renders_filled, nrow=25), os.path.join(out_base_dir,"sample_renders_filled.png"))
+save_image(make_grid(reconstruction_renders_filled, nrow=25), os.path.join(out_base_dir,"reconstruction_renders_filled.png"))
+save_image(make_grid(sample_renders_unfilled, nrow=25), os.path.join(out_base_dir,"sample_renders_unfilled.png"))
+save_image(make_grid(reconstruction_renders_unfilled, nrow=25), os.path.join(out_base_dir,"reconstruction_renders_unfilled.png"))
 
 print("computing FID...")
 fid_samples_filled = compute_fid_score(sample_renders_filled, original_images_filled, device)
@@ -238,20 +301,23 @@ print(f"fid_reconstructions_filled: {fid_reconstructions_filled}")
 print(f"fid_samples_unfilled: {fid_samples_unfilled}")
 print(f"fid_reconstructions_unfilled: {fid_reconstructions_unfilled}")
 
-get_prompt_template = lambda x: f"Black and white icon of star, vector art"
 print("computing CLIP score...")
-clip_samples_filled_prompt = compute_clip_score(sample_renders_filled, [get_prompt_template(idx) for idx in random_idx], device, do_rescale=False)
-clip_reconstructions_filled_prompt = compute_clip_score(reconstruction_renders_filled, [get_prompt_template(idx) for idx in random_idx], device, do_rescale=False)
-clip_samples_unfilled_prompt = compute_clip_score(sample_renders_unfilled, [get_prompt_template(idx) for idx in random_idx], device, do_rescale=False)
-clip_reconstructions_unfilled_prompt = compute_clip_score(reconstruction_renders_unfilled, [get_prompt_template(idx) for idx in random_idx], device, do_rescale=False)
+if dataset=="icons":
+    clip_samples_filled_prompt = compute_clip_score(sample_renders_filled, [get_prompt_template(class_name) for idx in random_idx], device, do_rescale=False)
+    clip_reconstructions_filled_prompt = compute_clip_score(reconstruction_renders_filled, [get_prompt_template(class_name) for idx in random_idx], device, do_rescale=False)
+    clip_samples_unfilled_prompt = compute_clip_score(sample_renders_unfilled, [get_prompt_template(class_name) for idx in random_idx], device, do_rescale=False)
+    clip_reconstructions_unfilled_prompt = compute_clip_score(reconstruction_renders_unfilled, [get_prompt_template(class_name) for idx in random_idx], device, do_rescale=False)
+else:
+    clip_samples_filled_prompt, clip_reconstructions_filled_prompt, clip_samples_unfilled_prompt, clip_reconstructions_unfilled_prompt = -1, -1, -1, -1
+clip_samples_filled_class = compute_clip_score(sample_renders_filled, [class_name for idx in random_idx], device, do_rescale=False)
+clip_reconstructions_filled_class = compute_clip_score(reconstruction_renders_filled, [class_name for idx in random_idx], device, do_rescale=False)
+clip_samples_unfilled_class = compute_clip_score(sample_renders_unfilled, [class_name for idx in random_idx], device, do_rescale=False)
+clip_reconstructions_unfilled_class = compute_clip_score(reconstruction_renders_unfilled, [class_name for idx in random_idx], device, do_rescale=False)
 
-clip_samples_filled_class = compute_clip_score(sample_renders_filled, ["star" for idx in random_idx], device, do_rescale=False)
-clip_reconstructions_filled_class = compute_clip_score(reconstruction_renders_filled, ["star" for idx in random_idx], device, do_rescale=False)
-clip_samples_unfilled_class = compute_clip_score(sample_renders_unfilled, ["star" for idx in random_idx], device, do_rescale=False)
-clip_reconstructions_unfilled_class = compute_clip_score(reconstruction_renders_unfilled, ["star" for idx in random_idx], device, do_rescale=False)
+# clip_white_image_baseline = compute_clip_score([torch.ones(3,480,480) for idx in random_idx], ["star" for idx in random_idx], device, do_rescale=False)
+# clip_black_image_baseline = compute_clip_score([torch.zeros(3,480,480) for idx in random_idx], ["star" for idx in random_idx], device, do_rescale=False)
 
-clip_white_image_baseline = compute_clip_score([torch.ones(3,480,480) for idx in random_idx], ["star" for idx in random_idx], device, do_rescale=False)
-clip_black_image_baseline = compute_clip_score([torch.zeros(3,480,480) for idx in random_idx], ["star" for idx in random_idx], device, do_rescale=False)
+clip_white_image_baseline, clip_black_image_baseline = -1, -1
 
 print(f"clip_samples_filled_prompt: {clip_samples_filled_prompt}")
 print(f"clip_reconstructions_filled_prompt: {clip_reconstructions_filled_prompt}")
@@ -268,19 +334,28 @@ print(f"clip_black_image_baseline: {clip_black_image_baseline}")
 
 with open(os.path.join(out_base_dir, "im2vec_results.txt"), "w") as f:
     f.write(f"num_samples: {len(random_idx)}\n")
+    f.write(f"used dataset: {dataset}\n")
+    f.write(f"class for clip: {class_name}\n")
+    f.write(f"prompt template: {get_prompt_template('X')}\n\n")
+
+    f.write(f"mse_recons_filled: \t{mse_filled}\n")
+    f.write(f"mse_recons_unfilled: \t{mse_unfilled}\n")
     f.write(f"fid_samples_filled: \t{fid_samples_filled}\n")
-    f.write(f"fid_reconstructions_filled: \t{fid_reconstructions_filled}\n")
     f.write(f"fid_samples_unfilled: \t{fid_samples_unfilled}\n")
+    f.write(f"fid_reconstructions_filled: \t{fid_reconstructions_filled}\n")
     f.write(f"fid_reconstructions_unfilled: \t{fid_reconstructions_unfilled}\n")
     f.write(f"clip_samples_filled_prompt: \t{clip_samples_filled_prompt}\n")
-    f.write(f"clip_reconstructions_filled_prompt: \t{clip_reconstructions_filled_prompt}\n")
     f.write(f"clip_samples_unfilled_prompt: \t{clip_samples_unfilled_prompt}\n")
+    f.write(f"clip_reconstructions_filled_prompt: \t{clip_reconstructions_filled_prompt}\n")
     f.write(f"clip_reconstructions_unfilled_prompt: \t{clip_reconstructions_unfilled_prompt}\n")
     f.write(f"clip_samples_filled_class: \t{clip_samples_filled_class}\n")
-    f.write(f"clip_reconstructions_filled_class: \t{clip_reconstructions_filled_class}\n")
     f.write(f"clip_samples_unfilled_class: \t{clip_samples_unfilled_class}\n")
-    f.write(f"clip_reconstructions_unfilled_class: \t{clip_reconstructions_unfilled_class}\n")
+    f.write(f"clip_reconstructions_filled_class: \t{clip_reconstructions_filled_class}\n")
+    f.write(f"clip_reconstructions_unfilled_class: \t{clip_reconstructions_unfilled_class}\n\n")
     f.write(f"clip_white_image_baseline: \t{clip_white_image_baseline}\n")
     f.write(f"clip_black_image_baseline: \t{clip_black_image_baseline}\n")
 
+# also write config:
+with open(os.path.join(out_base_dir, "im2vec_config.yaml"), "w") as f:
+    yaml.dump(im2vec_config, f)
 print("done")

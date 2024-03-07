@@ -94,16 +94,21 @@ class VQDataset(Dataset):
                 fraction_of_iconshop_chatgpt_inputs:float= 0.0,
                  shuffle_vq_order:bool=True,
                  use_pre_computed_text_tokens_only: bool=False,
-                 train:bool = True):
+                 train:bool = True,
+                 subset:str=None,):
         super(VQDataset, self).__init__()
 
         self.split = pd.read_csv(csv_path)
         self.train = train
+        self.subset = subset
 
         self.context_length = context_length
         self.min_context_length = min_context_length
 
         sum_of_fractions = fraction_of_class_only_inputs + fraction_of_blank_inputs + fraction_of_strokenuwa_inputs + fraction_of_iconshop_chatgpt_inputs if train else 0.0
+        if subset is not None:
+            assert subset in self.split["class"].unique(), f"Subset {subset} not found in the dataset."
+            self.split = self.split[self.split["class"] == subset].reset_index(drop=True)
         assert dataset in ["figr8", "fonts"], f"Dataset must be either 'figr8' or 'fonts', got {dataset}."
         assert sum_of_fractions <= 1, f"All fractions must be less or equal to 1, got {sum_of_fractions}."
 
@@ -148,9 +153,8 @@ class VQDataset(Dataset):
         numpy_array = np.load(vq_token_npy_path)
         self.vq_numpy_array = np.split(numpy_array, np.where(numpy_array == self.bos_token)[0])[1:]
 
-        if not len(self.vq_numpy_array) == len(self.split):
+        if not len(self.vq_numpy_array) == len(self.split) and self.subset is None:
             print(f"[WARNING] Number of samples in the numpy array and the csv file do not match. Numpy array has {len(self.vq_numpy_array)} samples, csv has {len(self.split)} samples.")
-            input("Want to continue? Press any button.")
         
         if train is None:
             self.split = self.split[self.split["split"] == "test"].reset_index(drop=True)
@@ -281,6 +285,7 @@ class VQDataModule(LightningDataModule):
         fraction_of_iconshop_chatgpt_inputs: float = 0.0,
         shuffle_vq_order:bool=False,
         use_pre_computed_text_tokens_only: bool=False,
+        subset:str=None,
         **kwargs,
     ):
         super().__init__()
@@ -301,6 +306,7 @@ class VQDataModule(LightningDataModule):
         self.fraction_of_iconshop_chatgpt_inputs = fraction_of_iconshop_chatgpt_inputs
         self.shuffle_vq_order = shuffle_vq_order
         self.use_pre_computed_text_tokens_only = use_pre_computed_text_tokens_only
+        self.subset = subset
 
 
     def setup(self, stage: Optional[str] = None) -> None:
@@ -322,6 +328,7 @@ class VQDataModule(LightningDataModule):
                 fraction_of_strokenuwa_inputs=self.fraction_of_strokenuwa_inputs,
                 shuffle_vq_order = self.shuffle_vq_order,
                 use_pre_computed_text_tokens_only = self.use_pre_computed_text_tokens_only,
+                subset=self.subset,
             )
 
         if stage is None or stage == "val":
@@ -339,6 +346,7 @@ class VQDataModule(LightningDataModule):
                 fraction_of_strokenuwa_inputs=self.fraction_of_strokenuwa_inputs,
                 shuffle_vq_order = self.shuffle_vq_order,
                 use_pre_computed_text_tokens_only = self.use_pre_computed_text_tokens_only,
+                subset=self.subset,
             )
         if stage is None or stage == "test":
             self.test_dataset = VQDataset(
@@ -355,6 +363,7 @@ class VQDataModule(LightningDataModule):
                 fraction_of_strokenuwa_inputs=self.fraction_of_strokenuwa_inputs,
                 shuffle_vq_order = self.shuffle_vq_order,
                 use_pre_computed_text_tokens_only = self.use_pre_computed_text_tokens_only,
+                subset=self.subset,
             )
 
     #       ===============================================================
@@ -423,6 +432,7 @@ class GlyphazznStage1Dataset(Dataset):
                  max_shapes_per_svg: int = 64,
                  use_single_paths:bool = False,
                  return_index = False,
+                 subset_class:str=None,
                  **kwargs):
         super(GlyphazznStage1Dataset, self)
         print(f"[INFO] These keywords were provided in GlyphazznStage1Dataset but are not used: {kwargs.keys()}")
@@ -436,6 +446,7 @@ class GlyphazznStage1Dataset(Dataset):
         self.train = train
         self.use_single_paths = use_single_paths
         self.return_index = return_index
+        self.subset_class = subset_class
         print("[GlyphazznStage1Dataset] loading df...")
 
         self.df = pd.read_csv(csv_path)
@@ -448,6 +459,9 @@ class GlyphazznStage1Dataset(Dataset):
                 self.df = self.df[self.df["split"] == "train"].reset_index(drop=True)
             else:
                 self.df = self.df[self.df["split"] == "val"].reset_index(drop=True)
+
+        if subset_class is not None:
+            self.df = self.df[self.df["class"] == subset_class].reset_index(drop=True)
 
     def crop_path_into_segments(self, path:Path, length:float = 5.):
         """
@@ -613,7 +627,8 @@ class GlyphazznStage1Datamodule(LightningDataModule):
                 stroke_width=self.stroke_width,
                 max_shapes_per_svg=self.max_shapes_per_svg,
                 use_single_paths=self.use_single_paths,
-                return_index = self.return_index
+                return_index = self.return_index,
+                subset_class=self.subset
             )
 
         if stage is None or stage == "val":
@@ -626,7 +641,8 @@ class GlyphazznStage1Datamodule(LightningDataModule):
                 stroke_width=self.stroke_width,
                 max_shapes_per_svg=self.max_shapes_per_svg,
                 use_single_paths=self.use_single_paths,
-                return_index = self.return_index
+                return_index = self.return_index,
+                subset_class=self.subset
             )
 
         if stage is None or stage == "test":
@@ -639,7 +655,8 @@ class GlyphazznStage1Datamodule(LightningDataModule):
                 stroke_width=self.stroke_width,
                 max_shapes_per_svg=self.max_shapes_per_svg,
                 use_single_paths=self.use_single_paths,
-                return_index = self.return_index
+                return_index = self.return_index,
+                subset_class=self.subset
             )
 
     #       ===============================================================
@@ -1069,6 +1086,7 @@ class GenericRasterizedSVGDataset(Dataset):
                  channels:int = 3,
                  fill:bool = True,
                  stroke_width:float = 0.4,
+                 subset:str=None,
                  **kwargs) -> None:
         super(GenericRasterizedSVGDataset).__init__()
 
@@ -1081,7 +1099,7 @@ class GenericRasterizedSVGDataset(Dataset):
         if "subset" in kwargs:
             self.subset = kwargs["subset"]
         else:
-            self.subset = None
+            self.subset = subset
 
         self.df = pd.read_csv(self.csv_path)
         self.class2idx = {class_name: idx for idx, class_name in enumerate(self.df["class"].unique())}
@@ -1214,9 +1232,17 @@ class GenericRasterDataset(Dataset):
         self.channels = channels
 
         self.df = pd.read_csv(self.csv_path)
+        # mapping of legacy splitting
+        if "held_back" in self.df.split.unique():
+            self.df.loc[self.df["split"] == "test", "split"] = "val"
+            self.df.loc[self.df["split"] == "held_back", "split"] = "test"
         self.class2idx = {class_name: idx for idx, class_name in enumerate(self.df["class"].unique())}
-        self.df = self.df[self.df["split"] == ("train" if self.train else "test")].reset_index(drop=True)
-
+        if train is None:
+            split = "test"
+        else:
+            split = "train" if train else "val"
+        self.df = self.df[self.df["split"] == split].reset_index(drop=True)
+        self.split = split
         self.regular_transforms = transforms.Compose([
             transforms.Resize((self.img_size, self.img_size)),
             transforms.ToTensor()
@@ -1275,6 +1301,13 @@ class GenericRasterDatamodule(LightningDataModule):
         self.val_dataset = GenericRasterDataset(
             self.csv_path,
             train=False,
+            img_size=self.img_size,
+            invert=self.invert,
+            channels=self.channels
+        )
+        self.test_dataset = GenericRasterDataset(
+            self.csv_path,
+            train=None,
             img_size=self.img_size,
             invert=self.invert,
             channels=self.channels

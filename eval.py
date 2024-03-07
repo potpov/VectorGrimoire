@@ -35,7 +35,7 @@ def map_wand_config(config):
             new_config[k] = v["value"]
     return new_config
 
-def load_stage2_model(config_path, ckpt_path, device,dataset:str = None, test_batch_size: int = 128):
+def load_stage2_model(config_path, ckpt_path, device,dataset:str = None, test_batch_size: int = 128,subset:str = None):
     with open(config_path, 'r') as file:
         try:
             config = yaml.safe_load(file)
@@ -88,8 +88,10 @@ def load_stage2_model(config_path, ckpt_path, device,dataset:str = None, test_ba
 
 
     model = model.eval().to(device)
+    for param in model.parameters():
+        param.requires_grad = False
     text_only_tokenizer = VQTokenizer(None, config["data_params"]["width"], 1, "bert-base-uncased", use_text_encoder_only=True, codebook_size=tokenizer.codebook_size)
-    data = VQDataModule(tokenizer = text_only_tokenizer, **config["data_params"], context_length=config['model_params']['max_seq_len'], test_batch_size = test_batch_size)
+    data = VQDataModule(tokenizer = text_only_tokenizer, **config["data_params"], context_length=config['model_params']['max_seq_len'], test_batch_size = test_batch_size, subset=subset)
     data.setup(stage="test")
     return model, vq_model, tokenizer, data, config
 
@@ -200,6 +202,7 @@ def compute_clip_score(generated_images:List, captions:List, device, model_str:s
 
     return metric.compute()
 
+@torch.no_grad()
 def benchmark_stage2_sgamo(config_path:str, 
                            ckpt_path:str, 
                            dataset:str, 
@@ -214,6 +217,7 @@ def benchmark_stage2_sgamo(config_path:str,
                            device, 
                            temperature:float = 0.0,
                            clip_model = "openai/clip-vit-base-patch32",
+                           subset:str=None,
                            **kwargs):
     print("received unused arguments: ", kwargs)
     if not os.path.exists(out_dir):
@@ -222,7 +226,7 @@ def benchmark_stage2_sgamo(config_path:str,
         print(f"Warning: {out_dir} already exists. Overwriting files...")
 
     print("Loading stage2 model...")
-    model, vq_model, tokenizer, data, config = load_stage2_model(config_path, ckpt_path, device, dataset=dataset, test_batch_size=test_batch_size)
+    model, vq_model, tokenizer, data, config = load_stage2_model(config_path, ckpt_path, device, dataset=dataset, test_batch_size=test_batch_size,subset=subset)
 
     print("Generating test set...")
     generated_vq_tokens, prompts = generate_test_set_stage2(model, tokenizer, data.test_dataloader(), vq_context = vq_context, temperature = temperature, device = device, n=num_batches)
@@ -252,11 +256,12 @@ def benchmark_stage2_sgamo(config_path:str,
                                     train=None,
                                     fill=False,
                                     img_size=480,
-                                    stroke_width=stroke_width,)
+                                    stroke_width=stroke_width,
+                                    subset=subset)
     
     print("Loading rasterized GT images...")
     random.seed(42)
-    indices = random.sample(range(len(rasterized_ds)), num_real_images)
+    indices = random.sample(range(len(rasterized_ds)), min(num_real_images, len(rasterized_ds)))
     real_imgs = []
     for i in tqdm(indices):
         real_imgs.append(rasterized_ds[i][0])
@@ -291,7 +296,10 @@ def benchmark_stage2_sgamo(config_path:str,
         # f.write(f"Black baseline FID: {black_baseline_fid_score}\n")
 
     print("Computing CLIP scores...")
-    get_prompt_template = lambda x: f"Black and white icon of {x}, vector art"
+    if dataset == "fonts":
+        get_prompt_template = lambda x: f"{x}"
+    else:
+        get_prompt_template = lambda x: f"Black and white icon of {x}, vector graphic"
     clip_adjusted_prompts = [get_prompt_template(x) for x in flattened_prompts]
     unfixed_clip_score = compute_clip_score(unfixed_renderings, flattened_prompts, device, model_str = clip_model)
     pc_fixed_clip_score = compute_clip_score(pc_fixed_renderings, flattened_prompts, device, model_str = clip_model)
@@ -354,6 +362,8 @@ def benchmark_vsq_stage1(out_base_dir,
                          max_num_svgs,
                          device,
                          clip_model = "openai/clip-vit-base-patch32",
+                         subset:str = None,
+                         test_batch_size:int=32,
                          **kwargs):
     print("received unused arguments: ", kwargs)
     with open(config_path, 'r') as file:
@@ -368,13 +378,16 @@ def benchmark_vsq_stage1(out_base_dir,
 
     state_dict = torch.load(ckpt_path, map_location=device)["state_dict"]
     model.load_state_dict({k.replace("model.", ""): v for k, v in state_dict.items()})
+    for param in model.parameters():
+        param.requires_grad = False
 
-    dm = GlyphazznStage1Datamodule(**config['data_params'])
+    config["data_params"]["test_batch_size"] = test_batch_size
+    dm = GlyphazznStage1Datamodule(**config['data_params'],subset=subset)
     dm.setup(stage="test")
     dataset = dm.test_dataset
     stroke_scale_factor = (dataset.individual_max_length+2) * config["data_params"]["stroke_width"] / 72
     random.seed(42)
-    sample_idxs = random.sample(range(len(dataset)), num_samples)
+    sample_idxs = random.sample(range(len(dataset)), min(num_samples,len(dataset)))
 
     svg_save_dir = os.path.join(out_base_dir, "svgs")
     for subfolder in ["gt", "recons", "pi", "pc"]:
@@ -392,12 +405,14 @@ def benchmark_vsq_stage1(out_base_dir,
 
             # Reconstruct the SVG drawing
             patches, labels, positions, description = dataset._get_full_item(idx)
+            if patches.shape[0] > 512:
+                continue
             descriptions.append(description)
             patches = patches.to(device)
             positions = positions.to(device)
             recons_drawing, _, shapes, stroke_width_predictions = model.reconstruct(patches, positions, dataset.individual_max_length +2, dataset.stroke_width, rendered_w=w, return_shapes=True)
             stroke_width_predictions = (stroke_width_predictions * stroke_scale_factor).flatten().tolist()
-            # FIXME use real stroke width preds instead of dataset.stroke_width, this might be happening as diffvg uses stroke width differently
+            # TODO use real stroke width preds instead of dataset.stroke_width, this might be happening as diffvg uses stroke width differently
             stroke_width_predictions = [dataset.stroke_width] * len(stroke_width_predictions)
             pi_fixed_pos = min_dist_fix(shapes.detach().cpu(), method="min_dist_interpolate", max_dist=4.5)
             extra_strokes = [np.mean(stroke_width_predictions)] * (len(pi_fixed_pos) - len(shapes))
@@ -437,16 +452,29 @@ def benchmark_vsq_stage1(out_base_dir,
         f.write(f"FID pi: {fid_pi}\n")
         f.write(f"FID pc: {fid_pc}\n")
 
+    get_prompt_template = lambda x: f"Black and white icon of {x}, vector art"
+    clip_adjusted_prompts = [get_prompt_template(x) for x in descriptions]
+
     print("Computing CLIP score...")
     clip_score_gt = compute_clip_score(all_gt_rasters, descriptions, device, model_str=clip_model)
     clip_score_recons = compute_clip_score(all_recons_rasters, descriptions, device, model_str=clip_model)
     clip_score_pi = compute_clip_score(all_pi_rasters, descriptions, device, model_str=clip_model)
     clip_score_pc = compute_clip_score(all_pc_rasters, descriptions, device, model_str=clip_model)
+    
+    clip_adjusted_score_gt = compute_clip_score(all_gt_rasters, clip_adjusted_prompts, device, model_str=clip_model)
+    clip_adjusted_score_recons = compute_clip_score(all_recons_rasters, clip_adjusted_prompts, device, model_str=clip_model)
+    clip_adjusted_score_pi = compute_clip_score(all_pi_rasters, clip_adjusted_prompts, device, model_str=clip_model)
+    clip_adjusted_score_pc = compute_clip_score(all_pc_rasters, clip_adjusted_prompts, device, model_str=clip_model)
 
     print(f"CLIP score gt: {clip_score_gt}")
     print(f"CLIP score recons: {clip_score_recons}")
     print(f"CLIP score pi: {clip_score_pi}")
     print(f"CLIP score pc: {clip_score_pc}")
+
+    print(f"CLIP adjusted score gt: {clip_adjusted_score_gt}")
+    print(f"CLIP adjusted score recons: {clip_adjusted_score_recons}")
+    print(f"CLIP adjusted score pi: {clip_adjusted_score_pi}")
+    print(f"CLIP adjusted score pc: {clip_adjusted_score_pc}")
 
     with open(os.path.join(out_base_dir, "results_clip.txt"), "w+") as f:
         f.write(f"num_samples: {num_samples}\n")
@@ -454,9 +482,16 @@ def benchmark_vsq_stage1(out_base_dir,
         f.write(f"CLIP score recons: {clip_score_recons}\n")
         f.write(f"CLIP score pi: {clip_score_pi}\n")
         f.write(f"CLIP score pc: {clip_score_pc}\n")
+        f.write(f"CLIP adjusted score gt: {clip_adjusted_score_gt}\n")
+        f.write(f"CLIP adjusted score recons: {clip_adjusted_score_recons}\n")
+        f.write(f"CLIP adjusted score pi: {clip_adjusted_score_pi}\n")
+        f.write(f"CLIP adjusted score pc: {clip_adjusted_score_pc}\n")
 
     with open(os.path.join(out_base_dir, "descriptions.txt"), "w+", encoding="utf-8") as f:
         f.write("\n".join(descriptions))
+
+    with open(os.path.join(out_base_dir, "clip_adjusted_prompts.txt"), "w+", encoding="utf-8") as f:
+        f.write("\n".join(clip_adjusted_prompts))
 
     print("Computing MSE...")
     mse_recons = torch.nn.functional.mse_loss(torch.stack(all_recons_rasters), torch.stack(all_gt_rasters)).item()
@@ -502,7 +537,7 @@ def main(eval_config_path, override:bool=False):
                 yaml.dump(v, file)
 
             for vq_context in tqdm(v["vq_contexts"]):
-                out_dir = os.path.join(v["out_base_dir"],f"vq_context_{vq_context}_t0")
+                out_dir = os.path.join(v["out_base_dir"],f"vq_context_{vq_context}")
                 benchmark_stage2_sgamo(**v,
                                         vq_context = vq_context,
                                        out_dir=out_dir,
