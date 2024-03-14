@@ -209,10 +209,26 @@ def stroke_to_path(my_tensor: Tensor):
         all_paths.append(stroke_points_to_bezier(my_tensor[start_idx:end_idx]))
     return Path(*all_paths)
 
-def shapes_to_drawing(shapes:Tensor, stroke_width:float|List, w=128, num_strokes_to_paint:int = 0) -> Drawing:
+def shapes_to_drawing(shapes:Tensor, stroke_width:float|List, w=128, num_strokes_to_paint:int = 0, linecap="round", linejoin="round") -> Drawing:
     """
-    expects shapes to be in shape (n, 4, 2)
+    expects shapes to be in shape (n, 1+3*num_segments, 2)
     """
+    assert linecap in ["round", "butt", "square"], "linecap must be either 'round', 'butt' or 'square'."
+    assert linejoin in ["round", "bevel", "miter"], "linejoin must be either 'round', 'bevel' or 'miter'."
+
+    base_attribute = {
+        "fill": "none",
+        "fill-opacity": "1.0",
+        "filling": "0",
+        "stroke":"black",
+        "stroke-width":"1",
+        "stroke-linecap":linecap,
+        "stroke-linejoin" : linejoin
+
+    }
+    if shapes.mean() < 2.0:
+        shapes = shapes * 72
+    assert shapes.mean() > 1.0 and shapes.mean() < 72.0, "shapes should be already scaled in range 0. - 72."
     all_shapes = []
     for shape in shapes:
         all_shapes.append(stroke_to_path(shape))
@@ -223,7 +239,13 @@ def shapes_to_drawing(shapes:Tensor, stroke_width:float|List, w=128, num_strokes
         stroke_widths = [stroke_width] * len(all_shapes)
     elif isinstance(stroke_width, list):
         stroke_widths = stroke_width
-    drawing = disvg(all_shapes, stroke_widths=stroke_widths, colors=colors, paths2Drawing=True, viewbox=f"0 0 72 72", dimensions=(w, w))  # I think the 72 comes from the simplified svg files
+    all_attributes = []
+    for i, shape in enumerate(all_shapes):
+        attributes = base_attribute.copy()
+        attributes["stroke-width"] = f"{stroke_widths[i]}"
+        attributes["stroke"] = colors[i]
+        all_attributes.append(attributes)
+    drawing = disvg(all_shapes, attributes=all_attributes, paths2Drawing=True, viewbox=f"0 0 72 72", dimensions=(w, w))  # I think the 72 comes from the simplified svg files
     return drawing
 
 def fig2img(fig):
