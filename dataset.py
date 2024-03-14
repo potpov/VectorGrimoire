@@ -414,7 +414,7 @@ class GlyphazznStage1Dataset(Dataset):
         - channels: number of channels for the rasterized images
         - width: width/height of the rasterized images
         - train: whether to use the train or test split
-        - subset: "all", "numbers", "letters", "lowercase", or "uppercase"
+        - subset:
         - individual_min_length: minimum length of a path segment to qualify for being a single shape layer
         - individual_max_length: maximum length of a path segment, everything longer than this will be cropped into multiple segments
         - stroke_width: stroke width for rasterization
@@ -460,7 +460,7 @@ class GlyphazznStage1Dataset(Dataset):
             else:
                 self.df = self.df[self.df["split"] == "val"].reset_index(drop=True)
 
-        if subset_class is not None:
+        if subset_class is not None and subset_class in self.df["class"].unique():
             self.df = self.df[self.df["class"] == subset_class].reset_index(drop=True)
 
     def crop_path_into_segments(self, path:Path, length:float = 5.):
@@ -591,7 +591,7 @@ class GlyphazznStage1Datamodule(LightningDataModule):
         max_shapes_per_svg:int=64,
         num_workers: int = 0,
         stroke_width: float = 0.3,
-        subset:str = "all",
+        subset:str = None,
         use_single_paths:bool = False,
         return_index = False,
         **kwargs,
@@ -1222,6 +1222,7 @@ class GenericRasterDataset(Dataset):
                  img_size:int = 128,
                  channels:int=3,
                  invert:bool = True,
+                 subset:str|List=None,
                  **kwargs) -> None:
         super(GenericRasterDataset).__init__()
 
@@ -1230,6 +1231,7 @@ class GenericRasterDataset(Dataset):
         self.invert = invert
         self.img_size = img_size
         self.channels = channels
+        self.subset = subset
 
         self.df = pd.read_csv(self.csv_path)
         # mapping of legacy splitting
@@ -1242,6 +1244,12 @@ class GenericRasterDataset(Dataset):
         else:
             split = "train" if train else "val"
         self.df = self.df[self.df["split"] == split].reset_index(drop=True)
+        if self.subset is not None:
+            print(f"Using subset {self.subset}")
+            if isinstance(self.subset, list):
+                self.df = self.df[self.df["class"].isin(self.subset)].reset_index(drop=True)
+            else:
+                self.df = self.df[self.df["class"] == self.subset].reset_index(drop=True)
         self.split = split
         self.regular_transforms = transforms.Compose([
             transforms.Resize((self.img_size, self.img_size)),
@@ -1277,6 +1285,7 @@ class GenericRasterDatamodule(LightningDataModule):
                 val_batch_size:int = 32,
                 num_workers:int = 4,
                  invert:bool = True,
+                 subset:str|List=None,
                  **kwargs) -> None:
         
         super().__init__()
@@ -1288,6 +1297,7 @@ class GenericRasterDatamodule(LightningDataModule):
         self.val_batch_size = val_batch_size
         self.num_workers = num_workers
         self.channels = channels
+        self.subset = subset
 
     def setup(self, stage: Optional[str] = None) -> None:
         self.train_dataset = GenericRasterDataset(
@@ -1295,7 +1305,8 @@ class GenericRasterDatamodule(LightningDataModule):
             train=True,
             img_size=self.img_size,
             invert=self.invert,
-            channels=self.channels
+            channels=self.channels,
+            subset=self.subset
         )
 
         self.val_dataset = GenericRasterDataset(
@@ -1303,14 +1314,16 @@ class GenericRasterDatamodule(LightningDataModule):
             train=False,
             img_size=self.img_size,
             invert=self.invert,
-            channels=self.channels
+            channels=self.channels,
+            subset=self.subset
         )
         self.test_dataset = GenericRasterDataset(
             self.csv_path,
             train=None,
             img_size=self.img_size,
             invert=self.invert,
-            channels=self.channels
+            channels=self.channels,
+            subset=self.subset
         )
     def train_dataloader(self) -> DataLoader:
         return DataLoader(
