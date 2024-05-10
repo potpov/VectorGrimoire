@@ -27,6 +27,9 @@ def invert(thread_index, block):
             img = cv2.imread(os.path.join(ROOT_DIR, "Data", png_path))
             # img = 255 - img
             w, h, _ = img.shape
+            # add a border to ensure outline contours are not lost for shapes that touch the borders
+            border_size = 5
+            img = cv2.copyMakeBorder(img, border_size, border_size, border_size, border_size, cv2.BORDER_CONSTANT, value=(0, 0, 0))
             img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             # ret, thresh = cv2.threshold(img, 25, 255, 0)
             # contours, hierarchy = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)

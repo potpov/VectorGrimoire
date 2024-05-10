@@ -9,16 +9,70 @@ import os
 from torchvision.utils import make_grid
 from torchvision.transforms import Resize
 from svgwrite import Drawing
-from svgpathtools import disvg, CubicBezier
+from svgpathtools import disvg, CubicBezier, Line
 import cairosvg
 from PIL import Image
 from io import BytesIO
 from torchvision.transforms import ToTensor
 import re
+import matplotlib.colors as mcolors
 
-def svg_file_path_to_tensor(path, permuted = True, plot=False):
+def get_color_gradient(num_colors: int, start_color="red", end_color="blue"):
+    gradient = mcolors.LinearSegmentedColormap.from_list('gradient', [start_color, end_color])
+    colors = [gradient(i / num_colors) for i in range(num_colors)]
+    hex_colors = [mcolors.rgb2hex(color) for color in colors]
+    return hex_colors
+
+def get_rendered_svg_with_gradient(svg_path):
+    base_attribute = {
+        "fill": "none",
+        "fill-opacity": "1.0",
+        "filling": "0",
+        "stroke":"black",
+        "stroke-width":"1",
+    }
+    indicator_attribute = {
+        "fill": "none",
+        "fill-opacity": "1.0",
+        "filling": "0",
+        "stroke":"black",
+        "stroke-width":"0.5",
+        "stroke-opacity" : "0.5",
+    }
+    paths, attributes, svg_attributes = svg2paths2(svg_path)
+    indicators = [Line(x[0].start,end=complex(0.,0.)) for x in paths]
+    flattened_paths = get_flattened_paths(paths)
+
+    num_paths = len(flattened_paths)
+    gradient = get_color_gradient(num_paths, start_color = "red",end_color="black")
+    new_attributes=[]
+    for i in range(num_paths):
+        # Calculate the color for the current path based on the gradient
+        color = gradient[i]
+
+        # Create a separate attribute dictionary for the current path
+        path_attribute = base_attribute.copy()
+        path_attribute['stroke'] = color
+
+        # Add the attribute dictionary to the list
+        new_attributes.append(path_attribute)
+
+    img = drawing_to_tensor(disvg(flattened_paths + indicators, attributes=new_attributes + [indicator_attribute]*len(indicators), paths2Drawing=True))
+    # Use the attributes list when calling disvg
+    return img
+
+def svg_file_path_to_tensor(path, permuted = False, plot=False, stroke_width=0.5, filling:bool=False,image_size:int=224):
     paths, attributes, svg_attributes = svg2paths2(path)
-    return_tensor = raster(disvg(paths, stroke_widths=[0.5]*len(paths),paths2Drawing=True), out_h=224, out_w = 224)
+    for i, attr in enumerate(attributes):
+        attr["stroke_width"] = f"{stroke_width}"
+        attr["fill"] = "black" if filling else "none"
+
+    if "viewbox" in svg_attributes:
+        viewbox = svg_attributes["viewbox"]
+    else:
+        viewbox = None
+    return_tensor = raster(disvg(paths, attributes=attributes,paths2Drawing=True, viewbox=viewbox), out_h=image_size, out_w = image_size)
+
     if permuted:
         return_tensor = return_tensor.permute(1,2,0)
     if plot:
@@ -155,15 +209,43 @@ def stroke_to_path(my_tensor: Tensor):
         all_paths.append(stroke_points_to_bezier(my_tensor[start_idx:end_idx]))
     return Path(*all_paths)
 
-def shapes_to_drawing(shapes:Tensor, stroke_width:float, w=128, num_strokes_to_paint:int = 0) -> Drawing:
+def shapes_to_drawing(shapes:Tensor, stroke_width:float|List, w=128, num_strokes_to_paint:int = 0, linecap="round", linejoin="round") -> Drawing:
     """
-    expects shapes to be in shape (n, 4, 2)
+    expects shapes to be in shape (n, 1+3*num_segments, 2)
     """
+    assert linecap in ["round", "butt", "square"], "linecap must be either 'round', 'butt' or 'square'."
+    assert linejoin in ["round", "bevel", "miter"], "linejoin must be either 'round', 'bevel' or 'miter'."
+
+    base_attribute = {
+        "fill": "none",
+        "fill-opacity": "1.0",
+        "filling": "0",
+        "stroke":"black",
+        "stroke-width":"1",
+        "stroke-linecap":linecap,
+        "stroke-linejoin" : linejoin
+
+    }
+    if shapes.mean() < 2.0:
+        shapes = shapes * 72
+    assert shapes.mean() > 1.0 and shapes.mean() < 72.0, "shapes should be already scaled in range 0. - 72."
     all_shapes = []
     for shape in shapes:
         all_shapes.append(stroke_to_path(shape))
+    if num_strokes_to_paint > len(all_shapes):
+        num_strokes_to_paint = len(all_shapes)
     colors = ["red"] * num_strokes_to_paint + ["black"] * (len(all_shapes) - num_strokes_to_paint)
-    drawing = disvg(all_shapes, stroke_widths=[stroke_width]*len(all_shapes), colors=colors, paths2Drawing=True, viewbox=f"0 0 72 72", dimensions=(w, w))  # I think the 72 comes from the simplified svg files
+    if isinstance(stroke_width, float):
+        stroke_widths = [stroke_width] * len(all_shapes)
+    elif isinstance(stroke_width, list):
+        stroke_widths = stroke_width
+    all_attributes = []
+    for i, shape in enumerate(all_shapes):
+        attributes = base_attribute.copy()
+        attributes["stroke-width"] = f"{stroke_widths[i]}"
+        attributes["stroke"] = colors[i]
+        all_attributes.append(attributes)
+    drawing = disvg(all_shapes, attributes=all_attributes, paths2Drawing=True, viewbox=f"0 0 72 72", dimensions=(w, w))  # I think the 72 comes from the simplified svg files
     return drawing
 
 def fig2img(fig):

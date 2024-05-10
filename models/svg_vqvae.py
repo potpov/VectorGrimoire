@@ -271,7 +271,7 @@ class Vector_VQVAE(nn.Module):
         return result, logging_dict
     
     
-    def forward(self, input: Tensor, logging = False, **kwargs):
+    def forward(self, input: Tensor, logging = False, return_widths = False, **kwargs):
         logging_dict = {}
         encoding = self.encode(input, quantize=False)
         bs = encoding.shape[0]
@@ -299,8 +299,12 @@ class Vector_VQVAE(nn.Module):
         out, decode_logging_dict = self.decode(quantized_inputs)  # for mlp out is [output, scenes, all_points, all_widths]
         reconstructions = out[0]
         all_points = out[2]
+        all_widths = out[3]
         logging_dict = {**logging_dict, **decode_logging_dict, **vq_logging_dict}
-        return [reconstructions, input, all_points, vq_loss], logging_dict
+        if return_widths:
+            return [reconstructions, input, all_points, vq_loss, all_widths], logging_dict
+        else:
+            return [reconstructions, input, all_points, vq_loss], logging_dict
     
     def gaussian_pyramid_loss(self, recons_images: Tensor, gt_images: Tensor, down_sample_steps: int = 3, log_loss: bool = False):
         """
@@ -345,6 +349,7 @@ class Vector_VQVAE(nn.Module):
         mean inner distance is defined as the distance between start and end point of each segment of the path
         """
         inner_dists = []
+        # TODO experiment with quadratic distance here
         for i in range(self.num_segments):
             inner_dist = torch.cdist(points[:,:,i*3,:], points[:,:,(i+1)*3,:])
             inner_dists.append(inner_dist.mean())
@@ -388,7 +393,8 @@ class Vector_VQVAE(nn.Module):
 
         return self.forward(x)[0]
     
-    def reconstruct(self, patches: Tensor, gt_center_positions: Tensor, padded_individual_max_length: float, stroke_width: float, rendered_w = 128.) -> Union[Drawing, Tensor]:
+    @torch.no_grad()
+    def reconstruct(self, patches: Tensor, gt_center_positions: Tensor, padded_individual_max_length: float, stroke_width: float, rendered_w = 128., return_shapes:bool=False) -> Union[Drawing, Tensor]:
         """
         Reconstructs the input patches and uses gt positions to assemble them into a full SVG. Can be used to observe quality degradation of the quantization process.
         TODO currently does not use the predicted stroke width but the GT one.
@@ -403,8 +409,11 @@ class Vector_VQVAE(nn.Module):
             - reconstructed_drawing (Drawing): Reconstructed drawing (use to save svg)
             - rasterized_reconstructions (Tensor): Rasterized reconstructions
         """
-        [reconstructions, input, all_points, vq_loss], logging_dict = self.forward(patches, logging = False)
+        [reconstructions, input, all_points, vq_loss, all_widths], logging_dict = self.forward(patches, logging = False, return_widths=True)
         global_shapes = calculate_global_positions(all_points, padded_individual_max_length, gt_center_positions)[:,0]
         reconstructed_drawing = shapes_to_drawing(global_shapes, stroke_width=stroke_width, w=rendered_w)
         rasterized_reconstructions = svg_string_to_tensor(reconstructed_drawing.tostring())
-        return reconstructed_drawing, rasterized_reconstructions
+        if return_shapes:
+            return reconstructed_drawing, rasterized_reconstructions, global_shapes, all_widths
+        else:
+            return reconstructed_drawing, rasterized_reconstructions

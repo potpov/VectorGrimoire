@@ -15,7 +15,8 @@ import wandb
 from utils import get_rank
 import torch
 from pytorch_lightning.profilers import SimpleProfiler
-
+import pydiffvg
+print(f"[INFO] diffvg running on GPU: {pydiffvg.get_use_gpu()}")
 torch.set_float32_matmul_precision('high')
 
 DATASETMAP = {
@@ -92,7 +93,7 @@ if args.wandb:
         entity=entity,
         mode="disabled" if args.debug else "online",
         resume="must" if "continue_checkpoint" in config["exp_params"] else "allow",
-        id=config["logging_params"]["id"] if "id" in config["logging_params"] else None
+        id=config["logging_params"].get("id")
     )
     if current_process_rank == 0:
         allow_val_change = True if config["logging_params"].get("allow_val_change") else False
@@ -143,12 +144,11 @@ runner = Trainer(
     callbacks=[
         LearningRateMonitor(logging_interval="epoch", log_momentum=True),
         #  LearningRateFinder(early_stop_threshold=None, num_training_steps=200),
-        EarlyStopping("val_loss", 0.005, 10, verbose=True),
+        EarlyStopping("val_loss", 0.005, 15, verbose=True),
         ModelCheckpoint(save_top_k=3,
                         dirpath=os.path.join(config['logging_params']['save_dir'], "checkpoints"),
                         monitor="val_loss",
-                        save_last=True,
-                        every_n_train_steps=1500),
+                        save_last=True),
     ],
     #  overfit_batches=20,
     profiler=profiler,

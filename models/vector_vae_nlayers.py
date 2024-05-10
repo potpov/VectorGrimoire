@@ -112,7 +112,7 @@ class VectorVAEnLayers(VectorVAE):
     def forward(self, input: Tensor, **kwargs) -> List[Tensor]:
         mu, log_var = self.encode(input)
         z = self.reparameterize(mu, log_var)
-        output, control_loss = self.decode_and_composite(z, verbose=False, return_overlap_loss=True, **kwargs)
+        output, control_loss = self.decode_and_composite(z, verbose=False, return_overlap_loss=True, img_size=self.imsize,**kwargs)
         return [output, input, mu, log_var, control_loss]
 
     def hard_composite(self, **kwargs):
@@ -197,7 +197,7 @@ class VectorVAEnLayers(VectorVAE):
 
         wandb.log(logging_dict)
 
-    def decode_and_composite(self, z: Tensor, return_overlap_loss=False, **kwargs):
+    def decode_and_composite(self, z: Tensor, return_overlap_loss=False,return_points=False, img_size:int=128, **kwargs):
         bs = z.shape[0]
         layers = []
         n = len(self.colors)
@@ -207,10 +207,13 @@ class VectorVAEnLayers(VectorVAE):
         outputs = outputs.permute(1, 0, 2)  # [batch size, len, emb dim]
         outputs = outputs[:, :, :self.latent_dim] + outputs[:, :, self.latent_dim:] # aggregate outputs of both RNNs
         z_layers = []
+        all_n_points = []
         for i in range(n):
             shape_output = self.divide_shape(outputs[:, i, :]) # [bs, latent_size] - just a RELU
             shape_latent = self.final_shape_latent(shape_output) # [bs, latent_size] - actual MLP
             all_points = self.decode(shape_latent)#, point_predictor=self.point_predictor[i])
+            if return_points:
+                all_n_points.append(all_points.cpu())
             # if("log_path_length" in kwargs.keys() and self.wandb_logging):
             #     if(kwargs["log_path_length"]):
             #         self.log_path_lengths(all_points*self.imsize, current_shape_idx=i)
@@ -218,9 +221,9 @@ class VectorVAEnLayers(VectorVAE):
             # print(torch.isfinite(all_points).all())
             # import pdb; pdb.set_trace()
             if("verbose" in kwargs):
-                layer = self.raster(all_points, self.colors[i], verbose=kwargs['verbose'], white_background=False)
+                layer = self.raster(all_points, self.colors[i], verbose=kwargs['verbose'], white_background=False, imgsize=img_size)
             else:
-                layer = self.raster(all_points, self.colors[i], white_background=False)
+                layer = self.raster(all_points, self.colors[i], white_background=False,imgsize=img_size)
 
             z_pred = self.z_order(shape_output)
             layers.append(layer)
@@ -230,14 +233,15 @@ class VectorVAEnLayers(VectorVAE):
         if(self.wandb_logging):
             wandb.log({"overlap_loss":loss})
         output = self.composite_fn(layers = layers, z_layers=z_layers)
-
+        if return_points:
+            return all_n_points
         if return_overlap_loss:
         #     overlap_alpha = layers[1][:, 3:4, :, :] + layers[2][:, 3:4, :, :]
         #     loss = F.relu(overlap_alpha - 1).mean()
             return output, loss
         return output
 
-    def generate(self, x: Tensor, **kwargs) -> Tensor:
+    def generate(self, x: Tensor, return_points=False, **kwargs) -> Tensor:
         """
         Given an input image x, returns the reconstructed image
         :param x: (Tensor) [B x C x H x W]
@@ -245,8 +249,19 @@ class VectorVAEnLayers(VectorVAE):
         """
         mu, log_var = self.encode(x)
         z = self.reparameterize(mu, log_var)
-        output = self.decode_and_composite(z, **kwargs) # might want to use verbose keyword here
+        output = self.decode_and_composite(z, return_points=return_points,**kwargs) # might want to use verbose keyword here
         return output  # [:, :3]
+    
+    @torch.no_grad()
+    def multishape_sample(self,n:int,return_points=False,device="cpu", **kwargs) -> Tensor:
+        """
+        Samples n images from the model
+        :param n: (int) number of images to sample
+        :return: (Tensor) [B x C x H x W]
+        """
+        z = torch.randn(n, self.latent_dim).to(device)
+        output = [self.decode_and_composite(z[i].unsqueeze(0), return_points=return_points, **kwargs) for i in range(len(z))]
+        return output
 
     def interpolate(self, x: Tensor, **kwargs) -> Tensor:
         """

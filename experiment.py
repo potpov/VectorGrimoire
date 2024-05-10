@@ -16,7 +16,7 @@ from torch.optim.lr_scheduler import StepLR
 import pandas as pd
 from torchmetrics.functional.multimodal import clip_score
 from tokenizer import VQTokenizer
-
+import torch_optimizer as optim_
 
 class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
     def __init__(self,
@@ -1011,7 +1011,9 @@ class VAEXperiment(pl.LightningModule):
                                             M_N = self.params['kld_weight'],
                                             optimizer_idx=optimizer_idx,
                                             batch_idx = batch_idx,
-                                            log_loss_images = True)
+                                            log_loss_images = False)#was true
+            with torch.no_grad():
+                self.sample_images()
         else:
             results = self.forward(real_img, labels = labels)
             train_loss = self.model.loss_function(*results,
@@ -1054,6 +1056,8 @@ class VAEXperiment(pl.LightningModule):
 
         self.log_dict({f"val_{key}": val for key, val in val_loss.items()}, sync_dist=True, prog_bar=True)
 
+        return val_loss["loss"]
+
         
     def on_validation_end(self) -> None:
         print("Entering on_validation_end.")
@@ -1093,10 +1097,13 @@ class VAEXperiment(pl.LightningModule):
         #                     nrow=5)
 
         try:
-            samples = self.model.sample(num_of_samples,
-                                        self.curr_device,
-                                        labels = test_label)
-            samples = dummy(samples[:,:3,:,:]) # drop the alpha channel for metric calculation
+            print("sampling from model.")
+            samples = self.model.multishape_sample(num_of_samples, return_points=False, device=test_input.device)
+            if not isinstance(samples, Tensor):
+                samples = torch.stack(samples, dim=0)
+            if samples.ndim >4:
+                samples = samples[:,0,:,:,:]
+            samples = dummy(samples[:,:3,:,:]).cpu() # drop the alpha channel for metric calculation
             log_images(samples[:5], samples[5:10], log_key="samples")
             # if(self.logger.save_dir is not None):
             #     vutils.save_image(samples.cpu().data,
@@ -1140,6 +1147,59 @@ class VAEXperiment(pl.LightningModule):
         except Exception as e:
             print(f"[ERROR] at sampling")
             pass
+
+    def _configure_optimizers(self):
+
+        optims = []
+        scheds = []
+        # if self.model.only_auxillary_training:
+        #     print('Learning Rate changed for auxillary training')
+        #     self.params['LR'] = 0.00001
+        param_group_1 = {'params': self.model.parameters(), 'lr': self.lr}
+        param_groups = [param_group_1]
+        if(self.params["weight_decay"] is not None):
+            optimizer = optim.AdamW(param_groups,
+                                lr=self.lr,
+                                weight_decay=self.params['weight_decay'])
+        else:
+            optimizer = optim.Adam(param_groups,
+                                lr=self.lr)
+        optims.append(optimizer)
+        # Check if more than 1 optimizer is required (Used for adversarial training)
+        try:
+            if self.params['LR_2'] is not None:
+                optimizer2 = optim_.AdamP(getattr(self.model,self.params['submodel']).parameters(),
+                                        lr=self.params['LR_2'])
+                optims.append(optimizer2)
+        except:
+            pass
+
+        # scheduler = optim.lr_scheduler.ExponentialLR(optims[0],
+        #                                              gamma = self.params['scheduler_gamma'], last_epoch=450)
+        # scheduler = optim.lr_scheduler.ReduceLROnPlateau(optims[0], 'min', verbose=True, factor=self.params['scheduler_gamma'], min_lr=0.0001, patience=int(self.model.memory_leak_epochs/7))
+        scheduler = optim.lr_scheduler.CyclicLR(optims[0], self.params['LR']*0.1, self.params['LR'], mode='exp_range',
+                                                     gamma = self.params['scheduler_gamma'],cycle_momentum=False)
+        # scheduler = optim.lr_scheduler.OneCycleLR(optims[0], max_lr=self.params['LR'], steps_per_epoch=130, epochs=2000)
+        # scheduler = GradualWarmupScheduler(optims[0], multiplier=1, total_epoch=20,
+        #                                           after_scheduler=scheduler)
+
+        scheds.append({
+         'scheduler': scheduler,
+         'monitor': 'val_loss', # Default: val_loss
+         'interval': 'epoch',
+         'frequency': 1,
+        },)
+
+        # Check if another scheduler is required for the second optimizer
+        try:
+            if self.params['scheduler_gamma_2'] is not None:
+                scheduler2 = optim.lr_scheduler.ExponentialLR(optims[1],
+                                                              gamma = self.params['scheduler_gamma_2'])
+                scheds.append(scheduler2)
+        except:
+            pass
+        print('USING WARMUP SCHEDULER')
+        return optims, scheds
 
     def configure_optimizers(self):
 

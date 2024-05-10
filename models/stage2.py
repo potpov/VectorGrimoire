@@ -64,6 +64,7 @@ class VQ_SVG_Stage2(nn.Module):
         self.patch_idx_range : Tuple[int, int] = tokenizer._get_patch_idx_range()
         self.pos_idx_range : Tuple[int, int] = tokenizer._get_pos_idx_range()
         self.device = device
+        self.tokenizer = tokenizer
 
         self.dim = dim
         self.depth = depth
@@ -181,18 +182,22 @@ class VQ_SVG_Stage2(nn.Module):
         """
         
         assert self.pos_idx_range[0] >= self.patch_idx_range[1], "pos_idx_range must start after patch_idx_range ends"
-        assert vq_tokens.ndim == 2 and vq_tokens.size(0) == 1, "VQ_Tokens must be of shape (1, sequence_length) and contain at least the <BOS> token"
+        # assert vq_tokens.ndim == 2 and vq_tokens.size(0) == 1, "VQ_Tokens must be of shape (1, sequence_length) and contain at least the <BOS> token"
 
-        if (vq_tokens[:, -1] >= self.pos_idx_range[0]).all() and (vq_tokens[:, -1] <= self.pos_idx_range[1]).all():
+        # I'm so sorry for this code but basically this checks if all last tokens are in patch or position range. 
+        # As this op is batched, it could also happen that last tokens are in patch range and some are already finished with EOS, thats why the long conditions
+        if torch.logical_or((vq_tokens[:, -1] >= self.pos_idx_range[0]), (vq_tokens[:, -1] < self.patch_idx_range[0])).all() and torch.logical_or((vq_tokens[:, -1] <= self.pos_idx_range[1]), (vq_tokens[:, -1] < self.patch_idx_range[0])).all():
             required_token = "patch"
-        elif (vq_tokens[:, -1] >= self.patch_idx_range[0]).all() and (vq_tokens[:, -1] <= self.patch_idx_range[1]).all():
+        elif torch.logical_or((vq_tokens[:, -1] >= self.patch_idx_range[0]), (vq_tokens[:, -1] < self.patch_idx_range[0])).all() and torch.logical_or((vq_tokens[:, -1] <= self.patch_idx_range[1]), (vq_tokens[:, -1] < self.patch_idx_range[0])).all():
             required_token = "pos"
         elif (vq_tokens[:, -1] < self.patch_idx_range[0]).all():  # e.g. only <BOS> tokens in input
             required_token = "patch"
         else:
-            raise ValueError("Last tokens in Input must be of the same type (special, patch, or pos).")
+            raise ValueError(f"Check if you're mixing patch and pos tokens at last position {vq_tokens[:, -1]}")
 
         with torch.no_grad():
+            reached_end_mask = torch.logical_or(vq_tokens[:, -1:] == self.special_token_mapping["<EOS>"],
+                                                vq_tokens[:, -1:] == self.special_token_mapping["<PAD>"])
             while vq_tokens.shape[1] < self.max_seq_len:
                 predictions, _ = self.forward(text_tokens, attention_mask ,vq_tokens)
                 logits = predictions[:, -1]
@@ -217,16 +222,17 @@ class VQ_SVG_Stage2(nn.Module):
                     probs = F.softmax(filtered_logits / temperature, dim=-1)
                     sample = torch.multinomial(probs, 1)
                 else:
-                    sample = logits.argmax(dim=-1) # might need keepdim=True
-                # check if the last token is the <EOS> token
-                # append the last token to the input tokens
-                if sample.ndim < 2:
-                    sample = sample.unsqueeze(0)
+                    sample = logits.argmax(dim=-1, keepdim=True)
+
+                sample[reached_end_mask] = self.special_token_mapping["<PAD>"]
+                reached_end_mask = torch.logical_or(reached_end_mask, sample == self.special_token_mapping["<EOS>"])
                 vq_tokens = torch.cat([vq_tokens, sample], dim=1)
-                if sample.item() == self.special_token_mapping["<EOS>"]:
+                if reached_end_mask.all():
                     reason = "EOS token reached"
                     break
-                elif text_tokens.shape[1] + vq_tokens.shape[1] + 2 >= self.max_seq_len:
+                elif vq_tokens.shape[1] + 1 >= self.max_seq_len - text_tokens.shape[1]:
                     reason = "Max sequence length reached"
+                    vq_tokens[~reached_end_mask.squeeze(1),-1] = self.special_token_mapping["<EOS>"]
                     break
+
         return vq_tokens, reason

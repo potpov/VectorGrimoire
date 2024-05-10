@@ -11,7 +11,7 @@ model_params:
 
 data_params:
   dataset: "stage1"  # must be in the DATASETMAP in run.py
-  csv_path: "/scratch2/moritz_data/dafont/full_split.csv"  # root path for CausalSVGDataModule in dataset.py
+  csv_path: "/scratch2/moritz_data/dafont/combined_full_fonts_fixed.csv"  # root path for CausalSVGDataModule in dataset.py
   channels: 3  # use 3
   width: 128
   train_batch_size: 8
