@@ -349,6 +349,7 @@ class Vector_VQVAE(nn.Module):
         mean inner distance is defined as the distance between start and end point of each segment of the path
         """
         inner_dists = []
+        # TODO experiment with quadratic distance here
         for i in range(self.num_segments):
             inner_dist = torch.cdist(points[:,:,i*3,:], points[:,:,(i+1)*3,:])
             inner_dists.append(inner_dist.mean())

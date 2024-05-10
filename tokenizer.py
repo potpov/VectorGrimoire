@@ -100,6 +100,7 @@ class VQTokenizer(nn.Module):
         Returns:
             Tensor: Tensor of shape (num_pos, 1)
         """
+        #FIXME this currently assumes that all positions are scaled in range [0, self.full_image_res]
         if self.use_text_encoder_only:
             raise NotImplementedError("Tokenizing positions is not supported when using the text encoder only.")
         assert positions.mean() > 1., f"Positions should be scaled with the full image resolution already, got mean: {positions.mean()}"

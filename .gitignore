@@ -27,7 +27,7 @@ configs/VSQ_sweep/VSQ_*.yaml
 benchmark/*
 benchmark/
 benchmark
-
+!images/thesis
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
