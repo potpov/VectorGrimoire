@@ -5,6 +5,7 @@ datasets/*.ipynb
 *.pkl
 *.csv
 *.zip
+.data
 test.png
 *.ipynb
 wandb/*

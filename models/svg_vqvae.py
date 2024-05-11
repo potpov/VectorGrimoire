@@ -9,7 +9,7 @@ import wandb
 from utils import log_all_images, tensor_to_histogram_image, calculate_global_positions, shapes_to_drawing, svg_string_to_tensor
 from models.resnet import ResNet, BasicBlock
 from models.vq_vae import VectorQuantizer
-from models.mlp_vector_head import MLPVectorHeadFixed
+from models.mlp_vector_head import MLPVectorHeadFixed, CNNVectorHead
 from models.mlp import MultiLayerPerceptron
 from vector_quantize_pytorch import FSQ
 from x_transformers import TransformerWrapper, Decoder
@@ -162,7 +162,7 @@ class Vector_VQVAE(nn.Module):
                  vector_decoder_model: str = "mlp",
                  quantized_dim: int = 256,
                  codebook_size: int = 512,
-                 image_loss: str = "mse",
+                 image_loss: str = "pyramid",
                  num_codes_per_shape: int = 1,
                  vq_method:str = "fsq",
                  fsq_levels:list =[8,5,5,5],
@@ -172,7 +172,7 @@ class Vector_VQVAE(nn.Module):
                  **kwargs) -> None:
         super(Vector_VQVAE, self).__init__()
 
-        assert vector_decoder_model in ["mlp", "raster_conv"], "vector_decoder_model must be one of ['mlp', 'raster_conv']"
+        assert vector_decoder_model in ["mlp", "raster_conv", "cnn"], "vector_decoder_model must be one of ['mlp', 'raster_conv', 'cnn']"
         assert geometric_constraint in ["inner_distance", None], f"geometric_constraint must be one of ['inner_distance'], but was {geometric_constraint}"
 
         self.vector_decoder_model = vector_decoder_model
@@ -224,6 +224,11 @@ class Vector_VQVAE(nn.Module):
                                               segments = self.num_segments,
                                               imsize = 128,
                                               max_stroke_width=20.)
+        elif self.vector_decoder_model == "cnn":
+            self.decoder = CNNVectorHead(latent_dim = self.quantized_dim * self.num_codes_per_shape,
+                                        segments = self.num_segments,
+                                        imsize = 128,
+                                        max_stroke_width=20.)
         elif self.vector_decoder_model == "raster_conv":
             self.decoder = DeconvResNet()
 
@@ -276,7 +281,7 @@ class Vector_VQVAE(nn.Module):
         encoding = self.encode(input, quantize=False)
         bs = encoding.shape[0]
         vq_logging_dict={}
-        if self.vector_decoder_model == "mlp":
+        if self.vector_decoder_model in ["mlp", "cnn"]:
             # quantize the encoding
             if self.vq_method == "vqvae":
                 quantized_inputs, vq_loss, vq_logging_dict = self.quantize_layer.forward(encoding, logging=logging)

@@ -193,16 +193,24 @@ class CNNVectorHead(nn.Module):
         self.circle_point_positions = self.sample_circle(self.radius, self.angles)
         self.point_types = torch.tensor([[1,0],[0,1],[0,1]], dtype=torch.float32)
 
+        # TODO this was 2 in the original Im2Vec code, but that would have doubled the number of points instead of keeping them the same
+        padding = 1
+        kernel_size = 3
+        stride = 1
+        dilation = 1
+
         self.point_predictor = nn.Sequential(
-            nn.Conv1d(fused_latent_dim, fused_latent_dim*2, kernel_size=3, padding=2, padding_mode='circular', stride=1, dilation=1),
+            nn.Conv1d(fused_latent_dim, fused_latent_dim*2, kernel_size=kernel_size, padding=padding, padding_mode='circular', stride=stride, dilation=dilation),
             nn.ReLU(),
-            nn.Conv1d(fused_latent_dim*2, fused_latent_dim*2, kernel_size=3, padding=2, padding_mode='circular', stride=1, dilation=1),
+            nn.Conv1d(fused_latent_dim*2, fused_latent_dim*2, kernel_size=kernel_size, padding=padding, padding_mode='circular', stride=stride, dilation=dilation),
             nn.ReLU(),
-            nn.Conv1d(fused_latent_dim*2, fused_latent_dim*2, kernel_size=3, padding=2, padding_mode='circular', stride=1, dilation=1),
+            nn.Conv1d(fused_latent_dim*2, fused_latent_dim*2, kernel_size=kernel_size, padding=padding, padding_mode='circular', stride=stride, dilation=dilation),
             nn.ReLU(),
-            nn.Conv1d(fused_latent_dim*2, fused_latent_dim*2, kernel_size=3, padding=2, padding_mode='circular', stride=1, dilation=1),
+            nn.Conv1d(fused_latent_dim*2, fused_latent_dim*2, kernel_size=kernel_size, padding=padding, padding_mode='circular', stride=stride, dilation=dilation),
             nn.ReLU(),
-            nn.Conv1d(fused_latent_dim*2, 2, kernel_size=3, padding=2, padding_mode='circular', stride=1, dilation=1),
+            nn.Conv1d(fused_latent_dim*2, fused_latent_dim*2, kernel_size=kernel_size, padding=padding, padding_mode='circular', stride=stride, dilation=dilation),
+            nn.ReLU(),
+            nn.Conv1d(fused_latent_dim*2, 2, kernel_size=kernel_size, padding=padding, padding_mode='circular', stride=stride, dilation=dilation),
             nn.Sigmoid()
         )
 
@@ -231,7 +239,7 @@ class CNNVectorHead(nn.Module):
             shapes = []
             shape_groups = []
             points = all_points[k].contiguous()#[self.sort_idx[k]] # .cpu()
-
+            print("points.shape: ", points.shape)
             path = pydiffvg.Path(
                 num_control_points=num_ctrl_pts, points=points,
                 is_closed=True)
@@ -273,11 +281,22 @@ class CNNVectorHead(nn.Module):
         print("batched_point_types.shape: ",batched_point_types.shape)
         feats = torch.cat([z, batched_point_types], dim=-1)
         positions = self.circle_point_positions[None, :, :].repeat(bs, 1, 1)
-        feats = torch.cat([feats, positions], dim=-1)
+        feats = torch.cat([feats, positions], dim=-1)  # (bs, segments*3, latent_dim + 4)
+        # first convert to 2D, then apply CNN, then convert back to 3D
+        # feats = feats.view(bs * z.shape[1], self.latent_dim + 4)
+        feats = feats.permute(0, 2, 1)
+        print("feats.shape: ", feats.shape)
+        # for layer in self.point_predictor:
+        #     print(layer)
+        #     feats = layer(feats)
+        all_points = self.point_predictor.forward(feats)
+        # all_points = all_points.view(bs, z.shape[1], 2)
 
-        all_points = self.point_predictor(feats)
-
-        all_points = all_points.view(bs, 1, self.segments * 3, 2)
+        print("all_points.shape: ", all_points.shape)
+        all_points = all_points.permute(0, 2, 1)
+        print("all_points.shape: ", all_points.shape)
+        print("requiring shape: ", (bs, self.num_points, 2))
+        all_points = all_points.view(bs, self.num_points, 2)
         all_widths = torch.ones(bs, self.segments, 1)
         all_alphas = torch.ones(bs, self.segments, 1)
         
