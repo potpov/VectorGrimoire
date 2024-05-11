@@ -372,6 +372,7 @@ class Vector_VQVAE(nn.Module):
             max_dist = torch.cdist(torch.tensor([[0.0,0.0]]), torch.tensor([[1.0,1.0]])).item()
             mean_inner_distance = self._get_mean_inner_distance(points)
             # loss is weighted by the mean of black pixels, so that short strokes are not penalized as much
+            # TODO adapt to new loss formulation from thesis
             geometric_loss = (max_dist - mean_inner_distance) * (1- gt_images).mean()
         else:
             geometric_loss = 0.0

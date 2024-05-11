@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 from torch import Tensor
 from torch import nn
@@ -159,6 +160,138 @@ class MLPVectorHead(nn.Module):
 
         return raster_images, stop_predictions
     
+class CNNVectorHead(nn.Module):
+    """
+    The CNNVectorHead is similar to Im2Vec. It uses a unit cirlce as a filled shape as a basis and iteratively deforms that shape using a CNN.
+    """
+
+    def __init__(self,
+                 latent_dim:int = 128,
+                 segments: int = 4,
+                 imsize:int=64,
+                 filled:bool = True,
+                 pred_color: bool = False,
+                 pred_alpha: bool = False,
+                 pred_stroke_width: bool = False,
+                 max_stroke_width: float = 10.0,
+                 radius:float = 3.):
+        super(CNNVectorHead, self).__init__()
+
+        self.latent_dim = latent_dim
+        self.segments = segments
+        self.imsize = imsize
+        self.filled = filled
+        self.pred_color = pred_color
+        self.pred_alpha = pred_alpha
+        self.pred_stroke_width = pred_stroke_width
+        self.max_stroke_width = max_stroke_width
+        self.radius = radius
+
+        fused_latent_dim = latent_dim + 2 + 2 # 2 for point type (e.g. control point) and 2 for initial x-y-position on the circle
+        self.num_points = self.segments * 3
+        self.angles = torch.arange(0, self.num_points, dtype=torch.float32) * 6.28319 / self.num_points
+        self.circle_point_positions = self.sample_circle(self.radius, self.angles)
+        self.point_types = torch.tensor([[1,0],[0,1],[0,1]], dtype=torch.float32)
+
+        self.point_predictor = nn.Sequential(
+            nn.Conv1d(fused_latent_dim, fused_latent_dim*2, kernel_size=3, padding=2, padding_mode='circular', stride=1, dilation=1),
+            nn.ReLU(),
+            nn.Conv1d(fused_latent_dim*2, fused_latent_dim*2, kernel_size=3, padding=2, padding_mode='circular', stride=1, dilation=1),
+            nn.ReLU(),
+            nn.Conv1d(fused_latent_dim*2, fused_latent_dim*2, kernel_size=3, padding=2, padding_mode='circular', stride=1, dilation=1),
+            nn.ReLU(),
+            nn.Conv1d(fused_latent_dim*2, fused_latent_dim*2, kernel_size=3, padding=2, padding_mode='circular', stride=1, dilation=1),
+            nn.ReLU(),
+            nn.Conv1d(fused_latent_dim*2, 2, kernel_size=3, padding=2, padding_mode='circular', stride=1, dilation=1),
+            nn.Sigmoid()
+        )
+
+        # TODO do color and alpha and all that
+
+    def sample_circle(self, r, angles):
+        """
+        samples position on a circle of radius r, distances of positions are given by the angles, which are in [0, 2*pi]
+        """
+        pos = [(torch.cos(angles) * r), (torch.sin(angles) * r)]
+        return torch.stack(pos, dim=-1)
+    
+    def raster(self, all_points, white_background=True):
+
+        render_size = self.imsize
+        bs = all_points.shape[0]
+
+        outputs = []
+        scenes = []
+        all_points = all_points*render_size
+        num_ctrl_pts = torch.zeros(self.segments, dtype=torch.int32).to(all_points.device) + 2
+        color = torch.tensor([0,0,0,1]).to(all_points.device)
+        for k in range(bs):
+            # Get point parameters from network
+            render = pydiffvg.RenderFunction.apply
+            shapes = []
+            shape_groups = []
+            points = all_points[k].contiguous()#[self.sort_idx[k]] # .cpu()
+
+            path = pydiffvg.Path(
+                num_control_points=num_ctrl_pts, points=points,
+                is_closed=True)
+
+            shapes.append(path)
+            path_group = pydiffvg.ShapeGroup(
+                shape_ids=torch.tensor([len(shapes) - 1]),
+                fill_color=color,
+                stroke_color=color)
+            shape_groups.append(path_group)
+            scene_args = pydiffvg.RenderFunction.serialize_scene(render_size, render_size, shapes, shape_groups)
+            scenes.append(scene_args)
+            out = render(render_size,  # width
+                         render_size,  # height
+                         3,  # num_samples_x
+                         3,  # num_samples_y
+                         102,  # seed
+                         None,
+                         *scene_args)
+            out = out.permute(2, 0, 1).view(4, render_size, render_size)#[:3]#.mean(0, keepdim=True)
+            outputs.append(out)
+        output =  torch.stack(outputs).to(all_points.device)
+
+        # map to [-1, 1]
+        if white_background:
+            alpha = output[:, 3:4, :, :]
+            output_white_bg = output[:, :3, :, :]*alpha + (1-alpha)
+            output = torch.cat([output_white_bg, alpha], dim=1)
+        del num_ctrl_pts, color
+        return output, scenes
+
+    
+    def forward(self, z, **kwargs):
+        logging_dict = {}
+        bs = z.shape[0]
+        z = z.repeat(1, self.segments*3, 1)
+        print("z.shape: ", z.shape)
+        batched_point_types = self.point_types[None, :, :].repeat(bs, self.segments, 1)
+        print("batched_point_types.shape: ",batched_point_types.shape)
+        feats = torch.cat([z, batched_point_types], dim=-1)
+        positions = self.circle_point_positions[None, :, :].repeat(bs, 1, 1)
+        feats = torch.cat([feats, positions], dim=-1)
+
+        all_points = self.point_predictor(feats)
+
+        all_points = all_points.view(bs, 1, self.segments * 3, 2)
+        all_widths = torch.ones(bs, self.segments, 1)
+        all_alphas = torch.ones(bs, self.segments, 1)
+        
+
+        output, scenes = self.raster(
+            all_points
+        )
+
+        # map to [-1, 1]
+        # output = output*2.0 - 1.0
+
+        return [output, scenes, all_points, all_widths], logging_dict
+
+
 class MLPVectorHeadFixed(nn.Module):
     """
     For some f reason, I could not get the gradients to flow through the stroke width prediction in MLPVectorHead.
