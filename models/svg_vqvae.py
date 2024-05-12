@@ -276,7 +276,7 @@ class Vector_VQVAE(nn.Module):
         return result, logging_dict
     
     
-    def forward(self, input: Tensor, logging = False, return_widths = False, **kwargs):
+    def forward(self, input: Tensor, logging = False, return_widths = False, only_return_recons = False, **kwargs):
         logging_dict = {}
         encoding = self.encode(input, quantize=False)
         bs = encoding.shape[0]
@@ -306,6 +306,8 @@ class Vector_VQVAE(nn.Module):
         all_points = out[2]
         all_widths = out[3]
         logging_dict = {**logging_dict, **decode_logging_dict, **vq_logging_dict}
+        if only_return_recons:
+            return reconstructions
         if return_widths:
             return [reconstructions, input, all_points, vq_loss, all_widths], logging_dict
         else:

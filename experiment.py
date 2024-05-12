@@ -16,7 +16,8 @@ from torch.optim.lr_scheduler import StepLR
 import pandas as pd
 from torchmetrics.functional.multimodal import clip_score
 from tokenizer import VQTokenizer
-import torch_optimizer as optim_
+# import torch_optimizer as optim_
+from dataset import GlyphazznStage1Datamodule, MNISTDataset
 
 class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
     def __init__(self,
@@ -364,7 +365,7 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
         out, logging_dict = self.model.forward(input_images, logging=logging, **kwargs)
         return out, logging_dict
     
-    def training_step(self, batch, batch_idx, optimizer_idx=0):
+    def training_step(self, batch, batch_idx):
         all_center_shapes, labels, centers, descriptions = batch
         self.curr_device = all_center_shapes.device
         bs = all_center_shapes.shape[0]
@@ -391,14 +392,21 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
                 logging_dict = {f"train/{key}": value for key, value in logging_dict.items()}
                 wandb.log(logging_dict)
                 random_idx = random.randint(0, len(self.datamodule.train_dataset))
-                side_by_side_recons = get_side_by_side_reconstruction(self.model, self.datamodule.train_dataset, idx = random_idx, device = self.curr_device)
+                if isinstance(self.datamodule, GlyphazznStage1Datamodule):
+                    dataset_name = "glyphazzn"
+                elif isinstance(self.datamodule, MNISTDataset):
+                    dataset_name = "mnist"
+                side_by_side_recons = get_side_by_side_reconstruction(self.model, self.datamodule.train_dataset, idx = random_idx, device = self.curr_device, dataset_name=dataset_name)
                 wandb.log({"train/side_by_side_recons":wandb.Image(side_by_side_recons, caption="side by side reconstructions of training sample")})
                 if reconstructions.shape[0] > 25:
                     log_amount = 25
                 else:
                     log_amount = reconstructions.shape[0]
 
-                log_reconstructions = add_points_to_image(all_points, reconstructions[:,:3,:,:], image_scale=reconstructions.shape[-1])
+                if isinstance(self.datamodule, GlyphazznStage1Datamodule):
+                    log_reconstructions = add_points_to_image(all_points, reconstructions[:,:3,:,:], image_scale=reconstructions.shape[-1])
+                elif isinstance(self.datamodule, MNISTDataset):
+                    log_reconstructions = reconstructions[:,:3,:,:]
 
                 # Log input against prediction
                 log_images(
@@ -412,7 +420,7 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
         return loss_dict["loss"]
 
 
-    def validation_step(self, batch, batch_idx, optimizer_idx=0):
+    def validation_step(self, batch, batch_idx):
         with torch.no_grad():
             all_center_shapes, label, centers, descriptions = batch
             self.curr_device = all_center_shapes.device
@@ -437,14 +445,22 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
                 logging_dict = {f"val/{key}": value for key, value in logging_dict.items()}
                 wandb.log(logging_dict)
                 random_idx = random.randint(0, len(self.datamodule.val_dataset))
-                side_by_side_recons = get_side_by_side_reconstruction(self.model, self.datamodule.val_dataset, idx = random_idx, device = self.curr_device)
+                if isinstance(self.datamodule, GlyphazznStage1Datamodule):
+                    dataset_name = "glyphazzn"
+                elif isinstance(self.datamodule, MNISTDataset):
+                    dataset_name = "mnist"
+                side_by_side_recons = get_side_by_side_reconstruction(self.model, self.datamodule.val_dataset, idx = random_idx, device = self.curr_device, dataset_name=dataset_name)
                 wandb.log({"val/side_by_side_recons":wandb.Image(side_by_side_recons, caption="side by side reconstructions of validation sample")})
                 if reconstructions.shape[0] > 25:
                     log_amount = 25
                 else:
                     log_amount = reconstructions.shape[0]
 
-                log_reconstructions = add_points_to_image(all_points[:log_amount], reconstructions[:log_amount,:3,:,:], image_scale=reconstructions.shape[-1])
+                if isinstance(self.datamodule, GlyphazznStage1Datamodule):
+                    log_reconstructions = add_points_to_image(all_points[:log_amount], reconstructions[:log_amount,:3,:,:], image_scale=reconstructions.shape[-1])
+                elif isinstance(self.datamodule, MNISTDataset):
+                    log_reconstructions = reconstructions[:log_amount,:3,:,:]
+
                 # Log input against prediction
                 log_images(
                     log_reconstructions[:log_amount],
@@ -1166,13 +1182,13 @@ class VAEXperiment(pl.LightningModule):
                                 lr=self.lr)
         optims.append(optimizer)
         # Check if more than 1 optimizer is required (Used for adversarial training)
-        try:
-            if self.params['LR_2'] is not None:
-                optimizer2 = optim_.AdamP(getattr(self.model,self.params['submodel']).parameters(),
-                                        lr=self.params['LR_2'])
-                optims.append(optimizer2)
-        except:
-            pass
+        # try:
+        #     if self.params['LR_2'] is not None:
+        #         optimizer2 = optim_.AdamP(getattr(self.model,self.params['submodel']).parameters(),
+        #                                 lr=self.params['LR_2'])
+        #         optims.append(optimizer2)
+        # except:
+        #     pass
 
         # scheduler = optim.lr_scheduler.ExponentialLR(optims[0],
         #                                              gamma = self.params['scheduler_gamma'], last_epoch=450)

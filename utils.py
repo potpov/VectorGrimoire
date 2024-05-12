@@ -16,7 +16,6 @@ from io import BytesIO
 from torchvision.transforms import ToTensor
 import re
 import matplotlib.colors as mcolors
-from dataset import GlyphazznStage1Dataset, MNISTDataset
 
 def get_color_gradient(num_colors: int, start_color="red", end_color="blue"):
     gradient = mcolors.LinearSegmentedColormap.from_list('gradient', [start_color, end_color])
@@ -131,27 +130,37 @@ def svg_string_to_tensor(svg_string):
     
     return tensor
 
-def get_side_by_side_reconstruction(model, dataset, idx, device, w=480):
+def get_side_by_side_reconstruction(model, dataset, idx, device, w=480, dataset_name:str = "glyphazzn"):
     """
+    cannot type hint dataset and model because of circular import
     model must be Vector_VQVAE
     dataset must be GlyphazznStage1Dataset
     """
-    # if isinstance(dataset, Glyph)
-    # Get the ground truth SVG drawing
-    gt = dataset._get_full_svg_drawing(idx, width=w, as_tensor=True)
+    if "glyphazzn" in dataset_name.lower():
+        # Get the ground truth SVG drawing
+        gt = dataset._get_full_svg_drawing(idx, width=w, as_tensor=True)
 
-    # Reconstruct the SVG drawing
-    patches, labels, positions, _ = dataset._get_full_item(idx)
-    patches = patches.to(device)
-    positions = positions.to(device)
-    _, recons_rastered_drawing = model.reconstruct(patches, positions, dataset.individual_max_length +2, dataset.stroke_width, rendered_w=w)
+        # Reconstruct the SVG drawing
+        patches, labels, positions, _ = dataset._get_full_item(idx)
+        patches = patches.to(device)
+        positions = positions.to(device)
+        _, recons_rastered_drawing = model.reconstruct(patches, positions, dataset.individual_max_length +2, dataset.stroke_width, rendered_w=w)
+    elif "mnist" in dataset_name.lower():
+        gt, label, _, _ = dataset.__getitem__(idx)
+        recons_rastered_drawing = model.forward(gt.unsqueeze(0).to(device), only_return_recons=True)
+        if recons_rastered_drawing.dim() == 4:
+            recons_rastered_drawing = recons_rastered_drawing[0]
+        if gt.dim() == 4:
+            gt = gt[0]
+    
+    
     fig, axes = plt.subplots(1, 2, figsize=(10, 5))
     # Plot reconstructed drawing
-    axes[1].imshow(recons_rastered_drawing.permute(1, 2, 0))
+    axes[1].imshow(recons_rastered_drawing.cpu().permute(1, 2, 0))
     axes[1].set_title('Reconstructed SVG')
 
     # Plot ground truth drawing
-    axes[0].imshow(gt.permute(1, 2, 0))
+    axes[0].imshow(gt.cpu().permute(1, 2, 0))
     axes[0].set_title('Ground Truth SVG')
     for ax in axes:
         ax.axis('off')
