@@ -1391,7 +1391,65 @@ class MNIST(Dataset):
         if self.transform is not None:
             image = self.transform(image)
 
-        return image, label, "", ""  # has to fit to the experiment class, which is why I filled it with Nones
+        return image, label, "", ""  # has to fit to the experiment class, which is why I filled it with empty stuff
+
+    def __len__(self):
+        return len(self.image_paths)
+
+class TiledMNIST(Dataset):
+    """
+    MNIST dataset from a root directory where each image is split into tiles:
+
+    mnist
+    |
+    |--------------|
+    training    testing
+    |              |
+    0-9           0-9
+    """
+
+    def __init__(self, 
+                 root, 
+                 train=True,
+                 patch_size:int=128, 
+                 transform=None,
+                 num_tiles_per_row:int = 5):
+        super(TiledMNIST, self)
+        self.root = root
+        self.train = train
+        self.transform = transform
+        self.patch_size = patch_size
+        self.num_tiles_per_row = num_tiles_per_row
+
+        self.image_folder = os.path.join(root, "training" if train else "testing")
+
+        self.image_paths = []
+        self.labels = []
+
+        for label in range(10):
+            label_folder = os.path.join(self.image_folder, str(label))
+            image_files = os.listdir(label_folder)
+            for image_file in image_files:
+                image_path = os.path.join(label_folder, image_file)
+                self.image_paths.append(image_path)
+                self.labels.append(label)
+
+    def __getitem__(self, index):
+        image_path = self.image_paths[index]
+        label = self.labels[index]
+
+        image = Image.open(image_path)
+        if self.transform is not None:
+            image = self.transform(image)
+
+        patches = []
+        for i in range(0, image.shape[1], self.patch_size):
+            for j in range(0, image.shape[2], self.patch_size):
+                patches.append(image[:, i : i + self.patch_size, j : j + self.patch_size])
+        patches = torch.stack(patches)
+
+        return patches, [label]*len(patches), "", ""  # has to fit to the experiment class, which is why I filled it with empty stuff
+        # return patches, label, "", ""  # has to fit to the experiment class, which is why I filled it with empty stuff
 
     def __len__(self):
         return len(self.image_paths)
@@ -1702,6 +1760,7 @@ class MNISTDataset(LightningDataModule):
         train_batch_size: int = 8,
         val_batch_size: int = 8,
         patch_size: Union[int, Sequence[int]] = (256, 256),
+        num_tiles_per_row:int = 1,
         num_workers: int = 0,
         pin_memory: bool = False,
         **kwargs,
@@ -1714,13 +1773,22 @@ class MNISTDataset(LightningDataModule):
         self.patch_size = patch_size
         self.num_workers = num_workers
         self.pin_memory = pin_memory
+        self.num_tiles_per_row = num_tiles_per_row
+
+    def collate_fn(self, batch):
+        patches, labels, _, _ = zip(*batch)  # (tiles, channels, height, width)
+        patches = torch.stack(patches, dim=0)  # (bs, tiles, channels, height, width)
+        # use einops to merge bs and tiles dimensions
+        if patches.dim() == 5:
+            patches = patches.view(-1, *patches.shape[2:])
+        return patches, labels, "", ""
 
     def setup(self, stage: Optional[str] = None) -> None:
         # =========================  MNIST Dataset  =========================
 
         train_transforms = transforms.Compose(
             [
-                transforms.Resize(self.patch_size, antialias=True),
+                transforms.Resize(self.patch_size * self.num_tiles_per_row, antialias=True),
                 transforms.RandomInvert(1.0),
                 transforms.Grayscale(num_output_channels=3),
                 transforms.ToTensor(),
@@ -1729,23 +1797,25 @@ class MNISTDataset(LightningDataModule):
 
         val_transforms = transforms.Compose(
             [
-                transforms.Resize(self.patch_size, antialias=True),
+                transforms.Resize(self.patch_size * self.num_tiles_per_row, antialias=True),
                 transforms.RandomInvert(1.0),
                 transforms.Grayscale(num_output_channels=3),
                 transforms.ToTensor(),
             ]
         )
 
-        self.train_dataset = MNIST(
+        self.train_dataset = TiledMNIST(
             self.data_dir,
             train=True,
             transform=train_transforms,
+            num_tiles_per_row=self.num_tiles_per_row,
         )
 
-        self.val_dataset = MNIST(
+        self.val_dataset = TiledMNIST(
             self.data_dir,
             train=False,
             transform=val_transforms,
+            num_tiles_per_row=self.num_tiles_per_row,
         )
 
     #       ===============================================================
@@ -1757,6 +1827,7 @@ class MNISTDataset(LightningDataModule):
             num_workers=self.num_workers,
             shuffle=True,
             pin_memory=self.pin_memory,
+            collate_fn=self.collate_fn,
         )
 
     def val_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
@@ -1766,6 +1837,7 @@ class MNISTDataset(LightningDataModule):
             num_workers=self.num_workers,
             shuffle=False,
             pin_memory=self.pin_memory,
+            collate_fn=self.collate_fn,
         )
 
     def test_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
@@ -1775,6 +1847,7 @@ class MNISTDataset(LightningDataModule):
             num_workers=self.num_workers,
             shuffle=True,
             pin_memory=self.pin_memory,
+            collate_fn=self.collate_fn,
         )
 
 

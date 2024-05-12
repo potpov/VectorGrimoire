@@ -147,11 +147,32 @@ def get_side_by_side_reconstruction(model, dataset, idx, device, w=480, dataset_
         _, recons_rastered_drawing = model.reconstruct(patches, positions, dataset.individual_max_length +2, dataset.stroke_width, rendered_w=w)
     elif "mnist" in dataset_name.lower():
         gt, label, _, _ = dataset.__getitem__(idx)
-        recons_rastered_drawing = model.forward(gt.unsqueeze(0).to(device), only_return_recons=True)
-        if recons_rastered_drawing.dim() == 4:
-            recons_rastered_drawing = recons_rastered_drawing[0]
-        if gt.dim() == 4:
-            gt = gt[0]
+        recons_rastered_drawing = model.forward(gt.to(device), only_return_recons=True).cpu()
+
+        num_tiles_per_row = np.sqrt(gt.shape[0]).astype(int)
+        if num_tiles_per_row > 1:
+            fig, axs = plt.subplots(num_tiles_per_row, num_tiles_per_row*2, figsize=(15, 15))
+            # add the gt
+            for i in range(0, num_tiles_per_row):
+                for j in range(0, num_tiles_per_row):
+                    axs[i, j].imshow(gt[i * num_tiles_per_row + j].permute(1, 2, 0).numpy())
+                    axs[i, j].axis('off')
+            # add the recons
+            for i in range(0, num_tiles_per_row):
+                for j in range(num_tiles_per_row, num_tiles_per_row*2):
+                    axs[i, j].imshow(recons_rastered_drawing[i * num_tiles_per_row + (j - num_tiles_per_row)].permute(1, 2, 0).cpu().numpy())
+                    axs[i, j].axis('off')
+                fig.tight_layout()
+            img = fig2img(fig)
+            plt.close(fig)
+
+            return img
+        else:
+            # de-batch the tensors
+            if recons_rastered_drawing.dim() == 4:
+                recons_rastered_drawing = recons_rastered_drawing[0]
+            if gt.dim() == 4:
+                gt = gt[0]
     
     
     fig, axes = plt.subplots(1, 2, figsize=(10, 5))

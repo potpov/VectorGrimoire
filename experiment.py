@@ -416,7 +416,7 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
                     captions="input (left) vs. reconstruction (right)"
                 )
 
-        self.log_dict(loss_dict, logger=True)
+        self.log_dict(loss_dict, logger=True, prog_bar=True)
         return loss_dict["loss"]
 
 
@@ -469,7 +469,7 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
                     captions="input (left) vs. reconstruction (right)"
                 )
 
-        self.log("val_loss", loss_dict["loss"])
+        self.log("val_loss", loss_dict["loss"], prog_bar=True)
         return loss_dict["loss"]
 
     
