@@ -16,6 +16,7 @@ from io import BytesIO
 from torchvision.transforms import ToTensor
 import re
 import matplotlib.colors as mcolors
+from dataset import GlyphazznStage1Dataset, MNISTDataset
 
 def get_color_gradient(num_colors: int, start_color="red", end_color="blue"):
     gradient = mcolors.LinearSegmentedColormap.from_list('gradient', [start_color, end_color])
@@ -135,6 +136,7 @@ def get_side_by_side_reconstruction(model, dataset, idx, device, w=480):
     model must be Vector_VQVAE
     dataset must be GlyphazznStage1Dataset
     """
+    # if isinstance(dataset, Glyph)
     # Get the ground truth SVG drawing
     gt = dataset._get_full_svg_drawing(idx, width=w, as_tensor=True)
 

@@ -239,7 +239,7 @@ class CNNVectorHead(nn.Module):
             shapes = []
             shape_groups = []
             points = all_points[k].contiguous()#[self.sort_idx[k]] # .cpu()
-            print("points.shape: ", points.shape)
+            # print("points.shape: ", points.shape)
             path = pydiffvg.Path(
                 num_control_points=num_ctrl_pts, points=points,
                 is_closed=True)
@@ -274,28 +274,31 @@ class CNNVectorHead(nn.Module):
     
     def forward(self, z, **kwargs):
         logging_dict = {}
+        device = z.device
         bs = z.shape[0]
-        z = z.repeat(1, self.segments*3, 1)
-        print("z.shape: ", z.shape)
-        batched_point_types = self.point_types[None, :, :].repeat(bs, self.segments, 1)
-        print("batched_point_types.shape: ",batched_point_types.shape)
+
+        # print("z.shape: ", z.shape)
+        z = z[:,None,:].repeat(1, self.segments*3, 1)
+        # print("z.shape: ", z.shape)
+        batched_point_types = self.point_types[None, :, :].repeat(bs, self.segments, 1).to(device)
+        # print("batched_point_types.shape: ",batched_point_types.shape)
         feats = torch.cat([z, batched_point_types], dim=-1)
-        positions = self.circle_point_positions[None, :, :].repeat(bs, 1, 1)
+        positions = self.circle_point_positions[None, :, :].repeat(bs, 1, 1).to(device)
         feats = torch.cat([feats, positions], dim=-1)  # (bs, segments*3, latent_dim + 4)
         # first convert to 2D, then apply CNN, then convert back to 3D
         # feats = feats.view(bs * z.shape[1], self.latent_dim + 4)
         feats = feats.permute(0, 2, 1)
-        print("feats.shape: ", feats.shape)
+        # print("feats.shape: ", feats.shape)
         # for layer in self.point_predictor:
         #     print(layer)
         #     feats = layer(feats)
         all_points = self.point_predictor.forward(feats)
         # all_points = all_points.view(bs, z.shape[1], 2)
 
-        print("all_points.shape: ", all_points.shape)
+        # print("all_points.shape: ", all_points.shape)
         all_points = all_points.permute(0, 2, 1)
-        print("all_points.shape: ", all_points.shape)
-        print("requiring shape: ", (bs, self.num_points, 2))
+        # print("all_points.shape: ", all_points.shape)
+        # print("requiring shape: ", (bs, self.num_points, 2))
         all_points = all_points.view(bs, self.num_points, 2)
         all_widths = torch.ones(bs, self.segments, 1)
         all_alphas = torch.ones(bs, self.segments, 1)

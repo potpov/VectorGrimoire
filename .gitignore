@@ -25,6 +25,7 @@ scripts/output/
 *.json
 profiler_results*.txt
 configs/VSQ_sweep/VSQ_*.yaml
+configs/.deprecated/*
 benchmark/*
 benchmark/
 benchmark

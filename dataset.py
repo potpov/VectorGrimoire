@@ -1391,7 +1391,7 @@ class MNIST(Dataset):
         if self.transform is not None:
             image = self.transform(image)
 
-        return image, label
+        return image, label, "", ""  # has to fit to the experiment class, which is why I filled it with Nones
 
     def __len__(self):
         return len(self.image_paths)
