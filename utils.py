@@ -156,12 +156,12 @@ def get_side_by_side_reconstruction(model, dataset, idx, device, w=480, dataset_
             for i in range(0, num_tiles_per_row):
                 for j in range(0, num_tiles_per_row):
                     axs[i, j].imshow(gt[i * num_tiles_per_row + j].permute(1, 2, 0).numpy())
-                    axs[i, j].axis('off')
+                    # axs[i, j].axis('off')
             # add the recons
             for i in range(0, num_tiles_per_row):
                 for j in range(num_tiles_per_row, num_tiles_per_row*2):
                     axs[i, j].imshow(recons_rastered_drawing[i * num_tiles_per_row + (j - num_tiles_per_row)].permute(1, 2, 0).cpu().numpy())
-                    axs[i, j].axis('off')
+                    # axs[i, j].axis('off')
                 fig.tight_layout()
             img = fig2img(fig)
             plt.close(fig)

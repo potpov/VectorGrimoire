@@ -1413,13 +1413,15 @@ class TiledMNIST(Dataset):
                  train=True,
                  patch_size:int=128, 
                  transform=None,
-                 num_tiles_per_row:int = 5):
+                 num_tiles_per_row:int = 5,
+                 random_colors:bool=False):
         super(TiledMNIST, self)
         self.root = root
         self.train = train
         self.transform = transform
         self.patch_size = patch_size
         self.num_tiles_per_row = num_tiles_per_row
+        self.random_colors = random_colors
 
         self.image_folder = os.path.join(root, "training" if train else "testing")
 
@@ -1763,6 +1765,7 @@ class MNISTDataset(LightningDataModule):
         num_tiles_per_row:int = 1,
         num_workers: int = 0,
         pin_memory: bool = False,
+        random_colors:bool=False,
         **kwargs,
     ):
         super().__init__()
@@ -1774,6 +1777,7 @@ class MNISTDataset(LightningDataModule):
         self.num_workers = num_workers
         self.pin_memory = pin_memory
         self.num_tiles_per_row = num_tiles_per_row
+        self.random_colors = random_colors
 
     def collate_fn(self, batch):
         patches, labels, _, _ = zip(*batch)  # (tiles, channels, height, width)
@@ -1809,6 +1813,7 @@ class MNISTDataset(LightningDataModule):
             train=True,
             transform=train_transforms,
             num_tiles_per_row=self.num_tiles_per_row,
+            random_colors=self.random_colors,
         )
 
         self.val_dataset = TiledMNIST(
@@ -1816,6 +1821,7 @@ class MNISTDataset(LightningDataModule):
             train=False,
             transform=val_transforms,
             num_tiles_per_row=self.num_tiles_per_row,
+            random_colors=self.random_colors,
         )
 
     #       ===============================================================

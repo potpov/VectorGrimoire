@@ -168,14 +168,14 @@ try:
     else:
         runner.fit(experiment, datamodule=data)
     profiler.describe()
-    print(profiler.summary())
+    # print(profiler.summary())
     with open("profiler_results.txt", "w") as f:
         f.write(profiler.summary())
 except KeyboardInterrupt:
     # Handle the interrupt and save the profiling results
     print("Training interrupted by user.")
     profiler.describe()
-    print(profiler.summary())
+    # print(profiler.summary())
     with open("profiler_results.txt", "w") as f:
         f.write(profiler.summary())
 
