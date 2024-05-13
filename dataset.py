@@ -1396,6 +1396,8 @@ class MNIST(Dataset):
     def __len__(self):
         return len(self.image_paths)
 
+import torch.nn.functional as F
+
 class TiledMNIST(Dataset):
     """
     MNIST dataset from a root directory where each image is split into tiles:
@@ -1414,7 +1416,8 @@ class TiledMNIST(Dataset):
                  patch_size:int=128, 
                  transform=None,
                  num_tiles_per_row:int = 5,
-                 random_colors:bool=False):
+                 random_colors:bool=False,
+                 total_padding:int=20,):
         super(TiledMNIST, self)
         self.root = root
         self.train = train
@@ -1422,6 +1425,7 @@ class TiledMNIST(Dataset):
         self.patch_size = patch_size
         self.num_tiles_per_row = num_tiles_per_row
         self.random_colors = random_colors
+        self.total_padding = total_padding
 
         self.image_folder = os.path.join(root, "training" if train else "testing")
 
@@ -1475,9 +1479,14 @@ class TiledMNIST(Dataset):
             image = self._recolor_stroke(image)
 
         patches = []
-        for i in range(0, image.shape[1], self.patch_size):
-            for j in range(0, image.shape[2], self.patch_size):
-                patches.append(image[:, i : i + self.patch_size, j : j + self.patch_size])
+
+        single_side_padding = self.total_padding // 2
+        for i in range(0, image.shape[1], self.patch_size - self.total_padding):
+            for j in range(0, image.shape[2], self.patch_size - self.total_padding):
+                patch = image[:, i : i + self.patch_size - self.total_padding, j : j + self.patch_size - self.total_padding]
+                patch = F.pad(patch, (single_side_padding, single_side_padding, single_side_padding, single_side_padding), value=1.)
+                patches.append(patch)       
+                
         patches = torch.stack(patches)
 
         return patches, [label]*len(patches), "", ""  # has to fit to the experiment class, which is why I filled it with empty stuff
@@ -1796,6 +1805,7 @@ class MNISTDataset(LightningDataModule):
         num_workers: int = 0,
         pin_memory: bool = False,
         random_colors:bool=False,
+        total_padding:int = 20,
         **kwargs,
     ):
         super().__init__()
@@ -1808,6 +1818,7 @@ class MNISTDataset(LightningDataModule):
         self.pin_memory = pin_memory
         self.num_tiles_per_row = num_tiles_per_row
         self.random_colors = random_colors
+        self.total_padding = total_padding
 
     def collate_fn(self, batch):
         patches, labels, _, _ = zip(*batch)  # (tiles, channels, height, width)
@@ -1819,10 +1830,11 @@ class MNISTDataset(LightningDataModule):
 
     def setup(self, stage: Optional[str] = None) -> None:
         # =========================  MNIST Dataset  =========================
+        new_dimension = (self.patch_size - self.total_padding) * self.num_tiles_per_row
 
         train_transforms = transforms.Compose(
             [
-                transforms.Resize(self.patch_size * self.num_tiles_per_row, antialias=True),
+                transforms.Resize(new_dimension, antialias=True),
                 transforms.RandomInvert(1.0),
                 transforms.Grayscale(num_output_channels=3),
                 transforms.ToTensor(),
@@ -1831,7 +1843,7 @@ class MNISTDataset(LightningDataModule):
 
         val_transforms = transforms.Compose(
             [
-                transforms.Resize(self.patch_size * self.num_tiles_per_row, antialias=True),
+                transforms.Resize(new_dimension, antialias=True),
                 transforms.RandomInvert(1.0),
                 transforms.Grayscale(num_output_channels=3),
                 transforms.ToTensor(),
@@ -1844,6 +1856,7 @@ class MNISTDataset(LightningDataModule):
             transform=train_transforms,
             num_tiles_per_row=self.num_tiles_per_row,
             random_colors=self.random_colors,
+
         )
 
         self.val_dataset = TiledMNIST(
