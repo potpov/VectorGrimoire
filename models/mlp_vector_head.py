@@ -174,7 +174,7 @@ class CNNVectorHead(nn.Module):
                  pred_alpha: bool = False,
                  pred_stroke_width: bool = False,
                  max_stroke_width: float = 10.0,
-                 radius:float = 3.):
+                 radius:float = 3.,):
         super(CNNVectorHead, self).__init__()
 
         self.latent_dim = latent_dim
@@ -215,6 +215,12 @@ class CNNVectorHead(nn.Module):
         )
 
         # TODO do color and alpha and all that
+        self.color_predictor = None
+        if self.pred_color:
+            self.color_predictor = nn.Sequential(
+                nn.Linear(self.latent_dim, 3, bias=False),
+                nn.Sigmoid()
+            )
 
     def sample_circle(self, r, angles):
         """
@@ -223,7 +229,7 @@ class CNNVectorHead(nn.Module):
         pos = [(torch.cos(angles) * r), (torch.sin(angles) * r)]
         return torch.stack(pos, dim=-1)
     
-    def raster(self, all_points, white_background=True):
+    def raster(self, all_points, colors=None, white_background=True):
 
         render_size = self.imsize
         bs = all_points.shape[0]
@@ -232,8 +238,11 @@ class CNNVectorHead(nn.Module):
         scenes = []
         all_points = all_points*render_size
         num_ctrl_pts = torch.zeros(self.segments, dtype=torch.int32).to(all_points.device) + 2
-        color = torch.tensor([0,0,0,1]).to(all_points.device)
         for k in range(bs):
+            if colors is None:
+                color = torch.tensor([0,0,0,1]).to(all_points.device)
+            else:
+                color = colors[k].to(all_points.device)
             # Get point parameters from network
             render = pydiffvg.RenderFunction.apply
             shapes = []
@@ -277,6 +286,15 @@ class CNNVectorHead(nn.Module):
         device = z.device
         bs = z.shape[0]
 
+        if self.color_predictor:
+            all_colors = self.color_predictor(z)
+            # all_colors = all_colors.view(bs, 1, 4)
+            all_colors = all_colors.view(bs, 3)
+            # FIXME for now we add a new channel and set alpha to 1 manually
+            all_colors = torch.cat([all_colors, torch.ones(bs, 1).to(device)], dim=-1)
+        else:
+            all_colors = None
+
         # print("z.shape: ", z.shape)
         z = z[:,None,:].repeat(1, self.segments*3, 1)
         # print("z.shape: ", z.shape)
@@ -288,10 +306,7 @@ class CNNVectorHead(nn.Module):
         # first convert to 2D, then apply CNN, then convert back to 3D
         # feats = feats.view(bs * z.shape[1], self.latent_dim + 4)
         feats = feats.permute(0, 2, 1)
-        # print("feats.shape: ", feats.shape)
-        # for layer in self.point_predictor:
-        #     print(layer)
-        #     feats = layer(feats)
+
         all_points = self.point_predictor.forward(feats)
         # all_points = all_points.view(bs, z.shape[1], 2)
 
@@ -305,7 +320,8 @@ class CNNVectorHead(nn.Module):
         
 
         output, scenes = self.raster(
-            all_points
+            all_points,
+            colors=all_colors
         )
 
         # map to [-1, 1]

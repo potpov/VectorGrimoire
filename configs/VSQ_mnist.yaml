@@ -8,6 +8,7 @@ model_params:
   vq_method: "fsq"  # "vqvae", "FSQ", "vqtorch"
   fsq_levels: [7,5,5,5,5]  # will determine codebook_size, see Table 1 of FSQ paper - [7,5,5,5,5] for 4096 (e.g. StrokeNUWA), [8,5,5,5] for 1024
   num_segments: 5
+  pred_color: true
 
 data_params:
   dataset: "mnist"
@@ -16,7 +17,8 @@ data_params:
   val_batch_size:  16
   patch_size: 128 # HAS TO BE 224 FOR CLIP RES50 TO WORK, otherwise take 128
   num_workers: 8
-  num_tiles_per_row: 3
+  num_tiles_per_row: 2
+  random_colors: true
 
 exp_params:
   lr: 0.00002  # 0.00002
@@ -35,8 +37,8 @@ logging_params:
   project: "thesis"  # your wandb project name
 #  save_dir: "/scratch/mcipriano/results/svg/all_full_single_code"
   save_dir: "/scratch2/moritz_logs/VSQ/TiledMNIST"
-  name: "VSQ MNIST, CNN head, num_tiles = 3"  # name of the run in wandb
-  version: 0
+  name: "VSQ MNIST, Color CNN head, num_tiles = 2"  # name of the run in wandb
+  version: 1
   author: "Moritz"  # will be a tag in wandb
   # id: null  # id of wandb run to continue
   # allow_val_change: False  # allow changing values in this config w.r.t. the run that you're continuing (good for changing loss weightings mid-run)

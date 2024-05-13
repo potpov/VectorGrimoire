@@ -1436,6 +1436,33 @@ class TiledMNIST(Dataset):
                 self.image_paths.append(image_path)
                 self.labels.append(label)
 
+    def _recolor_stroke(self, tensor_image):
+        """
+        Adjust the color of the stroke in an MNIST digit image represented as a tensor.
+        The function converts black strokes to a random RGB color in the range [0, 1].
+        
+        Args:
+        tensor_image (torch.Tensor): A 3D tensor representing the image (C, H, W) in RGB format.
+        
+        Returns:
+        torch.Tensor: The modified image tensor with recolored strokes.
+        """
+
+        if tensor_image.device != 'cpu':
+            tensor_image = tensor_image.cpu()
+        if tensor_image.dim() != 3 or tensor_image.shape[0] != 3:
+            raise ValueError("The input tensor must have shape (3, H, W)")
+        
+        random_color = torch.rand(3, dtype=torch.float32)
+        
+        black_pixels = (tensor_image < 0.9).all(0)  # Allow a small threshold for robustness
+        
+        # Recolor the black pixels
+        for i in range(3):
+            tensor_image[i][black_pixels] = random_color[i]
+        
+        return tensor_image
+
     def __getitem__(self, index):
         image_path = self.image_paths[index]
         label = self.labels[index]
@@ -1443,6 +1470,9 @@ class TiledMNIST(Dataset):
         image = Image.open(image_path)
         if self.transform is not None:
             image = self.transform(image)
+
+        if self.random_colors:
+            image = self._recolor_stroke(image)
 
         patches = []
         for i in range(0, image.shape[1], self.patch_size):

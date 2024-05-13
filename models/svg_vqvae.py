@@ -169,6 +169,7 @@ class Vector_VQVAE(nn.Module):
                  num_segments:int = 1,
                  geometric_constraint: str = None,
                  geometric_constraint_weight: float = 0.1,
+                 pred_color:bool=False,
                  **kwargs) -> None:
         super(Vector_VQVAE, self).__init__()
 
@@ -183,6 +184,7 @@ class Vector_VQVAE(nn.Module):
         self.fsq_levels = fsq_levels
         self.num_segments = num_segments
         self.num_codes_per_shape = num_codes_per_shape
+        self.pred_color = pred_color
 
         if geometric_constraint is not None:
             self.geometric_constraint = geometric_constraint
@@ -228,7 +230,8 @@ class Vector_VQVAE(nn.Module):
             self.decoder = CNNVectorHead(latent_dim = self.quantized_dim * self.num_codes_per_shape,
                                         segments = self.num_segments,
                                         imsize = 128,
-                                        max_stroke_width=20.)
+                                        max_stroke_width=20.,
+                                        pred_color=self.pred_color,)
         elif self.vector_decoder_model == "raster_conv":
             self.decoder = DeconvResNet()
 
