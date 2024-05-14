@@ -314,7 +314,7 @@ class Vector_VQVAE(nn.Module):
         else:
             return [reconstructions, input, all_points, vq_loss], logging_dict
     
-    def gaussian_pyramid_loss(self, recons_images: Tensor, gt_images: Tensor, down_sample_steps: int = 3, log_loss: bool = False):
+    def gaussian_pyramid_loss(self, recons_images: Tensor, gt_images: Tensor, down_sample_steps: int = 3, log_loss: bool = False, pyramid_weights:Tensor = None):
         """
         Calculates the gaussian pyramid loss between reconstructed images and ground truth images.
 
@@ -329,27 +329,33 @@ class Vector_VQVAE(nn.Module):
         dsample = kornia.geometry.transform.pyramid.PyrDown()
         timesteps_to_log = 4
         recon_loss = F.mse_loss(recons_images, gt_images, reduction='none')
-        recons_loss_contributions = {}
         if log_loss:
             all_loss_images = []
             all_loss_images.append(self.transform_loss_tensor_to_image(recon_loss[:timesteps_to_log]))
-        recon_loss = recon_loss.mean()
-        for j in range(2, 2 + down_sample_steps):
-            weight = 1 / j
+        recon_loss = recon_loss.mean() * pyramid_weights[0]
+        recons_loss_contributions = {
+            "pyramid_loss_step_0" : recon_loss.detach().cpu().item()
+        }
+        for j in range(1, 1 + down_sample_steps):
+            if j < len(pyramid_weights):
+                weight = pyramid_weights[j]
+            else:
+                weight = 0.0
+
             recons_images = dsample(recons_images)
             gt_images = dsample(gt_images)
             loss_images = F.mse_loss(recons_images, gt_images, reduction='none')
             if log_loss:
                 all_loss_images.append(self.transform_loss_tensor_to_image(loss_images[:timesteps_to_log]))
 
-            curr_pyramid_loss = loss_images.mean() / weight
-            recons_loss_contributions[f"pyramid_loss_step_{j-1}"] = curr_pyramid_loss
+            curr_pyramid_loss = loss_images.mean() * weight
+            recons_loss_contributions[f"pyramid_loss_step_{j}"] = curr_pyramid_loss.detach().cpu().item()
             recon_loss = recon_loss + curr_pyramid_loss
 
         if log_loss:
             log_all_images(all_loss_images, log_key="pyramid loss", caption=f"Gaussian Pyramid Loss, {down_sample_steps+1} steps")
             wandb.log(recons_loss_contributions)
-        return recon_loss
+        return recon_loss, recons_loss_contributions
 
     def _get_mean_inner_distance(self,
                         points: Tensor) -> Tensor:
@@ -372,8 +378,9 @@ class Vector_VQVAE(nn.Module):
                       **kwargs) -> dict:
         if self.image_loss == "mse":
             recons_loss = F.mse_loss(reconstructions, gt_images)
+            recons_loss_contributions = {}
         elif self.image_loss == "pyramid":
-            recons_loss = self.gaussian_pyramid_loss(reconstructions, gt_images, down_sample_steps=3, log_loss=log_loss)
+            recons_loss, recons_loss_contributions = self.gaussian_pyramid_loss(reconstructions, gt_images, down_sample_steps=3, log_loss=log_loss, pyramid_weights=kwargs["pyramid_weights"])
         else:
             raise NotImplementedError("Only mse and pyramid loss implemented for now.")
         if self.geometric_constraint == "inner_distance":
@@ -390,7 +397,8 @@ class Vector_VQVAE(nn.Module):
         return {'loss': loss,
                 'Reconstruction_Loss': recons_loss,
                 'VQ_Loss':vq_loss,
-                self.geometric_constraint+"_loss" : self.geometric_constraint_weight * geometric_loss}
+                self.geometric_constraint+"_loss" : self.geometric_constraint_weight * geometric_loss,
+                **recons_loss_contributions}
     
 
     def generate(self, x: Tensor, **kwargs) -> Tensor:

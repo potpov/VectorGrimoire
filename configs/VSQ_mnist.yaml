@@ -28,6 +28,8 @@ exp_params:
   scheduler_gamma: 0.98  # 0.95 is a good starting value
   train_log_interval: 0.025 # len(dataset) / train_batch_size / desired_logging_frequency
   manual_seed: 1265
+  schedule_pyramid_method: "linear"  # "linear" or "exponential" or null to disable scheduling, default disabled
+
 
 trainer_params:
   devices: -1  # always keep at -1 as this takes all available GPUs specified through CUDA_VISIBLE_DEVICES

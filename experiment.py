@@ -7,7 +7,7 @@ from torch import optim
 import wandb
 from models import BaseVAE, VectorVAEnLayers, VectorGPT, VectorGPTv2, Vector_VQVAE, VQ_SVG_Stage2
 import pytorch_lightning as pl
-from utils import log_images, log_all_images, get_side_by_side_reconstruction, add_points_to_image, get_merged_image_for_logging
+from utils import log_images, log_all_images, get_side_by_side_reconstruction, add_points_to_image, get_merged_image_for_logging, interpolate_rows
 from torchmetrics.image.fid import FrechetInceptionDistance
 from torchmetrics.multimodal.clip_score import CLIPScore
 import torch.nn.functional as F
@@ -324,6 +324,7 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
     def __init__(self,
                  model: Vector_VQVAE,
                  lr: float = 0.0003,
+                 schedule_pyramid_method: str = None,
                  weight_decay: float = 0.0,
                  scheduler_gamma: float = 0.99,
                  train_log_interval: float = 0.05,
@@ -358,6 +359,18 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
         self.datamodule = datamodule
         self.scheduler_type = scheduler_type
         self.step_size = step_lr_epoch_step_size
+        self.schedule_pyramid_method = schedule_pyramid_method
+        
+        self.start_weights = torch.tensor([1/2, 1/2, 1/2, 1/4, 1/4, 1/8, 1/8])
+        self.end_weights = torch.tensor([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+        interpolation_epochs = 10
+
+        if self.schedule_pyramid_method.lower() == "linear":
+            self.pyramid_weight_schedule = interpolate_rows(self.start_weights, self.end_weights, interpolation_epochs, method="linear")
+        elif self.schedule_pyramid_method.lower() == "exponential":
+            self.pyramid_weight_schedule = interpolate_rows(self.start_weights, self.end_weights, interpolation_epochs, method="exponential")
+        else:
+            self.pyramid_weight_schedule = self.start_weights.unsqueeze(0)
 
     def forward(self, input_images: Tensor, logging=False,**kwargs) -> list:
         out, logging_dict = self.model.forward(input_images, logging=logging, **kwargs)
@@ -377,11 +390,20 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
         all_points = out[2]
         vq_loss=out[3]
 
+        if self.schedule_pyramid_method is not None:
+            if self.current_epoch < len(self.pyramid_weight_schedule):
+                pyramid_weights = self.pyramid_weight_schedule[self.current_epoch]
+            else:
+                pyramid_weights = self.pyramid_weight_schedule[-1]
+        else:
+            pyramid_weights = self.start_weights
+
         loss_dict = self.model.loss_function(
             reconstructions=reconstructions[:,:channels,:,:],
             gt_images=inputs,
             vq_loss=vq_loss,
             points=all_points,
+            pyramid_weights=pyramid_weights
         )
     
         # always log the first batch and variable amount of timesteps up to 10
@@ -432,11 +454,15 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
             vq_loss=out[3]
             assert vq_loss.dim() <= 1, f"vq_loss should be a 1D tensor, but got {vq_loss.dim()}"
 
+            # for validation we only track MSE
+            pyramid_weights = torch.tensor([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+
             loss_dict = self.model.loss_function(
                 reconstructions=reconstructions[:,:channels,:,:],
                 gt_images=inputs,
                 vq_loss=vq_loss,
                 points=all_points,
+                pyramid_weights=pyramid_weights
             )
             # log_reconstructions = add_points_to_image(all_points, reconstructions[:,:3,:,:], image_scale=reconstructions.shape[-1])
             if batch_idx % self.val_log_interval == 0 and self.wandb:

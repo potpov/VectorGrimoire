@@ -17,6 +17,33 @@ from torchvision.transforms import ToTensor
 import re
 import matplotlib.colors as mcolors
 
+def interpolate_rows(a, b, n, method='linear'):
+    """
+    Interpolates rows between a and b in n steps using the specified method. Used in weight interpolation of pyramid loss
+    
+    Parameters:
+    a (numpy array): The first row.
+    b (numpy array): The last row.
+    n (int): Number of interpolation steps.
+    method (str): Interpolation method, either 'linear' or 'exponential'.
+    
+    Returns:
+    numpy array: A 2D array with interpolated rows.
+    """
+    # Initialize the tensor
+    tensor = np.zeros((n, len(a)))
+    
+    # Fill the tensor with interpolated values
+    for i in range(n):
+        if method == 'linear':
+            tensor[i] = a + i / (n - 1) * (b - a)
+        elif method == 'exponential':
+            tensor[i] = np.exp(np.log(a) + i / (n - 1) * (np.log(b + 1e-10) - np.log(a)))
+        else:
+            raise ValueError("Invalid method. Use 'linear' or 'exponential'.")
+    
+    return tensor
+
 def get_color_gradient(num_colors: int, start_color="red", end_color="blue"):
     gradient = mcolors.LinearSegmentedColormap.from_list('gradient', [start_color, end_color])
     colors = [gradient(i / num_colors) for i in range(num_colors)]
