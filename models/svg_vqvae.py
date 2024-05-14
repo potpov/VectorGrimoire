@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from torch import Tensor
 import wandb
 from utils import log_all_images, tensor_to_histogram_image, calculate_global_positions, shapes_to_drawing, svg_string_to_tensor
-from models.resnet import ResNet, BasicBlock
+from torchvision.models import ResNet, resnet18
 from models.vq_vae import VectorQuantizer
 from models.mlp_vector_head import MLPVectorHeadFixed, CNNVectorHead
 from models.mlp import MultiLayerPerceptron
@@ -162,6 +162,7 @@ class Vector_VQVAE(nn.Module):
                  vector_decoder_model: str = "mlp",
                  quantized_dim: int = 256,
                  codebook_size: int = 512,
+                 patch_size:int=128,
                  image_loss: str = "pyramid",
                  num_codes_per_shape: int = 1,
                  vq_method:str = "fsq",
@@ -185,6 +186,7 @@ class Vector_VQVAE(nn.Module):
         self.num_segments = num_segments
         self.num_codes_per_shape = num_codes_per_shape
         self.pred_color = pred_color
+        self.patch_size = patch_size
 
         if geometric_constraint is not None:
             self.geometric_constraint = geometric_constraint
@@ -198,13 +200,7 @@ class Vector_VQVAE(nn.Module):
         else:
             self.codebook_size = codebook_size
 
-        self.encoder = ResNet(BasicBlock,
-                              [2, 2, 2, 2],
-                              10,
-                              skip_linear=True)  # outputs (b, 512, 4, 4) - final W x H essentially decides the number of quantized vectors that form a single image, here its 4*4=16
-
-        self.encoder = nn.Sequential(self.encoder,
-                                        nn.Conv2d(512, self.quantized_dim * self.num_codes_per_shape, kernel_size=4, stride=4, padding=0))  # no ReLU here, we want to keep the negative values for the quantization
+        self.encoder = resnet18(num_classes = self.quantized_dim * self.num_codes_per_shape)
 
         if self.vq_method == "vqvae":
             self.quantize_layer = VectorQuantizer(num_embeddings = self.codebook_size,
@@ -224,12 +220,12 @@ class Vector_VQVAE(nn.Module):
         if self.vector_decoder_model == "mlp":
             self.decoder = MLPVectorHeadFixed(latent_dim = self.quantized_dim * self.num_codes_per_shape,
                                               segments = self.num_segments,
-                                              imsize = 128,
+                                              imsize = self.patch_size,
                                               max_stroke_width=20.)
         elif self.vector_decoder_model == "cnn":
             self.decoder = CNNVectorHead(latent_dim = self.quantized_dim * self.num_codes_per_shape,
                                         segments = self.num_segments,
-                                        imsize = 128,
+                                        imsize = self.patch_size,
                                         max_stroke_width=20.,
                                         pred_color=self.pred_color,)
         elif self.vector_decoder_model == "raster_conv":
@@ -242,7 +238,9 @@ class Vector_VQVAE(nn.Module):
         :param input: (Tensor) Input tensor to encoder [N x C x H x W]
         :return: (Tensor) latent codes
         """
-        result = self.encoder.forward(input)
+        result = self.encoder.forward(input)  # output from default resnet pytorch is (bs, self.quantized_dim * self.num_codes_per_shape)
+        while result.dim() < 4:
+            result = result.unsqueeze(-1)
         if self.num_codes_per_shape > 1:
             result = rearrange(result, 'b (c2 c) h w -> b c2 (c h) w', c2=self.quantized_dim)
         # result = self.mapping_layer(result.view(-1, 512 * 4 * 4))

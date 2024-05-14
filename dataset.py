@@ -1417,6 +1417,7 @@ class TiledMNIST(Dataset):
                  transform=None,
                  num_tiles_per_row:int = 5,
                  random_colors:bool=False,
+                 use_palette:bool=True,
                  total_padding:int=20,):
         super(TiledMNIST, self)
         self.root = root
@@ -1425,6 +1426,7 @@ class TiledMNIST(Dataset):
         self.patch_size = patch_size
         self.num_tiles_per_row = num_tiles_per_row
         self.random_colors = random_colors
+        self.use_palette = use_palette
         self.total_padding = total_padding
 
         self.image_folder = os.path.join(root, "training" if train else "testing")
@@ -1491,13 +1493,13 @@ class TiledMNIST(Dataset):
             image = self.transform(image)
 
         if self.random_colors:
-            image = self._recolor_stroke(image)
+            image = self._recolor_stroke(image, use_palette=self.use_palette)
 
         patches = []
 
         single_side_padding = self.total_padding // 2
-        for i in range(0, image.shape[1], self.patch_size - self.total_padding):
-            for j in range(0, image.shape[2], self.patch_size - self.total_padding):
+        for i in range(0, image.shape[1], self.patch_size - single_side_padding * 2):
+            for j in range(0, image.shape[2], self.patch_size - single_side_padding * 2):
                 patch = image[:, i : i + self.patch_size - self.total_padding, j : j + self.patch_size - self.total_padding]
                 patch = F.pad(patch, (single_side_padding, single_side_padding, single_side_padding, single_side_padding), value=1.)
                 patches.append(patch)       
@@ -1815,12 +1817,13 @@ class MNISTDataset(LightningDataModule):
         data_path: str,
         train_batch_size: int = 8,
         val_batch_size: int = 8,
-        patch_size: Union[int, Sequence[int]] = (256, 256),
+        patch_size: int = 128,
         num_tiles_per_row:int = 1,
         num_workers: int = 0,
         pin_memory: bool = False,
         random_colors:bool=False,
-        total_padding:int = 20,
+        use_palette:bool=True,
+        padding_frac:float = 0.1,
         **kwargs,
     ):
         super().__init__()
@@ -1833,7 +1836,9 @@ class MNISTDataset(LightningDataModule):
         self.pin_memory = pin_memory
         self.num_tiles_per_row = num_tiles_per_row
         self.random_colors = random_colors
-        self.total_padding = total_padding
+        self.use_palette = use_palette
+        self.padding_frac = padding_frac
+        self.total_padding = (int(self.patch_size * self.padding_frac) // 2) * 2
 
     def collate_fn(self, batch):
         patches, labels, _, _ = zip(*batch)  # (tiles, channels, height, width)
@@ -1871,6 +1876,9 @@ class MNISTDataset(LightningDataModule):
             transform=train_transforms,
             num_tiles_per_row=self.num_tiles_per_row,
             random_colors=self.random_colors,
+            patch_size = self.patch_size,
+            total_padding = self.total_padding,
+            use_palette=self.use_palette
 
         )
 
@@ -1880,6 +1888,9 @@ class MNISTDataset(LightningDataModule):
             transform=val_transforms,
             num_tiles_per_row=self.num_tiles_per_row,
             random_colors=self.random_colors,
+            patch_size = self.patch_size,
+            total_padding = self.total_padding,
+            use_palette=self.use_palette
         )
 
     #       ===============================================================

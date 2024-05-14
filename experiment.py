@@ -323,7 +323,6 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
 
     def __init__(self,
                  model: Vector_VQVAE,
-                 vector_decoder_model: str = "mlp",  # or mlp
                  lr: float = 0.0003,
                  weight_decay: float = 0.0,
                  scheduler_gamma: float = 0.99,
@@ -346,7 +345,6 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
         self.num_batches_val = len(datamodule.val_dataloader())
 
         self.model = model
-        self.vector_decoder_model = vector_decoder_model
         self.lr = lr
         self.total_steps = max_epochs * self.num_batches_train
         self.min_lr = min_lr

@@ -108,11 +108,11 @@ else:
 seed_everything(config['exp_params']['manual_seed'], True)
 print("Loading model...")
 if args.wandb:
-    model = MODELS[config['model_params']['name']](**config['model_params'], wandb_logging=True)
+    model = MODELS[config['model_params']['name']](patch_size = config['data_params']["patch_size"],**config['model_params'], wandb_logging=True)
     # wandb_logger.watch(model, log="gradients", log_freq=500, log_graph=False)
     # wandb.watch(model, log='all', log_freq=100)  # can be "all"
 else:
-    model = MODELS[config['model_params']['name']](**config['model_params'])
+    model = MODELS[config['model_params']['name']](patch_size = config['data_params']["patch_size"], **config['model_params'])
 print("Loading dataset...")
 if config['model_params']['name'] == "VectorGPT":
     data = DATASETMAP[config["data_params"]["dataset"]](**config["data_params"])

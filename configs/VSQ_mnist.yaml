@@ -7,7 +7,7 @@ model_params:
   single_code_representation: true
   vq_method: "fsq"  # "vqvae", "FSQ", "vqtorch"
   fsq_levels: [7,5,5,5,5]  # will determine codebook_size, see Table 1 of FSQ paper - [7,5,5,5,5] for 4096 (e.g. StrokeNUWA), [8,5,5,5] for 1024
-  num_segments: 5
+  num_segments: 15
   pred_color: true
 
 data_params:
@@ -15,10 +15,12 @@ data_params:
   data_path: "/home/mfeuerpfeil/master/thesis/datasets/mnist_png"
   train_batch_size: 16
   val_batch_size:  16
-  patch_size: 128 # HAS TO BE 224 FOR CLIP RES50 TO WORK, otherwise take 128
+  patch_size: 34 # HAS TO BE 224 FOR CLIP RES50 TO WORK, otherwise take 128
   num_workers: 8
-  num_tiles_per_row: 2
+  num_tiles_per_row: 3
   random_colors: true
+  use_palette: true  # use a color palette of 9 colors rather than random colors
+  padding_frac: 0.1  # fraction of the image that is padded with white background
 
 exp_params:
   lr: 0.00002  # 0.00002
@@ -37,7 +39,7 @@ logging_params:
   project: "thesis"  # your wandb project name
 #  save_dir: "/scratch/mcipriano/results/svg/all_full_single_code"
   save_dir: "/scratch2/moritz_logs/VSQ/TiledMNIST"
-  name: "VSQ MNIST, Color CNN head, num_tiles = 2"  # name of the run in wandb
+  name: "VSQ MNIST, Color CNN head, num_tiles = 3, 34x34"  # name of the run in wandb
   version: 1
   author: "Moritz"  # will be a tag in wandb
   # id: null  # id of wandb run to continue
