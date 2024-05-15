@@ -367,7 +367,7 @@ class RasterVQTokenizer(nn.Module):
         centers = (indices * patch_size + patch_size // 2).float()
 
         # Create a grid of center positions
-        grid_x, grid_y = torch.meshgrid(centers, centers, indexing="ij")
+        grid_x, grid_y = torch.meshgrid(centers, centers, indexing="xy")
         center_positions = torch.stack([grid_x, grid_y], dim=-1).reshape(-1, 2)
 
         return center_positions
@@ -436,7 +436,7 @@ class RasterVQTokenizer(nn.Module):
             pos_tokens = torch.tensor([]).int()
         text_tokens = self.tokenize_text(text)
         if self.tokens_per_patch == 1:
-            vq_tokens = torch.stack([patch_tokens, pos_tokens], dim=1).reshape(-1).int()
+            vq_tokens = torch.stack([patch_tokens, pos_tokens], dim=1).reshape(-1).int() if positions is not None else patch_tokens
         else:
             raise NotImplementedError("Merging not implemented for tokens_per_patch > 1")
         
@@ -470,6 +470,7 @@ class RasterVQTokenizer(nn.Module):
             Tensor: Tensor of shape (num_patches, channels, patch_res, patch_res)
         else:
             Tensor: Tensor of shape (num_patches, num_points, 2)
+            dict : visual attribute dict
         """
         if self.use_text_encoder_only:
             raise NotImplementedError("Decoding patches is not supported when using the text encoder only.")
@@ -558,14 +559,15 @@ class RasterVQTokenizer(nn.Module):
                      visual_attribute_dict:dict,
                      center_positions: Tensor = None,
                      w=480) -> Drawing:
-        assert len(bezier_points) == len(self.all_possible_positions), f"Number of bezier points ({len(bezier_points)}) does not match number of possible positions of patches ({len(self.all_possible_positions)})."
+        # assert len(bezier_points) == len(self.all_possible_positions), f"Number of bezier points ({len(bezier_points)}) does not match number of possible positions of patches ({len(self.all_possible_positions)})."
         points_diff_to_center = bezier_points - 0.5
-        scaled_points_diff_to_center = points_diff_to_center * self.full_image_res
+        scaled_points_diff_to_center = points_diff_to_center * (self.full_image_res / self.num_tiles_per_row)
         if center_positions is not None:
             global_positions = scaled_points_diff_to_center + center_positions[:,None,:].repeat(1, scaled_points_diff_to_center.size(1), 1)
         else:
-            global_positions = scaled_points_diff_to_center + self.all_possible_positions[:,None,:].repeat(1, scaled_points_diff_to_center.size(1), 1)
+            global_positions = scaled_points_diff_to_center + self.all_possible_positions[:len(bezier_points),None,:].repeat(1, scaled_points_diff_to_center.size(1), 1)
 
+        global_positions = global_positions / self.full_image_res
         reconstructed_drawing = shapes_to_drawing(global_positions, stroke_width=None, w=w, mode="circles", visual_attribute_dict=visual_attribute_dict)
         return reconstructed_drawing
     

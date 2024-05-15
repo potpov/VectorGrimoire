@@ -353,6 +353,7 @@ def shapes_to_drawing(shapes:Tensor,
         attributes = base_attribute.copy()
         attributes["stroke-width"] = f"{stroke_widths[i]}"
         attributes["stroke"] = colors[i]
+        attributes["fill"] = colors[i]
         all_attributes.append(attributes)
     drawing = disvg(all_shapes, attributes=all_attributes, paths2Drawing=True, viewbox=f"0 0 72 72", dimensions=(w, w))  # I think the 72 comes from the simplified svg files
     return drawing
