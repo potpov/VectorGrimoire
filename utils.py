@@ -268,23 +268,63 @@ def stroke_to_path(my_tensor: Tensor):
         all_paths.append(stroke_points_to_bezier(my_tensor[start_idx:end_idx]))
     return Path(*all_paths)
 
-def shapes_to_drawing(shapes:Tensor, stroke_width:float|List, w=128, num_strokes_to_paint:int = 0, linecap="round", linejoin="round") -> Drawing:
+def rgb_to_hex(r, g, b):
+    """
+    Convert RGB values between [0,1] to a hex color string suitable for SVG.
+
+    Returns:
+    str: Hex color string (e.g., "#4A5699").
+    """
+    # Ensure the RGB values are within the valid range
+    r = min(1, max(0, r))
+    g = min(1, max(0, g))
+    b = min(1, max(0, b))
+
+    # Convert to 0-255 range
+    r = int(r * 255)
+    g = int(g * 255)
+    b = int(b * 255)
+
+    # Format as a hex string
+    return f"#{r:02X}{g:02X}{b:02X}"
+
+def shapes_to_drawing(shapes:Tensor, 
+                      stroke_width:float|List, 
+                      w=128, 
+                      num_strokes_to_paint:int = 0, 
+                      linecap="round", 
+                      linejoin="round",
+                      mode="stroke",
+                      visual_attribute_dict:dict=None) -> Drawing:
     """
     expects shapes to be in shape (n, 1+3*num_segments, 2)
     """
     assert linecap in ["round", "butt", "square"], "linecap must be either 'round', 'butt' or 'square'."
     assert linejoin in ["round", "bevel", "miter"], "linejoin must be either 'round', 'bevel' or 'miter'."
 
-    base_attribute = {
-        "fill": "none",
-        "fill-opacity": "1.0",
-        "filling": "0",
-        "stroke":"black",
-        "stroke-width":"1",
-        "stroke-linecap":linecap,
-        "stroke-linejoin" : linejoin
+    if mode == "stroke":
+        base_attribute = {
+            "fill": "none",
+            "fill-opacity": "1.0",
+            "filling": "0",
+            "stroke":"black",
+            "stroke-width":"1",
+            "stroke-linecap":linecap,
+            "stroke-linejoin" : linejoin
 
-    }
+        }
+    else:
+        base_attribute = {
+            "fill": "none",
+            "fill-opacity": "1.0",
+            "filling": "0",
+            "stroke":"black",
+            "stroke-width":"1",
+            "stroke-linecap":linecap,
+            "stroke-linejoin" : linejoin
+
+        }
+
     if shapes.mean() < 2.0:
         shapes = shapes * 72
     assert shapes.mean() > 1.0 and shapes.mean() < 72.0, "shapes should be already scaled in range 0. - 72."
@@ -293,11 +333,21 @@ def shapes_to_drawing(shapes:Tensor, stroke_width:float|List, w=128, num_strokes
         all_shapes.append(stroke_to_path(shape))
     if num_strokes_to_paint > len(all_shapes):
         num_strokes_to_paint = len(all_shapes)
-    colors = ["red"] * num_strokes_to_paint + ["black"] * (len(all_shapes) - num_strokes_to_paint)
+    
+    if mode == "stroke":
+        colors = ["red"] * num_strokes_to_paint + ["black"] * (len(all_shapes) - num_strokes_to_paint)
+    else:
+        colors = visual_attribute_dict["colors"].cpu() # (num_circles, 4)
+        colors = [rgb_to_hex(color[0].item(), color[1].item(), color[2].item()) for color in colors] # -> (num_circles)
+    
     if isinstance(stroke_width, float):
         stroke_widths = [stroke_width] * len(all_shapes)
     elif isinstance(stroke_width, list):
         stroke_widths = stroke_width
+    else:
+        stroke_widths = visual_attribute_dict["stroke_widths"].cpu() # (num_circles, num_strokes, 1)
+        # NOTE future should use all individually or just predict 1 value, use mean of prediction for now
+        stroke_widths = [stroke_width.mean().item() for stroke_width in stroke_widths]  # -> (num_circles)
     all_attributes = []
     for i, shape in enumerate(all_shapes):
         attributes = base_attribute.copy()

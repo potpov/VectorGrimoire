@@ -324,10 +324,16 @@ class CNNVectorHead(nn.Module):
             colors=all_colors
         )
 
+        visual_attribute_dict = {
+            "stroke_widths" : all_widths,
+            "alphas" : all_alphas,
+            "colors": all_colors
+        }
+
         # map to [-1, 1]
         # output = output*2.0 - 1.0
 
-        return [output, scenes, all_points, all_widths], logging_dict
+        return [output, scenes, all_points, visual_attribute_dict], logging_dict
 
 
 class MLPVectorHeadFixed(nn.Module):
@@ -431,10 +437,17 @@ class MLPVectorHeadFixed(nn.Module):
             primitive=primitive
         )
 
+        visual_attribute_dict = {
+            "stroke_widths" : all_widths,
+            "alphas" : all_alphas,
+            "colors": all_colors
+        }
+
         # map to [-1, 1]
         # output = output*2.0 - 1.0
 
-        return [output, scenes, all_points, all_widths], logging_dict
+        return [output, scenes, all_points, visual_attribute_dict], logging_dict
+    
     def render(self,
                 canvas_width, 
                 canvas_height, 
