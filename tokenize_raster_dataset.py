@@ -47,13 +47,10 @@ def main():
     rlimit = resource.getrlimit(resource.RLIMIT_NOFILE)
     resource.setrlimit(resource.RLIMIT_NOFILE, (2048, rlimit[1]))
 
-    # MODEL_WEIGHTS_PATH = "/scratch/mcipriano/results/svg/all_full_single_code/checkpoints/last-v1.ckpt"
-    # MODEL_WEIGHTS_PATH = "/scratch/mcipriano/results/svg/figr8/checkpoints/epoch=0-step=10500.ckpt"
-    # MODEL_WEIGHTS_PATH = "/scratch/mcipriano/cache/svg/moritz_geometric.ckpt"
-    MODEL_WEIGHTS_PATH = None
-    CONFIG_PATH = "/home/moe/GitHub/thesis/configs/VSQ_mnist_local.yaml"
-    OUT_PATH = "/home/moe/GitHub/thesis/.data/tokenized_mnist"
-    BATCH_SIZE = 16
+    # setting 1 - 8x8 grid, full random color VSQ
+    MODEL_WEIGHTS_PATH = "/scratch2/moritz_logs/VSQ/ColoredTiledMNIST/checkpoints/last-v2.ckpt"
+    CONFIG_PATH = "configs/VSQ_mnist_sched.yaml"
+    OUT_PATH = "/scratch2/moritz_data/tokenized_mnist/8x8_randomcolor"
 
     with open(CONFIG_PATH, 'r') as file:
         try:
@@ -62,6 +59,16 @@ def main():
             print(exc)
 
     Path(OUT_PATH).mkdir(parents=True, exist_ok=True)
+    # copy model weights and config to OUT_PATH
+    if MODEL_WEIGHTS_PATH is not None and os.path.exists(MODEL_WEIGHTS_PATH):
+        os.system(f"cp {MODEL_WEIGHTS_PATH} {OUT_PATH}")
+    else:
+        raise ValueError(f"Model weights not found at {MODEL_WEIGHTS_PATH}")
+    if CONFIG_PATH is not None and os.path.exists(CONFIG_PATH):
+        os.system(f"cp {CONFIG_PATH} {OUT_PATH}")
+    else:
+        raise ValueError(f"Config not found at {CONFIG_PATH}")
+
     # Path(os.path.join(params["tokenized"], "train")).mkdir(parents=True, exist_ok=True)
     # Path(os.path.join(params["tokenized"], "test")).mkdir(parents=True, exist_ok=True)
     # if len(os.listdir(os.path.join(params["tokenized"], "train"))) > 0:
@@ -89,7 +96,8 @@ def main():
                                   tokens_per_patch=1, 
                                   do_tokenize_positions=False,
                                   patch_size=config['data_params']["patch_size"],
-                                  num_tiles_per_row=config['data_params']["num_tiles_per_row"],)
+                                  num_tiles_per_row=config['data_params']["num_tiles_per_row"],
+                                  device=device)
 
     print("Loading dataset..")
     config['data_params']["train_batch_size"] = 1
@@ -106,26 +114,33 @@ def main():
     print("Processing training set..")
 
     save_csv = {"index_in_numpy_array": [], "filename": [], "split": [], "label": []}
-    numpy_arrays = []
+    vsq_token_array = []
+    full_token_array = []
     numpy_counter = 0
     for split_name, split in {"train": dl_train, "test": dl_test}.items():
         for i, batch in tqdm(enumerate(split), total=len(split), desc=f"processing {split_name}"):
             imgs, labels, _, descriptions, filenames = batch
             # print(imgs, labels, centers, descriptions, filenames)
+            imgs = imgs.to(device)
             
-            print(imgs.shape, descriptions, filenames)
-            start_token, text_tokens, vq_tokens, end_token = tokenizer.tokenize(imgs.to(device), text=descriptions[0], return_np_uint16=True)
+            # print(imgs.shape, descriptions, filenames)
+            start_token, text_tokens, vq_tokens, end_token = tokenizer.tokenize(imgs, text=descriptions[0], return_np_uint16=True)
             save_csv["index_in_numpy_array"].append(numpy_counter)
             save_csv["filename"].append(filenames[0])
             save_csv["split"].append(split_name)
             save_csv["label"].append(labels[0])
             # print("vq_tokens: ",vq_tokens)
-            numpy_arrays.append(vq_tokens)
+            vsq_token_array.append(vq_tokens)
+            full_token_array.append(np.concatenate([start_token, text_tokens, vq_tokens, end_token]))
             numpy_counter += 1
             if numpy_counter % 200 == 0:
-                print(numpy_counter)
+                print("start_token: ", start_token)
+                print("text_tokens: ", text_tokens)
+                print("vq_tokens: ", vq_tokens)
+                print("end_token: ", end_token)
 
-    np.save(os.path.join(OUT_PATH, "tokenized.npy"), np.concatenate(numpy_arrays))
+    np.save(os.path.join(OUT_PATH, "vsq_tokenized.npy"), np.concatenate(vsq_token_array))
+    np.save(os.path.join(OUT_PATH, "full_tokenized.npy"), np.concatenate(full_token_array))
     df = pd.DataFrame(save_csv)
     df.to_csv(os.path.join(OUT_PATH, "split.csv"), index=False)
 
