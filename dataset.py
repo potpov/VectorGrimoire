@@ -1418,7 +1418,8 @@ class TiledMNIST(Dataset):
                  num_tiles_per_row:int = 5,
                  random_colors:bool=False,
                  use_palette:bool=True,
-                 total_padding:int=20,):
+                 total_padding:int=20,
+                 return_filename:bool=False,):
         super(TiledMNIST, self)
         self.root = root
         self.train = train
@@ -1428,6 +1429,7 @@ class TiledMNIST(Dataset):
         self.random_colors = random_colors
         self.use_palette = use_palette
         self.total_padding = total_padding
+        self.return_filename = return_filename
 
         self.image_folder = os.path.join(root, "training" if train else "testing")
 
@@ -1487,6 +1489,7 @@ class TiledMNIST(Dataset):
     def __getitem__(self, index):
         image_path = self.image_paths[index]
         label = self.labels[index]
+        filename = self.image_paths[index]
 
         image = Image.open(image_path)
         if self.transform is not None:
@@ -1506,7 +1509,10 @@ class TiledMNIST(Dataset):
                 
         patches = torch.stack(patches)
 
-        return patches, [label]*len(patches), "", ""  # has to fit to the experiment class, which is why I filled it with empty stuff
+        if self.return_filename:  # returning nothing is fine as tokenizer calculates positions
+            return patches, [label]*len(patches), "", str(label), filename  # has to fit to the experiment class, which is why I filled it with empty stuff
+        else:
+            return patches, [label]*len(patches), "", str(label)  # has to fit to the experiment class, which is why I filled it with empty stuff
         # return patches, label, "", ""  # has to fit to the experiment class, which is why I filled it with empty stuff
 
     def __len__(self):
@@ -1824,6 +1830,7 @@ class MNISTDataset(LightningDataModule):
         random_colors:bool=False,
         use_palette:bool=True,
         padding_frac:float = 0.1,
+        return_filename = False,
         **kwargs,
     ):
         super().__init__()
@@ -1839,14 +1846,18 @@ class MNISTDataset(LightningDataModule):
         self.use_palette = use_palette
         self.padding_frac = padding_frac
         self.total_padding = (int(self.patch_size * self.padding_frac) // 2) * 2
+        self.return_filename = return_filename
 
     def collate_fn(self, batch):
-        patches, labels, _, _ = zip(*batch)  # (tiles, channels, height, width)
+        if self.return_filename:
+            patches, labels, _, descriptions, filenames = zip(*batch)  # (tiles, channels, height, width)
+        else:
+            patches, labels, _, descriptions = zip(*batch)  # (tiles, channels, height, width)
         patches = torch.stack(patches, dim=0)  # (bs, tiles, channels, height, width)
         # use einops to merge bs and tiles dimensions
         if patches.dim() == 5:
             patches = patches.view(-1, *patches.shape[2:])
-        return patches, labels, "", ""
+        return patches, labels, "", descriptions, filenames
 
     def setup(self, stage: Optional[str] = None) -> None:
         # =========================  MNIST Dataset  =========================
@@ -1878,7 +1889,8 @@ class MNISTDataset(LightningDataModule):
             random_colors=self.random_colors,
             patch_size = self.patch_size,
             total_padding = self.total_padding,
-            use_palette=self.use_palette
+            use_palette=self.use_palette,
+            return_filename = self.return_filename
 
         )
 
@@ -1890,7 +1902,8 @@ class MNISTDataset(LightningDataModule):
             random_colors=self.random_colors,
             patch_size = self.patch_size,
             total_padding = self.total_padding,
-            use_palette=self.use_palette
+            use_palette=self.use_palette,
+            return_filename = self.return_filename
         )
 
     #       ===============================================================
