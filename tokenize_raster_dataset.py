@@ -48,9 +48,9 @@ def main():
     resource.setrlimit(resource.RLIMIT_NOFILE, (2048, rlimit[1]))
 
     # setting 1 - 8x8 grid, full random color VSQ
-    MODEL_WEIGHTS_PATH = "/scratch2/moritz_logs/VSQ/ColoredTiledMNIST/checkpoints/last-v2.ckpt"
-    CONFIG_PATH = "configs/VSQ_mnist_sched.yaml"
-    OUT_PATH = "/scratch2/moritz_data/tokenized_mnist/8x8_randomcolor"
+    MODEL_WEIGHTS_PATH = "/scratch/datasets/svg/mnist-shapes/tokenized_mnist/8x8_randomcolor/last-v2.ckpt"
+    CONFIG_PATH = "configs/VSQ_mnist.yaml"
+    OUT_PATH = "/scratch/datasets/svg/mnist-shapes/tokenized_mnist/8x8_randomcolor_marco"
 
     with open(CONFIG_PATH, 'r') as file:
         try:
@@ -113,8 +113,13 @@ def main():
 
     print("Processing training set..")
 
-    save_csv = {"index_in_numpy_array": [], "filename": [], "split": [], "label": []}
+    save_csv = {
+        "index_in_numpy_array": [], "filename": [],
+        "split": [], "label": [], "text_token_length": [],
+        "vq_token_length": []
+    }
     vsq_token_array = []
+    text_token_array = []
     full_token_array = []
     numpy_counter = 0
     for split_name, split in {"train": dl_train, "test": dl_test}.items():
@@ -129,8 +134,11 @@ def main():
             save_csv["filename"].append(filenames[0])
             save_csv["split"].append(split_name)
             save_csv["label"].append(labels[0])
+            save_csv["text_token_length"].append(len(text_tokens))
+            save_csv["vq_token_length"].append(vq_tokens)
             # print("vq_tokens: ",vq_tokens)
             vsq_token_array.append(vq_tokens)
+            text_token_array.append(text_tokens)
             full_token_array.append(np.concatenate([start_token, text_tokens, vq_tokens, end_token]))
             numpy_counter += 1
             if numpy_counter % 200 == 0:
@@ -140,6 +148,7 @@ def main():
                 print("end_token: ", end_token)
 
     np.save(os.path.join(OUT_PATH, "vsq_tokenized.npy"), np.concatenate(vsq_token_array))
+    np.save(os.path.join(OUT_PATH, "text_tokenized.npy"), np.concatenate(text_token_array))
     np.save(os.path.join(OUT_PATH, "full_tokenized.npy"), np.concatenate(full_token_array))
     df = pd.DataFrame(save_csv)
     df.to_csv(os.path.join(OUT_PATH, "split.csv"), index=False)
