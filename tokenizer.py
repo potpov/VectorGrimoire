@@ -405,8 +405,8 @@ class RasterVQTokenizer(nn.Module):
         Returns:
             Tensor: Tensor of shape (num_tokens) without any padding but with special tokens [CLS] and [SEP]
         """
-        tokens = torch.tensor(self.text_tokenizer.encode(text, add_special_tokens=True), device = self.device)
-        return tokens.cpu()
+        tokens = torch.tensor(self.text_tokenizer.encode(text, add_special_tokens=True))
+        return tokens
 
     def forward(self):
         pass
@@ -573,9 +573,10 @@ class RasterVQTokenizer(nn.Module):
     
     def _tokens_to_image_tensor(self, 
                                 tokens:Tensor,  
-                                only_patch_tokens:bool=False) -> Tensor:
+                                only_patch_tokens:bool=False,
+                                **kwargs) -> Tensor:
         
         bezier_points, visual_attribute_dict, positions = self.decode(tokens, ignore_special_tokens=True, only_patch_tokens=only_patch_tokens)
-        drawing = self.assemble_svg(bezier_points, visual_attribute_dict, positions, w=480)
+        drawing = self.assemble_svg(bezier_points.to(positions.device), visual_attribute_dict, positions, w=480)
         return_tensor = drawing_to_tensor(drawing)
         return return_tensor

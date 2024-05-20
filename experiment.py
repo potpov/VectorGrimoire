@@ -15,14 +15,14 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.optim.lr_scheduler import StepLR
 import pandas as pd
 from torchmetrics.functional.multimodal import clip_score
-from tokenizer import VQTokenizer
+from tokenizer import VQTokenizer, RasterVQTokenizer
 # import torch_optimizer as optim_
 from dataset import GlyphazznStage1Datamodule, MNISTDataset
 
 class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
     def __init__(self,
                  model: VQ_SVG_Stage2,
-                 tokenizer: VQTokenizer,
+                 tokenizer: VQTokenizer | RasterVQTokenizer,
                  num_batches_train: int,
                  num_batches_val: int,
                  lr: float = 0.0003,
@@ -109,7 +109,15 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
         if batch_idx % self.train_log_interval == 0 and self.wandb:
             out, logging_dict = self.forward(text_tokens, text_attention_mask, vq_tokens, logging=True)
             text_condition = self.tokenizer.decode_text(text_tokens[0])
-            rasterized_gt = self.tokenizer._tokens_to_image_tensor(vq_targets[:1], post_process=self.post_process)
+            if isinstance(self.tokenizer, RasterVQTokenizer):
+                self.tokenizer.use_text_encoder_only = False # TODO: why this gets changed somewhere!
+                rasterized_gt = self.tokenizer._tokens_to_image_tensor(
+                    vq_targets[:1],
+                    ignore_special_tokens=True,
+                    only_patch_tokens=True
+                )
+            else:
+                rasterized_gt = self.tokenizer._tokens_to_image_tensor(vq_targets[:1], post_process=self.post_process)
 
             # every third batch use temp = 0
             if batch_idx % (self.train_log_interval * 3) == 0:

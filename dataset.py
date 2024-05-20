@@ -201,7 +201,9 @@ class VQDataset(Dataset):
     
     def _get_tokenized_text(self, row):
         if self.dataset == "mnist":
-            return self.vq_numpy_array[row["index_in_numpy_array"]][1: 1 + row["text_token_length"]]  # pre-computed in one file
+            text_tokens = self.tokenizer.tokenize_text(row["description"])
+            assert len(text_tokens) == row["text_token_length"]
+            return text_tokens
         if self.dataset == "fonts":
             text_to_tokenize = np.random.choice([row["class"], 
                                                  row["description"], 

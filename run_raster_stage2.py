@@ -84,7 +84,9 @@ tokenizer = RasterVQTokenizer(vq_model,
                                 do_tokenize_positions=False,
                                 patch_size=config['data_params']["patch_size"],
                                 num_tiles_per_row=config['data_params']["num_tiles_per_row"],
-                                device=device)
+                                device=device,
+                                use_text_encoder_only=False
+                              )
 
 
 
@@ -92,11 +94,11 @@ tokenizer = RasterVQTokenizer(vq_model,
 seed_everything(config['exp_params']['manual_seed'], True)
 print("Loading model...")
 if args.wandb:
-    model = VQ_SVG_Stage2(tokenizer, **config['model_params'], wandb_logging=True, device = device)
+    model = VQ_SVG_Stage2(tokenizer, **config['model_params'], wandb_logging=True, device=device)
     # wandb_logger.watch(model, log="gradients", log_freq=500, log_graph=False)
     # wandb.watch(model, log='all', log_freq=100)  # can be "all"
 else:
-    model = VQ_SVG_Stage2(tokenizer, **config['model_params'], device = device)
+    model = VQ_SVG_Stage2(tokenizer, **config['model_params'], device=device)
 
 print("Loading dataset...")
 data = VQDataModule(tokenizer=tokenizer,
