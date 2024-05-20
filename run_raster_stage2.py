@@ -124,7 +124,7 @@ runner = Trainer(
     logger=wandb_logger,
     callbacks=[
         LearningRateMonitor(logging_interval="epoch", log_momentum=True),
-        EarlyStopping("val_loss", 0.005, 5, verbose=True),
+        # EarlyStopping("val_loss", 0.005, 5, verbose=True),
         ModelCheckpoint(save_top_k=3,
                         dirpath=os.path.join(config['logging_params']['save_dir'], "checkpoints"),
                         monitor="val_loss",
