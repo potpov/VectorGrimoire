@@ -213,25 +213,37 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
                 out, logging_dict = self.forward(text_tokens, text_attention_mask, vq_tokens, logging=True)
                 text_condition = self.tokenizer.decode_text(text_tokens[0])
 
+
+                if isinstance(self.tokenizer, RasterVQTokenizer):
+                    self.tokenizer.use_text_encoder_only = False  # TODO: why this gets changed somewhere!
+                    only_patch_tokens = True
+                    rasterized_gt = self.tokenizer._tokens_to_image_tensor(vq_targets[:1], only_patch_tokens=only_patch_tokens)
+                else:
+                    only_patch_tokens = False
+                    rasterized_gt = self.tokenizer._tokens_to_image_tensor(vq_targets[:1], post_process=self.post_process)
+
                 # every third batch use temp = 0
                 if batch_idx % (self.train_log_interval * 3) == 0:
                     temperature = 0.0
                 else:
                     temperature = random.uniform(0.2, 1.5)
 
-                rasterized_gt = self.tokenizer._tokens_to_image_tensor(vq_targets[:1], post_process=self.post_process)
+
                 context_0_generation = self._generate_rasterized_sample(text_tokens[:1, :], text_attention_mask[:1, :],
                                                                         vq_tokens[:1, :1],
                                                                         post_process=self.post_process,
-                                                                        temperature=temperature)
+                                                                        temperature=temperature,
+                                                                        only_patch_tokens=only_patch_tokens)
                 context_5_generation = self._generate_rasterized_sample(text_tokens[:1, :], text_attention_mask[:1, :],
                                                                         vq_tokens[:1, :6],
                                                                         post_process=self.post_process,
-                                                                        temperature=temperature)
+                                                                        temperature=temperature,
+                                                                        only_patch_tokens=only_patch_tokens)
                 context_10_generation = self._generate_rasterized_sample(text_tokens[:1, :], text_attention_mask[:1, :],
                                                                          vq_tokens[:1, :11],
                                                                          post_process=self.post_process,
-                                                                         temperature=temperature)
+                                                                         temperature=temperature,
+                                                                         only_patch_tokens=only_patch_tokens)
                 
                 images = [rasterized_gt, context_0_generation, context_5_generation, context_10_generation]
                 self.trainer.logger.log_image(
@@ -250,7 +262,8 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
                     text_attention_mask[:num_samples],
                     vq_tokens[:num_samples],
                     post_process=self.post_process,
-                    temperatures=temperatures
+                    temperatures=temperatures,
+                    only_patch_tokens=only_patch_tokens
                 )
                 self.log("val/clip_score", clip_score_metric, rank_zero_only=True, logger=True)
                 self.trainer.logger.log_image(
