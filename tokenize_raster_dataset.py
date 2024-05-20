@@ -135,7 +135,7 @@ def main():
             save_csv["split"].append(split_name)
             save_csv["label"].append(labels[0])
             save_csv["text_token_length"].append(len(text_tokens))
-            save_csv["vq_token_length"].append(vq_tokens)
+            save_csv["vq_token_length"].append(len(vq_tokens))
             # print("vq_tokens: ",vq_tokens)
             vsq_token_array.append(vq_tokens)
             text_token_array.append(text_tokens)

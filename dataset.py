@@ -14,7 +14,7 @@ from utils import svg2paths2, disvg, raster, get_single_paths, get_similar_lengt
 import copy
 import random
 import math
-from tokenizer import VQTokenizer
+from tokenizer import VQTokenizer, RasterVQTokenizer
 
 class Legacy_VQDataset(Dataset):
     """
@@ -84,7 +84,7 @@ class VQDataset(Dataset):
     def __init__(self,
                  csv_path:str,
                  vq_token_npy_path:str,
-                 tokenizer: VQTokenizer,
+                 tokenizer: VQTokenizer | RasterVQTokenizer,
                  context_length: int,
                  dataset:str,
                  min_context_length: int = 10,
@@ -109,7 +109,7 @@ class VQDataset(Dataset):
         if subset is not None:
             assert subset in self.split["class"].unique(), f"Subset {subset} not found in the dataset."
             self.split = self.split[self.split["class"] == subset].reset_index(drop=True)
-        assert dataset in ["figr8", "fonts"], f"Dataset must be either 'figr8' or 'fonts', got {dataset}."
+        assert dataset in ["figr8", "fonts", "mnist"], f"Dataset must be either 'figr8' or 'fonts', got {dataset}."
         assert sum_of_fractions <= 1, f"All fractions must be less or equal to 1, got {sum_of_fractions}."
 
 
@@ -200,6 +200,8 @@ class VQDataset(Dataset):
         return len(self.split)
     
     def _get_tokenized_text(self, row):
+        if self.dataset == "mnist":
+            return self.vq_numpy_array[row["index_in_numpy_array"]][1: 1 + row["text_token_length"]]  # pre-computed in one file
         if self.dataset == "fonts":
             text_to_tokenize = np.random.choice([row["class"], 
                                                  row["description"], 
@@ -1472,10 +1474,24 @@ class TiledMNIST(Dataset):
             [0.0, 0.5, 0.5],  # Teal
             [0.0, 0.0, 0.0]   # Black
         ]
+        palette_names = [
+            "Dark Blue",
+            "Forest Green",
+            "Red",
+            "Yellow",
+            "Royal Blue",
+            "Purple",
+            "Orange",
+            "Teal",
+            "Black",
+        ]
 
         if use_palette:
-            random_color = torch.tensor(random.choice(color_palette), dtype=torch.float32)
+            col_idx = random.randint(0, len(palette_names) - 1)
+            color_name = palette_names[col_idx]
+            random_color = torch.tensor(color_palette[col_idx], dtype=torch.float32)
         else:
+            color_name = "" # TODO
             random_color = torch.rand(3, dtype=torch.float32)
         
         black_pixels = (tensor_image < 0.9).all(0)  # Allow a small threshold for robustness
@@ -1484,7 +1500,7 @@ class TiledMNIST(Dataset):
         for i in range(3):
             tensor_image[i][black_pixels] = random_color[i]
         
-        return tensor_image
+        return tensor_image, color_name
 
     def __getitem__(self, index):
         image_path = self.image_paths[index]
@@ -1495,8 +1511,9 @@ class TiledMNIST(Dataset):
         if self.transform is not None:
             image = self.transform(image)
 
+        color_name = "black"
         if self.random_colors:
-            image = self._recolor_stroke(image, use_palette=self.use_palette)
+            image, color_name = self._recolor_stroke(image, use_palette=self.use_palette)
 
         patches = []
 
@@ -1510,9 +1527,9 @@ class TiledMNIST(Dataset):
         patches = torch.stack(patches)
 
         if self.return_filename:  # returning nothing is fine as tokenizer calculates positions
-            return patches, [label]*len(patches), "", str(label), filename  # has to fit to the experiment class, which is why I filled it with empty stuff
+            return patches, [label]*len(patches), "",  f"{str(label)} in {color_name} color", filename  # has to fit to the experiment class, which is why I filled it with empty stuff
         else:
-            return patches, [label]*len(patches), "", str(label)  # has to fit to the experiment class, which is why I filled it with empty stuff
+            return patches, [label]*len(patches), "", f"{str(label)} in {color_name} color"  # has to fit to the experiment class, which is why I filled it with empty stuff
         # return patches, label, "", ""  # has to fit to the experiment class, which is why I filled it with empty stuff
 
     def __len__(self):

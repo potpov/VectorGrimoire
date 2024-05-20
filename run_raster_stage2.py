@@ -72,7 +72,7 @@ else:
     )
 
 # Load auxiliary models
-vq_model = Vector_VQVAE(patch_size = config['data_params']["patch_size"], **config['stage1_params'], device = device)
+vq_model = Vector_VQVAE(patch_size=config['data_params']["patch_size"], **config['stage1_params'], device = device)
 state_dict = torch.load(config['stage1_params']["checkpoint_path"], map_location=device)["state_dict"]
 try:
     vq_model.load_state_dict(state_dict)
@@ -115,8 +115,7 @@ experiment = SVG_VQVAE_Stage2_Experiment(model,
                                          **config['exp_params'], 
                                          wandb = args.wandb, 
                                          num_batches_train=num_batches_train, 
-                                         num_batches_val=num_batches_val,
-                                         post_process=False)
+                                         num_batches_val=num_batches_val)
 
 profiler = SimpleProfiler(dirpath=os.path.join(config['logging_params']['save_dir']))
 runner = Trainer(
