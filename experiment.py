@@ -80,7 +80,7 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
             return self.tokenizer._tokens_to_image_tensor(generation, post_process=post_process)
 
     def _get_clip_score_for_batch(self, text_tokens: Tensor, text_attention_mask: Tensor, vq_tokens: Tensor,
-                                  post_process: bool = True, temperatures:List=None) -> Tuple[Tensor, List, List]:
+                                  post_process: bool = True, temperatures:List=None, only_patch_tokens: bool = False,) -> Tuple[Tensor, List, List]:
         """
         gets clip scores for 0-context generations of a batch of text tokens
         """
@@ -94,6 +94,7 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
                     text_tokens[i:i + 1, :],
                     text_attention_mask[i:i + 1, :],
                     vq_tokens[i:i + 1, :1],
+                    only_patch_tokens=only_patch_tokens,
                     post_process=post_process,
                     temperature=temperatures[i] if temperatures is not None else 0.0
                 ).to(self.curr_device) for i in relevant_idxs
@@ -118,6 +119,7 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
                     only_patch_tokens=only_patch_tokens
                 )
             else:
+                only_patch_tokens = False
                 rasterized_gt = self.tokenizer._tokens_to_image_tensor(vq_targets[:1], post_process=self.post_process)
 
             # every third batch use temp = 0
@@ -153,7 +155,8 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
                     text_attention_mask[:num_samples],
                     vq_tokens[:num_samples],
                     post_process=self.post_process,
-                    temperatures=temperatures
+                    temperatures=temperatures,
+                    only_patch_tokens=only_patch_tokens,
                 )
                 self.log("train/clip_score", clip_score_metric, rank_zero_only=True, logger=True, on_step=True)
                 self.trainer.logger.log_image(
