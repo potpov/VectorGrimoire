@@ -116,7 +116,7 @@ def main():
     save_csv = {
         "index_in_numpy_array": [], "filename": [],
         "split": [], "label": [], "text_token_length": [],
-        "vq_token_length": []
+        "vq_token_length": [], "description": []
     }
     vsq_token_array = []
     text_token_array = []
@@ -133,6 +133,7 @@ def main():
             save_csv["index_in_numpy_array"].append(numpy_counter)
             save_csv["filename"].append(filenames[0])
             save_csv["split"].append(split_name)
+            save_csv["description"].append(descriptions[0].lower())
             save_csv["label"].append(labels[0])
             save_csv["text_token_length"].append(len(text_tokens))
             save_csv["vq_token_length"].append(len(vq_tokens))
