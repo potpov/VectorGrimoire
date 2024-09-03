@@ -530,7 +530,7 @@ class RasterVQTokenizer(nn.Module):
         tokens = tokens[tokens != self.special_token_mapping["<PAD>"]]
 
         assert tokens.ndim == 1, f"Tokens should be 1D, got shape {tokens.shape}"
-        assert tokens.size(0) > 3, f"Tokens should have at least 4 elements, got {tokens.size(0)}"
+        assert tokens.size(0) > 3, f"Tokens should have at least 4 elements, got {tokens.size(0)}: \n{tokens}"
         if not ignore_special_tokens:
             assert tokens[0] == self.special_token_mapping["<BOS>"], f"First token should be <BOS>, got {tokens[0]}"
             assert tokens[-1] == self.special_token_mapping["<EOS>"] or tokens[-1] == self.special_token_mapping["<PAD>"], f"Last token should be <EOS> or <PAD>, got {tokens[-1]}"
@@ -584,6 +584,8 @@ class RasterVQTokenizer(nn.Module):
             shape_limit = positions.shape[0]
             bezier_points = bezier_points[:shape_limit]
             for key in visual_attribute_dict:
+                if visual_attribute_dict[key] is None:
+                    continue
                 visual_attribute_dict[key] = visual_attribute_dict[key][:shape_limit]
         elif bezier_points.shape[0] < positions.shape[0]:
             positions = positions[:bezier_points.shape[0]]
