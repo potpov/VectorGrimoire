@@ -337,7 +337,11 @@ def shapes_to_drawing(shapes:Tensor,
     if mode == "stroke":
         colors = ["red"] * num_strokes_to_paint + ["black"] * (len(all_shapes) - num_strokes_to_paint)
     else:
-        colors = visual_attribute_dict["colors"].cpu() # (num_circles, 4)
+        if visual_attribute_dict["colors"] is None:
+            bs, cp, _ = visual_attribute_dict["alphas"].shape
+            colors = torch.ones(bs, cp, 1)
+        else:
+            colors = visual_attribute_dict["colors"].cpu() # (num_circles, 4)
         colors = [rgb_to_hex(color[0].item(), color[1].item(), color[2].item()) for color in colors] # -> (num_circles)
     
     if isinstance(stroke_width, float):
@@ -614,7 +618,12 @@ def get_rasterized_segments(single_paths:list, stroke_width:float, total_max_dif
         return rasterized_segments, centers
     else:
         viewbox=svg_attributes["viewBox"]
-        rasterized_segments = [raster(disvg(my_path, paths2Drawing=True, stroke_widths=[stroke_width] * len(my_path), viewbox=viewbox), out_h = height, out_w = width) for my_path in single_paths if my_path.length() > 0.]
+        if colors is not None:
+            rasterized_segments = [
+                raster(disvg(my_path, paths2Drawing=True, stroke_widths=[stroke_width] * len(my_path), colors=colors, viewbox=viewbox),
+                       out_h=height, out_w=width) for my_path in single_paths if my_path.length() > 0.]
+        else:
+            rasterized_segments = [raster(disvg(my_path, paths2Drawing=True, stroke_widths=[stroke_width] * len(my_path), viewbox=viewbox), out_h = height, out_w = width) for my_path in single_paths if my_path.length() > 0.]
         centers = [(0,0)] * len(rasterized_segments)
         return rasterized_segments, centers
 
