@@ -307,10 +307,10 @@ def shapes_to_drawing(shapes:Tensor,
             "fill": "none",
             "fill-opacity": "1.0",
             "filling": "0",
-            "stroke":"black",
-            "stroke-width":"1",
-            "stroke-linecap":linecap,
-            "stroke-linejoin" : linejoin
+            "stroke": "black",
+            "stroke-width": "1",
+            "stroke-linecap": linecap,
+            "stroke-linejoin": linejoin
 
         }
     else:
@@ -318,10 +318,10 @@ def shapes_to_drawing(shapes:Tensor,
             "fill": "none",
             "fill-opacity": "1.0",
             "filling": "0",
-            "stroke":"black",
-            "stroke-width":"1",
-            "stroke-linecap":linecap,
-            "stroke-linejoin" : linejoin
+            "stroke": "black",
+            "stroke-width": "1",
+            "stroke-linecap": linecap,
+            "stroke-linejoin": linejoin
 
         }
 
@@ -339,7 +339,7 @@ def shapes_to_drawing(shapes:Tensor,
     else:
         if visual_attribute_dict["colors"] is None:
             bs, cp, _ = visual_attribute_dict["alphas"].shape
-            colors = torch.ones(bs, cp, 1)
+            colors = torch.zeros(bs, cp, 1)
         else:
             colors = visual_attribute_dict["colors"].cpu() # (num_circles, 4)
         colors = [rgb_to_hex(color[0].item(), color[1].item(), color[2].item()) for color in colors] # -> (num_circles)
