@@ -103,7 +103,7 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
             metric = clip_score(generations, texts, "openai/clip-vit-base-patch16")
         return metric, generations, texts
 
-    def training_step(self, batch, batch_idx, optimizer_idx=0):
+    def training_step(self, batch, batch_idx):
         text_tokens, text_attention_mask, vq_tokens, vq_targets, pad_token = batch
         self.curr_device = text_tokens.device
 
@@ -208,7 +208,7 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
         # torch.cuda.empty_cache()
         return {}
 
-    def validation_step(self, batch, batch_idx, optimizer_idx=0):
+    def validation_step(self, batch, batch_idx):
 
         text_tokens, text_attention_mask, vq_tokens, vq_targets, pad_token = batch
         self.curr_device = text_tokens.device
