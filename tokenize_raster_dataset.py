@@ -48,9 +48,13 @@ def main():
     resource.setrlimit(resource.RLIMIT_NOFILE, (2048, rlimit[1]))
 
     # setting 1 - 8x8 grid, full random color VSQ
-    MODEL_WEIGHTS_PATH = "/scratch/datasets/svg/mnist-shapes/tokenized_mnist/8x8_randomcolor/last-v2.ckpt"
-    CONFIG_PATH = "configs/VSQ_mnist.yaml"
-    OUT_PATH = "/scratch/datasets/svg/mnist-shapes/tokenized_mnist/8x8_randomcolor_marco"
+    # MODEL_WEIGHTS_PATH = "/raid/marco.cipriano/results/svg/Grimoire/VSQ/TiledMNIST/checkpoints/last.ckpt"
+    # CONFIG_PATH = "configs/MNIST_VSQ.yaml"
+    # OUT_PATH = "/home/marco.cipriano/data/SVG/Grimoire/MNIST/8x8_randomcolor"
+    # setting 2 - 8x8 grid, black and white VSQ
+    MODEL_WEIGHTS_PATH = "/raid/marco.cipriano/results/svg/VSQ/TiledMNIST/checkpoints/last.ckpt"
+    CONFIG_PATH = "configs/MNIST/MNIST_VSQ_BW.yaml"
+    OUT_PATH = "/home/marco.cipriano/data/SVG/Grimoire/MNIST/8x8_bnw"
 
     with open(CONFIG_PATH, 'r') as file:
         try:
@@ -130,6 +134,7 @@ def main():
             
             # print(imgs.shape, descriptions, filenames)
             start_token, text_tokens, vq_tokens, end_token = tokenizer.tokenize(imgs, text=descriptions[0], return_np_uint16=True)
+            assert vq_tokens.max() <= tokenizer.num_tokens, f"out of boundary tokens in iteration {i}. Max token: {vq_tokens.max()}"
             save_csv["index_in_numpy_array"].append(numpy_counter)
             save_csv["filename"].append(filenames[0])
             save_csv["split"].append(split_name)
@@ -142,11 +147,11 @@ def main():
             text_token_array.append(text_tokens)
             full_token_array.append(np.concatenate([start_token, text_tokens, vq_tokens, end_token]))
             numpy_counter += 1
-            if numpy_counter % 200 == 0:
-                print("start_token: ", start_token)
-                print("text_tokens: ", text_tokens)
-                print("vq_tokens: ", vq_tokens)
-                print("end_token: ", end_token)
+            # if numpy_counter % 200 == 0:
+            #     print("start_token: ", start_token)
+            #     print("text_tokens: ", text_tokens)
+            #     print("vq_tokens: ", vq_tokens)
+            #     print("end_token: ", end_token)
 
     np.save(os.path.join(OUT_PATH, "vsq_tokenized.npy"), np.concatenate(vsq_token_array))
     np.save(os.path.join(OUT_PATH, "text_tokenized.npy"), np.concatenate(text_token_array))
