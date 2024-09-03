@@ -20,6 +20,7 @@ torch.set_float32_matmul_precision('high')
 parser = argparse.ArgumentParser(description='Generic runner for VAE models')
 parser.add_argument('--config',  '-c', dest="filename", metavar='FILE', help='path to the config file', default='configs/vae.yaml')
 parser.add_argument("--wandb", "-w", dest="wandb", action='store_true', help="want to log the run with wandb? (default false)")
+parser.add_argument("--wandb_id", "-w_id", dest="wandb_id", type=int, default=None, help="id of wandb run to continue")
 parser.add_argument('--debug', action='store_true', help='disable wandb logs, set workers to 0. (default false)')
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -34,11 +35,11 @@ with open(args.filename, 'r') as file:
 if "continue_checkpoint" in config["exp_params"] and config["exp_params"]["continue_checkpoint"] is not None:
     assert os.path.exists(config["exp_params"]["continue_checkpoint"]), f"checkpoint {config['exp_params']['continue_checkpoint']} does not exist"
     print(f"Found checkpoint to continue training from: {config['exp_params']['continue_checkpoint']}")
-    if "id" not in config["logging_params"]:
+    if not args.wandb_id:
         print(f"wandb id must be set in logging_params to continue the logging in wandb")
         input("Press Enter to continue without continuing in wandb or CTRL+C to cancel")
 else:
-    assert "id" not in config["logging_params"], f"wandb id must not be set if not continuing from a checkpoint"
+    assert not args.wandb_id, f"wandb id must not be set if not continuing from a checkpoint"
 
 # disabling multi-threading when debugging
 if args.debug:
@@ -48,7 +49,7 @@ current_process_rank = get_rank()
 
 if args.wandb:
     if "entity" not in config['logging_params']:
-        entity = "mfeuer"
+        entity = "aiis-chair"
     else:
         entity = config['logging_params']['entity']
     wandb_logger = WandbLogger(
@@ -60,7 +61,7 @@ if args.wandb:
         entity=entity,
         mode="offline" if args.debug else "online",
         resume="must" if "continue_checkpoint" in config["exp_params"] else "allow",
-        id=config["logging_params"]["id"] if "id" in config["logging_params"] else None
+        id=args.wandb_id  # default None -> start a new run
     )
     if current_process_rank == 0:
         allow_val_change = True if config["logging_params"].get("allow_val_change") else False
