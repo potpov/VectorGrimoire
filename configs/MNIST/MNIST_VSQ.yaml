@@ -12,7 +12,7 @@ model_params:
 
 data_params:
   dataset: "mnist"
-  data_path: "/home/mfeuerpfeil/master/thesis/datasets/mnist_png"
+  data_path: "/home/marco.cipriano/data/SVG/Grimoire/MNIST/mnist_png"
   train_batch_size: 16
   val_batch_size:  16
   patch_size: 34 # HAS TO BE 224 FOR CLIP RES50 TO WORK, otherwise take 128
@@ -37,12 +37,12 @@ trainer_params:
   # accumulate_grad_batches: 2
 
 logging_params:
-  # entity: "aiis-chair"  # comment to use default wandb entity "mfeuer"
-  project: "thesis"  # your wandb project name
+  entity: "aiis-chair"  # comment to use default wandb entity "mfeuer"
+  project: "grimoire-2"  # your wandb project name
 #  save_dir: "/scratch/mcipriano/results/svg/all_full_single_code"
-  save_dir: "/scratch2/moritz_logs/VSQ/TiledMNIST"
+  save_dir: "/raid/marco.cipriano/results/svg/VSQ/TiledMNIST"
   name: "VSQ MNIST, Color CNN head, num_tiles = 3, 34x34"  # name of the run in wandb
   version: 1
-  author: "Moritz"  # will be a tag in wandb
+  author: "Marco"  # will be a tag in wandb
   # id: null  # id of wandb run to continue
   # allow_val_change: False  # allow changing values in this config w.r.t. the run that you're continuing (good for changing loss weightings mid-run)
