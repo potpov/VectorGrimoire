@@ -1876,7 +1876,10 @@ class MNISTDataset(LightningDataModule):
         # use einops to merge bs and tiles dimensions
         if patches.dim() == 5:
             patches = patches.view(-1, *patches.shape[2:])
-        return patches, labels, "", descriptions, filenames
+        if self.return_filename:
+            return patches, labels, "", descriptions, filenames
+        else:
+            return patches, labels, "", descriptions
 
     def setup(self, stage: Optional[str] = None) -> None:
         # =========================  MNIST Dataset  =========================
