@@ -8,7 +8,7 @@ from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import WandbLogger, TensorBoardLogger
 from pytorch_lightning import seed_everything
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, LearningRateFinder, EarlyStopping
-from dataset import GenericRasterizedSVGDataModule,GenericRasterDatamodule, MNISTDataset, MNISTppDataset, NounProjectDataset, EmojiDataset, MNISTDatasetCSVG, CausalSVGDataModule, NewCausalSVGDataModule, CenterShapeLayersFromSVGDataModule, VQDataModule, GlyphazznStage1Datamodule
+from dataset import GenericRasterizedSVGDataModule,GenericRasterDatamodule, PrecomputedMNISTDataset, MNISTDataset, MNISTppDataset, NounProjectDataset, EmojiDataset, MNISTDatasetCSVG, CausalSVGDataModule, NewCausalSVGDataModule, CenterShapeLayersFromSVGDataModule, VQDataModule, GlyphazznStage1Datamodule
 from models import VAEctorGen, VectorGPT, VanillaVAE, VectorVAEnLayers, VectorGPTv2, Vector_VQVAE, VQ_Transformer
 from experiment import VAEXperiment, VectorGPTExperiment, VectorGPTExperimentv2, VectorVQVAE_Experiment_Stage1, SVG_VQVAE_Stage2_Experiment
 import wandb
@@ -25,13 +25,14 @@ DATASETMAP = {
     "emoji": EmojiDataset,
     "nounproject": NounProjectDataset,
     "mnistpp": MNISTppDataset,
+    "mnistPrecomputed": PrecomputedMNISTDataset,
     "mnist": MNISTDataset,
     "mnistCSVG": MNISTDatasetCSVG,
-    "centeredShapeLayers" : CenterShapeLayersFromSVGDataModule,
-    "tokens" : VQDataModule,
-    "stage1" : GlyphazznStage1Datamodule,
-    "raster_figr8" : GenericRasterDatamodule,
-    "raster_fonts" : GenericRasterizedSVGDataModule,
+    "centeredShapeLayers": CenterShapeLayersFromSVGDataModule,
+    "tokens": VQDataModule,
+    "stage1": GlyphazznStage1Datamodule,
+    "raster_figr8": GenericRasterDatamodule,
+    "raster_fonts": GenericRasterizedSVGDataModule,
 }
 
 MODELS = {
@@ -68,6 +69,13 @@ assert config["model_params"]["name"] in MODELS.keys(), f"model {config['model_p
 if args.debug:
     config["data_params"]["num_workers"] = 0
 
+# creating subfolder with experiment name for saving weights
+config['logging_params']['save_dir'] = os.path.join(
+    config['logging_params']['save_dir'],
+    config['logging_params']['name']
+)
+Path(config['logging_params']['save_dir']).mkdir(parents=True, exist_ok=True)
+
 current_process_rank = get_rank()
 
 if "continue_checkpoint" in config["exp_params"] and config["exp_params"]["continue_checkpoint"] is not None:
@@ -81,7 +89,7 @@ else:
 
 if args.wandb:
     if "entity" not in config['logging_params']:
-        entity = "mfeuer"
+        entity = "aiis-chair"
     else:
         entity = config['logging_params']['entity']
     wandb_logger = WandbLogger(

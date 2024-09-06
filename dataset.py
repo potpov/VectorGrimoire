@@ -15,6 +15,8 @@ import copy
 import random
 import math
 from tokenizer import VQTokenizer, RasterVQTokenizer
+import pathlib
+from tqdm import tqdm
 
 class Legacy_VQDataset(Dataset):
     """
@@ -1402,6 +1404,105 @@ class MNIST(Dataset):
 
 import torch.nn.functional as F
 
+"""
+MNIST dataset from a root directory where each image is split into tiles:
+
+mnist
+|
+|--------------|
+training    testing
+|              |
+0-9           0-9
+"""
+
+class PrecomputedTiledMNIST(Dataset):
+    def __init__(self,
+                 root,
+                 train=True,
+                 patch_size: int = 128,
+                 transform=None,
+                 num_tiles_per_row: int = 5,
+                 random_colors: bool = False,
+                 use_palette: bool = True,
+                 total_padding: int = 20,
+                 return_filename: bool = False,
+                 force: bool = False,
+                 filter_th: float = 0,
+                 ):
+
+        super(PrecomputedTiledMNIST, self)
+        self.root = root
+        self.train = train
+        self.transform = transform
+        self.patch_size = patch_size
+        self.num_tiles_per_row = num_tiles_per_row
+        self.random_colors = random_colors
+        self.use_palette = use_palette
+        self.total_padding = total_padding
+        self.return_filename = return_filename
+        self.force = force
+        self.th = filter_th
+        self.image_folder = os.path.join(root, "training" if train else "testing")
+
+        self.precompute_patches = []
+        self.labels = []
+        self.samples = []
+
+        num_digits = 10
+        pathlib.Path(os.path.join(self.image_folder, "cache")).mkdir(parents=True, exist_ok=True)
+        cache_path = os.path.join(self.image_folder, "cache", f"th_{str(self.th)}.pt")
+        if os.path.exists(cache_path) and not self.force:
+            print("loading all patches...")
+            self.samples = list(torch.load(cache_path))
+        else:
+            print("Pre-computing all patches and saving...")
+
+            # the > make it work for threshold 0 as well because if there are 0 black
+            # pixels then the sum is equal to the count of total pixels in the patch, not greater
+            # alternative for the 0-th is:
+            # filter_fn = lambda patches: patches[torch.any(patches != 1., dim=(1, 2, 3))]
+            filter_fn = lambda patches : torch.sum((patches != 1), dim=(1,2,3)) / patches[0].numel() > self.th
+
+            for label in tqdm(range(num_digits), total=num_digits):
+                label_folder = os.path.join(self.image_folder, str(label))
+                image_files = os.listdir(label_folder)
+                for image_file in tqdm(image_files, total=len(image_files), desc=f"patching {str(label)}", leave=False):
+                    image_path = os.path.join(label_folder, image_file)
+                    image = Image.open(image_path)
+                    if self.transform is not None:
+                        image = self.transform(image)
+                    patches = self.make_patches(image)
+                    # removing empty patches
+                    patches = filter_fn(patches)
+
+                    # caching and continuing
+                    self.samples += list(patches)
+            torch.save(torch.stack(self.samples), cache_path)
+
+    def __getitem__(self, index):
+        patch = self.samples[index]
+
+        if self.return_filename:
+            return patch, "", "", "", "pre-computed un-empty patches"
+        return patch, "", "", "pre-computed un-empty patches"
+
+
+    def __len__(self):
+        return len(self.samples)
+
+
+    def make_patches(self, image):
+        patches = []
+        single_side_padding = self.total_padding // 2
+        for i in range(0, image.shape[1], self.patch_size - single_side_padding * 2):
+            for j in range(0, image.shape[2], self.patch_size - single_side_padding * 2):
+                patch = image[:, i: i + self.patch_size - self.total_padding, j: j + self.patch_size - self.total_padding]
+                patch = F.pad(patch, (single_side_padding, single_side_padding, single_side_padding, single_side_padding),
+                              value=1.)
+                patches.append(patch)
+        return torch.stack(patches)
+
+
 class TiledMNIST(Dataset):
     """
     MNIST dataset from a root directory where each image is split into tiles:
@@ -1927,6 +2028,113 @@ class MNISTDataset(LightningDataModule):
             use_palette=self.use_palette,
             return_filename = self.return_filename
         )
+
+    #       ===============================================================
+
+class PrecomputedMNISTDataset(LightningDataModule):
+    """
+    PyTorch Lightning data module
+
+    Args:
+        data_dir: root directory of your dataset.
+        train_batch_size: the batch size to use during training.
+        val_batch_size: the batch size to use during validation.
+        patch_size: the size of the crop to take from the original images.
+        num_workers: the number of parallel workers to create to load data
+            items (see PyTorch's Dataloader documentation for more details).
+        pin_memory: whether prepared items should be loaded into pinned memory
+            or not. This can improve performance on GPUs.
+    """
+
+    def __init__(
+            self,
+            data_path: str,
+            train_batch_size: int = 8,
+            val_batch_size: int = 8,
+            patch_size: int = 128,
+            num_tiles_per_row: int = 1,
+            num_workers: int = 0,
+            pin_memory: bool = False,
+            padding_frac: float = 0.1,
+            return_filename: bool =False,
+            force: bool = False,
+            filter_th: float = 0,
+            **kwargs,
+    ):
+        super().__init__()
+
+        self.data_dir = data_path
+        self.train_batch_size = train_batch_size
+        self.val_batch_size = val_batch_size
+        self.patch_size = patch_size
+        self.num_workers = num_workers
+        self.pin_memory = pin_memory
+        self.num_tiles_per_row = num_tiles_per_row
+        self.padding_frac = padding_frac
+        self.total_padding = (int(self.patch_size * self.padding_frac) // 2) * 2
+        self.return_filename = return_filename
+        self.filter_th = filter_th
+        self.force = force
+    def collate_fn(self, batch):
+        if self.return_filename:
+            patches, labels, _, descriptions, filenames = zip(*batch)  # (tiles, channels, height, width)
+        else:
+            patches, labels, _, descriptions = zip(*batch)  # (tiles, channels, height, width)
+        patches = torch.stack(patches, dim=0)  # (bs, tiles, channels, height, width)
+        # use einops to merge bs and tiles dimensions
+        if patches.dim() == 5:
+            patches = patches.view(-1, *patches.shape[2:])
+        if self.return_filename:
+            return patches, labels, "", descriptions, filenames
+        else:
+            return patches, labels, "", descriptions
+
+    def setup(self, stage: Optional[str] = None) -> None:
+        # =========================  MNIST Dataset  =========================
+        new_dimension = (self.patch_size - self.total_padding) * self.num_tiles_per_row
+
+        train_transforms = transforms.Compose(
+            [
+                transforms.Resize(new_dimension, antialias=True),
+                transforms.RandomInvert(1.0),
+                transforms.Grayscale(num_output_channels=3),
+                transforms.ToTensor(),
+            ]
+        )
+
+        val_transforms = transforms.Compose(
+            [
+                transforms.Resize(new_dimension, antialias=True),
+                transforms.RandomInvert(1.0),
+                transforms.Grayscale(num_output_channels=3),
+                transforms.ToTensor(),
+            ]
+        )
+
+        self.train_dataset = PrecomputedTiledMNIST(
+            self.data_dir,
+            train=True,
+            transform=train_transforms,
+            num_tiles_per_row=self.num_tiles_per_row,
+            patch_size=self.patch_size,
+            total_padding=self.total_padding,
+            return_filename=self.return_filename,
+            filter_th=self.filter_th,
+            force=self.force
+        )
+
+        self.val_dataset = PrecomputedTiledMNIST(
+            self.data_dir,
+            train=False,
+            transform=val_transforms,
+            num_tiles_per_row=self.num_tiles_per_row,
+            patch_size=self.patch_size,
+            total_padding=self.total_padding,
+            return_filename=self.return_filename,
+            filter_th=self.filter_th,
+            force=self.force
+        )
+
 
     #       ===============================================================
 

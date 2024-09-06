@@ -17,7 +17,7 @@ import pandas as pd
 from torchmetrics.functional.multimodal import clip_score
 from tokenizer import VQTokenizer, RasterVQTokenizer
 # import torch_optimizer as optim_
-from dataset import GlyphazznStage1Datamodule, MNISTDataset
+from dataset import GlyphazznStage1Datamodule, MNISTDataset, PrecomputedTiledMNIST
 
 class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
     def __init__(self,
@@ -441,13 +441,19 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
             with torch.no_grad():
                 logging_dict = {f"train/{key}": value for key, value in logging_dict.items()}
                 wandb.log(logging_dict)
-                random_idx = random.randint(0, len(self.datamodule.train_dataset))
-                if isinstance(self.datamodule, GlyphazznStage1Datamodule):
-                    dataset_name = "glyphazzn"
-                elif isinstance(self.datamodule, MNISTDataset):
-                    dataset_name = "mnist"
-                side_by_side_recons = get_side_by_side_reconstruction(self.model, self.datamodule.train_dataset, idx = random_idx, device = self.curr_device, dataset_name=dataset_name)
-                wandb.log({"train/side_by_side_recons":wandb.Image(side_by_side_recons, caption="side by side reconstructions of training sample")})
+
+                # SIDE BY SIDE RECON
+                if not isinstance(self.datamodule, PrecomputedTiledMNIST):  # not possible for MNIST with custom patches
+                    random_idx = random.randint(0, len(self.datamodule.train_dataset))
+                    if isinstance(self.datamodule, GlyphazznStage1Datamodule):
+                        dataset_name = "glyphazzn"
+                    elif isinstance(self.datamodule, MNISTDataset):
+                        dataset_name = "mnist"
+                    side_by_side_recons = get_side_by_side_reconstruction(self.model, self.datamodule.train_dataset, idx = random_idx, device = self.curr_device, dataset_name=dataset_name)
+                    if side_by_side_recons is not None:
+                        wandb.log({"train/side_by_side_recons":wandb.Image(side_by_side_recons, caption="side by side reconstructions of training sample")})
+
+               # OTHER RECON
                 if reconstructions.shape[0] > 25:
                     log_amount = 25
                 else:
@@ -498,13 +504,18 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
             if batch_idx % self.val_log_interval == 0 and self.wandb:
                 logging_dict = {f"val/{key}": value for key, value in logging_dict.items()}
                 wandb.log(logging_dict)
-                random_idx = random.randint(0, len(self.datamodule.val_dataset))
-                if isinstance(self.datamodule, GlyphazznStage1Datamodule):
-                    dataset_name = "glyphazzn"
-                elif isinstance(self.datamodule, MNISTDataset):
-                    dataset_name = "mnist"
-                side_by_side_recons = get_side_by_side_reconstruction(self.model, self.datamodule.val_dataset, idx = random_idx, device = self.curr_device, dataset_name=dataset_name)
-                wandb.log({"val/side_by_side_recons":wandb.Image(side_by_side_recons, caption="side by side reconstructions of validation sample")})
+
+                # SIDE BY SIDE RECON
+                if not isinstance(self.datamodule, PrecomputedTiledMNIST):
+                    random_idx = random.randint(0, len(self.datamodule.val_dataset))
+                    if isinstance(self.datamodule, GlyphazznStage1Datamodule):
+                        dataset_name = "glyphazzn"
+                    elif isinstance(self.datamodule, MNISTDataset):
+                        dataset_name = "mnist"
+                    side_by_side_recons = get_side_by_side_reconstruction(self.model, self.datamodule.val_dataset, idx = random_idx, device = self.curr_device, dataset_name=dataset_name)
+                    wandb.log({"val/side_by_side_recons":wandb.Image(side_by_side_recons, caption="side by side reconstructions of validation sample")})
+
+                # OTHER RECON
                 if reconstructions.shape[0] > 25:
                     log_amount = 25
                 else:

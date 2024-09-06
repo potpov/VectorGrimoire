@@ -11,9 +11,9 @@ model_params:
   pred_color: false
 
 data_params:
-  dataset: "mnist"
+  dataset: "mnistPrecomputed"
   data_path: "/home/marco.cipriano/data/SVG/Grimoire/MNIST/mnist_png"
-  train_batch_size: 64
+  train_batch_size: 8192
   val_batch_size:  64
   patch_size: 128 # HAS TO BE 224 FOR CLIP RES50 TO WORK, otherwise take 128
   num_workers: 8
@@ -21,6 +21,8 @@ data_params:
   random_colors: false
   use_palette: false  # use a color palette of 9 colors rather than random colors
   padding_frac: 0.1  # fraction of the image that is padded with white background
+  force: false
+  filter_th: 0  # 0 (removes full white), float value (percentage)
 
 exp_params:
   lr: 0.00002  # 0.00002
@@ -37,11 +39,12 @@ trainer_params:
   # accumulate_grad_batches: 2
 
 logging_params:
-  entity: "aiis-chair"  # comment to use default wandb entity "mfeuer"
+  entity: "aiis-chair"  # comment to use default wandb entity "aiis-chair"
   project: "grimoire-2"  # your wandb project name
 #  save_dir: "/scratch/mcipriano/results/svg/all_full_single_code"
   save_dir: "/raid/marco.cipriano/results/svg/VSQ/TiledMNIST"
-  name: "VSQ MNIST, Black and white CNN head, num_tiles = 6, 128x128"  # name of the run in wandb
+  name: "VSQ MNIST BW 128"  # name of the run in wandb
+  description: "VSQ MNIST, Black and white CNN head, num_tiles = 6, 128x128"  # name of the run in wandb
   version: 1
   author: "Marco"  # will be a tag in wandb
   # id: null  # id of wandb run to continue
