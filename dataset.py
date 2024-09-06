@@ -1452,8 +1452,8 @@ class PrecomputedTiledMNIST(Dataset):
         pathlib.Path(os.path.join(self.image_folder, "cache")).mkdir(parents=True, exist_ok=True)
         cache_path = os.path.join(self.image_folder, "cache", f"th_{str(self.th)}.pt")
         if os.path.exists(cache_path) and not self.force:
-            print("loading all patches...")
-            self.samples = list(torch.load(cache_path))
+            print(f"loading patches from {cache_path}")
+            self.samples = list(torch.load(cache_path, weights_only=False))
         else:
             print("Pre-computing all patches and saving...")
 
@@ -1461,7 +1461,7 @@ class PrecomputedTiledMNIST(Dataset):
             # pixels then the sum is equal to the count of total pixels in the patch, not greater
             # alternative for the 0-th is:
             # filter_fn = lambda patches: patches[torch.any(patches != 1., dim=(1, 2, 3))]
-            filter_fn = lambda patches : torch.sum((patches != 1), dim=(1,2,3)) / patches[0].numel() > self.th
+            filter_fn = lambda patches : patches[torch.sum((patches != 1), dim=(1,2,3)) / patches[0].numel() > self.th]
 
             for label in tqdm(range(num_digits), total=num_digits):
                 label_folder = os.path.join(self.image_folder, str(label))
