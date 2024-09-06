@@ -17,7 +17,7 @@ import pandas as pd
 from torchmetrics.functional.multimodal import clip_score
 from tokenizer import VQTokenizer, RasterVQTokenizer
 # import torch_optimizer as optim_
-from dataset import GlyphazznStage1Datamodule, MNISTDataset, PrecomputedTiledMNIST
+from dataset import GlyphazznStage1Datamodule, MNISTDataset, PrecomputedMNISTDataset
 
 class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
     def __init__(self,
@@ -440,10 +440,13 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
         if batch_idx % self.train_log_interval == 0 and self.wandb:
             with torch.no_grad():
                 logging_dict = {f"train/{key}": value for key, value in logging_dict.items()}
-                wandb.log(logging_dict)
+                for key, value in logging_dict.items():
+                    if "codebook_histogram" in key:
+                        continue
+                    self.log(f"train/{key}", value)
 
                 # SIDE BY SIDE RECON
-                if not isinstance(self.datamodule, PrecomputedTiledMNIST):  # not possible for MNIST with custom patches
+                if not isinstance(self.datamodule, PrecomputedMNISTDataset):  # not possible for MNIST with custom patches
                     random_idx = random.randint(0, len(self.datamodule.train_dataset))
                     if isinstance(self.datamodule, GlyphazznStage1Datamodule):
                         dataset_name = "glyphazzn"
@@ -451,7 +454,14 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
                         dataset_name = "mnist"
                     side_by_side_recons = get_side_by_side_reconstruction(self.model, self.datamodule.train_dataset, idx = random_idx, device = self.curr_device, dataset_name=dataset_name)
                     if side_by_side_recons is not None:
-                        wandb.log({"train/side_by_side_recons":wandb.Image(side_by_side_recons, caption="side by side reconstructions of training sample")})
+                        current_trainer_global_step = self.trainer.global_step
+                        self.trainer.logger.experiment.log(
+                            {"train/side_by_side_recons": [
+                                wandb.Image(side_by_side_recons, caption="side by side reconstructions of training sample")
+                            ]},
+                            step=current_trainer_global_step,
+                        )
+
 
                # OTHER RECON
                 if reconstructions.shape[0] > 25:
@@ -461,15 +471,20 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
 
                 if isinstance(self.datamodule, GlyphazznStage1Datamodule):
                     log_reconstructions = add_points_to_image(all_points, reconstructions[:,:3,:,:], image_scale=reconstructions.shape[-1])
-                elif isinstance(self.datamodule, MNISTDataset):
+                elif isinstance(self.datamodule, (MNISTDataset, PrecomputedMNISTDataset)):
                     log_reconstructions = reconstructions[:,:3,:,:]
 
                 # Log input against prediction
-                log_images(
+                k, i = log_images(
                     log_reconstructions[:log_amount],
                     inputs[:log_amount],
                     log_key="train/reconstruction",
                     captions="input (left) vs. reconstruction (right)"
+                )
+                current_trainer_global_step = self.trainer.global_step
+                self.trainer.logger.experiment.log(
+                    {"samples": [i]},
+                    step=current_trainer_global_step,
                 )
 
         self.log_dict(loss_dict, logger=True, prog_bar=True)
@@ -503,17 +518,26 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
             # log_reconstructions = add_points_to_image(all_points, reconstructions[:,:3,:,:], image_scale=reconstructions.shape[-1])
             if batch_idx % self.val_log_interval == 0 and self.wandb:
                 logging_dict = {f"val/{key}": value for key, value in logging_dict.items()}
-                wandb.log(logging_dict)
+                for key, value in logging_dict.items():
+                    if "codebook_histogram" in key:
+                        continue
+                    self.log(f"train/{key}", value)
 
                 # SIDE BY SIDE RECON
-                if not isinstance(self.datamodule, PrecomputedTiledMNIST):
+                if not isinstance(self.datamodule, PrecomputedMNISTDataset):
                     random_idx = random.randint(0, len(self.datamodule.val_dataset))
                     if isinstance(self.datamodule, GlyphazznStage1Datamodule):
                         dataset_name = "glyphazzn"
                     elif isinstance(self.datamodule, MNISTDataset):
                         dataset_name = "mnist"
                     side_by_side_recons = get_side_by_side_reconstruction(self.model, self.datamodule.val_dataset, idx = random_idx, device = self.curr_device, dataset_name=dataset_name)
-                    wandb.log({"val/side_by_side_recons":wandb.Image(side_by_side_recons, caption="side by side reconstructions of validation sample")})
+                    current_trainer_global_step = self.trainer.global_step
+                    self.trainer.logger.experiment.log(
+                        {"val/side_by_side_recons": [
+                            wandb.Image(side_by_side_recons, caption="side by side reconstructions of validation sample")
+                        ]},
+                        step=current_trainer_global_step,
+                    )
 
                 # OTHER RECON
                 if reconstructions.shape[0] > 25:
@@ -523,15 +547,20 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
 
                 if isinstance(self.datamodule, GlyphazznStage1Datamodule):
                     log_reconstructions = add_points_to_image(all_points[:log_amount], reconstructions[:log_amount,:3,:,:], image_scale=reconstructions.shape[-1])
-                elif isinstance(self.datamodule, MNISTDataset):
+                elif isinstance(self.datamodule, (MNISTDataset, PrecomputedMNISTDataset)):
                     log_reconstructions = reconstructions[:log_amount,:3,:,:]
 
                 # Log input against prediction
-                log_images(
+                k, i = log_images(
                     log_reconstructions[:log_amount],
                     inputs[:log_amount],
                     log_key="val/reconstruction",
                     captions="input (left) vs. reconstruction (right)"
+                )
+                current_trainer_global_step = self.trainer.global_step
+                self.trainer.logger.experiment.log(
+                    {"samples": [i]},
+                    step=current_trainer_global_step,
                 )
 
         self.log("val_loss", loss_dict["loss"], prog_bar=True)
