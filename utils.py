@@ -449,9 +449,9 @@ def log_images(recons: Tensor, real_imgs: Tensor, log_key="validation", captions
         ),
         dim=-1
     )
-    # return log_key, wandb.Image(image_result, caption=captions)
+    return log_key, wandb.Image(image_result, caption=captions)
     # WandbLogger.log_image(key=log_key, images=image_result, caption=captions)
-    wandb.log({log_key: wandb.Image(image_result, caption=captions)})
+    # wandb.log({log_key: wandb.Image(image_result, caption=captions)})
 
 
 def get_rank() -> int:
