@@ -691,3 +691,9 @@ def check_for_continouity(single_paths: list):
         if not path.iscontinuous():
             return False
     return True
+
+
+def get_filter_function(threshold: float, parse_patches: bool):
+    if parse_patches:
+        return lambda patches: patches[torch.sum((patches != 1), dim=(1,2,3)) / patches[0].numel() > threshold]
+    return lambda patches: torch.sum((patches != 1), dim=(1,2,3)) / patches[0].numel() > threshold

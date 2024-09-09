@@ -10,7 +10,7 @@ import glob
 import pandas as pd
 import numpy as np
 import string
-from utils import svg2paths2, disvg, raster, get_single_paths, get_similar_length_paths, check_for_continouity, get_rasterized_segments, all_paths_to_max_diff, Path, svg_string_to_tensor
+from utils import svg2paths2, disvg, raster, get_filter_function, get_single_paths, get_similar_length_paths, check_for_continouity, get_rasterized_segments, all_paths_to_max_diff, Path, svg_string_to_tensor
 import copy
 import random
 import math
@@ -1461,7 +1461,7 @@ class PrecomputedTiledMNIST(Dataset):
             # pixels then the sum is equal to the count of total pixels in the patch, not greater
             # alternative for the 0-th is:
             # filter_fn = lambda patches: patches[torch.any(patches != 1., dim=(1, 2, 3))]
-            filter_fn = lambda patches : patches[torch.sum((patches != 1), dim=(1,2,3)) / patches[0].numel() > self.th]
+            filter_fn = get_filter_function(self.th, parse_patches=True)
 
             for label in tqdm(range(num_digits), total=num_digits):
                 label_folder = os.path.join(self.image_folder, str(label))
@@ -2031,6 +2031,38 @@ class MNISTDataset(LightningDataModule):
 
     #       ===============================================================
 
+    def train_dataloader(self) -> DataLoader:
+        return DataLoader(
+            self.train_dataset,
+            batch_size=self.train_batch_size,
+            num_workers=self.num_workers,
+            shuffle=True,
+            pin_memory=self.pin_memory,
+            collate_fn=self.collate_fn,
+        )
+
+    def val_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
+        return DataLoader(
+            self.val_dataset,
+            batch_size=self.val_batch_size,
+            num_workers=self.num_workers,
+            shuffle=False,
+            pin_memory=self.pin_memory,
+            collate_fn=self.collate_fn,
+        )
+
+    def test_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
+        return DataLoader(
+            self.val_dataset,
+            batch_size=144,
+            num_workers=self.num_workers,
+            shuffle=True,
+            pin_memory=self.pin_memory,
+            collate_fn=self.collate_fn,
+        )
+    #       ===============================================================
+
+
 class PrecomputedMNISTDataset(LightningDataModule):
     """
     PyTorch Lightning data module
@@ -2090,7 +2122,7 @@ class PrecomputedMNISTDataset(LightningDataModule):
             return patches, labels, "", descriptions
 
     def setup(self, stage: Optional[str] = None) -> None:
-        # =========================  MNIST Dataset  =========================
+
         new_dimension = (self.patch_size - self.total_padding) * self.num_tiles_per_row
 
         train_transforms = transforms.Compose(

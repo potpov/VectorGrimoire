@@ -277,6 +277,8 @@ class RasterVQTokenizer(nn.Module):
         - text_encoder_str (str): huggingface string of the BERT text encoder to use, default: bert-base-uncased
         - device (str, optional): Device to use. Defaults to "cpu".
         - use_text_encoder_only (bool, optional): Whether to use the text encoder only. Defaults to False. Used to bnenefit from special token mapping and text tokenization without the need for a VQVAE model.
+        - filter_fn (callable, optional): Function to determine if a patch should be rendered as white. Defaults to None.
+
     """
 
     def __init__(self, 
@@ -286,9 +288,10 @@ class RasterVQTokenizer(nn.Module):
                  tokens_per_patch:int,
                  do_tokenize_positions: bool = True, 
                  text_encoder_str: str = "bert-base-uncased", 
-                 device = "cpu",
+                 device="cpu",
                  use_text_encoder_only: bool = False,
                  codebook_size:int = None,
+                 filter_fn: callable = None,
                  **kwargs) -> None:
 
         super(RasterVQTokenizer, self).__init__()
@@ -301,6 +304,7 @@ class RasterVQTokenizer(nn.Module):
         self.do_tokenize_positions = do_tokenize_positions
         self.use_text_encoder_only = use_text_encoder_only
         self.full_image_res = patch_size * num_tiles_per_row
+        self.filter_fn = filter_fn
         if self.use_text_encoder_only:
             self.vq_model = None
             self.codebook_size = codebook_size
@@ -317,6 +321,7 @@ class RasterVQTokenizer(nn.Module):
             "<BOS>": 1,  # beginning of SVG, separates text tokens from SVG
             "<EOS>": 2,  # end of sequence
             "<PAD>": 3,  # padding
+            "<NUL>": 4,  # suppressed patch (white rendering)
         }
 
         self.all_possible_positions = self._calculate_patch_centers(self.patch_size, self.num_tiles_per_row)
@@ -382,18 +387,19 @@ class RasterVQTokenizer(nn.Module):
         Returns:
             Tensor: Tensor of shape (num_pos, 1)
         """
-
-        if self.use_text_encoder_only:
-            raise NotImplementedError("Tokenizing positions is not supported when using the text encoder only.")
-        idxs = []
-        for pos in positions:
-            try:
-                idx = torch.where((self.all_possible_positions == pos.float()).all(dim=1))[0].item()
-                idxs.append(idx)
-            except:
-                raise ValueError(f"Position {pos} not found in possible positions: ", self.all_possible_positions)
-        position_tokens = torch.stack(idxs).int()
-        return position_tokens + self.start_of_pos_token_idx
+        raise NotImplementedError("Position tokens are not required for tiles Mnist and to be implemented for Grim2")
+        # if self.use_text_encoder_only:
+        #     raise NotImplementedError("Tokenizing positions is not supported when using the text encoder only.")
+        # idxs = []
+        # for pos in positions:
+        #     try:
+        #         idx = torch.where((self.all_possible_positions == pos.float()).all(dim=1))[0].item()
+        #         idxs.append(idx)
+        #     except:
+        #         raise ValueError(f"Position {pos} not found in possible positions: ", self.all_possible_positions)
+        # position_tokens = torch.stack(idxs).int()
+        # return position_tokens + self.start_of_pos_token_idx
+        pass
     
     def tokenize_text(self, text: str) -> Tensor:
         """
@@ -411,7 +417,13 @@ class RasterVQTokenizer(nn.Module):
     def forward(self):
         pass
     
-    def tokenize(self, patches: Tensor, text:str, return_np_uint16:bool = False, positions: Tensor = None) -> Union[Tensor, Tensor] | Union[np.ndarray, np.ndarray]:
+    def tokenize(
+            self,
+            patches: Tensor,
+            text: str,
+            return_np_uint16: bool = False,
+            positions: Tensor = None,
+    ) -> Union[Tensor, Tensor] | Union[np.ndarray, np.ndarray]:
         """
         Tokenizes the patches and positions of the rasterized SVGs. Padding is done in the dataloader dynamically to avoid requiring a fixed context length during pre-tokenization.
 
@@ -420,7 +432,6 @@ class RasterVQTokenizer(nn.Module):
             - text (str): conditional text
             - return_np_uint16 (bool, optional): Whether to return the tokens as np.uint16. Defaults to False.
             - positions (Tensor): Tensor of shape (num_pos, 2), pass None for automatic calculation
-
         Returns:
             - start_token: [<SOS>], either Tensor or np.ndarray
             - text_tokens: [<CLS>, ...text..., <SEP>], no padding, CLS and SEP come from text tokenizer, either Tensor or np.ndarray
@@ -430,10 +441,13 @@ class RasterVQTokenizer(nn.Module):
         if self.use_text_encoder_only:
             raise NotImplementedError("Tokenizing patches/positions is not supported when using the text encoder only.")
         patch_tokens = self.tokenize_patches(patches).cpu()
-        if positions is not None:
-            pos_tokens = self.tokenize_positions(positions)
-        else:
-            pos_tokens = torch.tensor([]).int()
+
+        if self.filter_fn is not None:
+            suppress_mask = ~ self.filter_fn(patches).cpu()  # this tells us what to filter, we need to invert it
+            patch_tokens[suppress_mask] = self.special_token_mapping["<NUL>"]
+
+        pos_tokens = torch.tensor([]).int()  # TODO: if tiled MNIST not needed, if LIVE then must implement here
+
         text_tokens = self.tokenize_text(text)
         if self.tokens_per_patch == 1:
             vq_tokens = torch.stack([patch_tokens, pos_tokens], dim=1).reshape(-1).int() if positions is not None else patch_tokens
@@ -491,13 +505,15 @@ class RasterVQTokenizer(nn.Module):
         Returns:
             Tensor: Tensor of shape (num_pos, 2)
         """
-        if self.use_text_encoder_only:
-            raise NotImplementedError("Decoding positions is not supported when using the text encoder only.")
-        tokens = tokens - self.start_of_pos_token_idx
-        positions = self.all_possible_positions[tokens]
-        if positions.dim() > 2:
-            positions = positions.squeeze(1)
-        return positions
+        raise NotImplementedError("Position tokens are not required for tiles Mnist and to be implemented for Grim2")
+        pass
+        # if self.use_text_encoder_only:
+        #     raise NotImplementedError("Decoding positions is not supported when using the text encoder only.")
+        # tokens = tokens - self.start_of_pos_token_idx
+        # positions = self.all_possible_positions[tokens]
+        # if positions.dim() > 2:
+        #     positions = positions.squeeze(1)
+        # return positions
     
     def decode_text(self, tokens: Tensor) -> str:
         """
@@ -544,12 +560,27 @@ class RasterVQTokenizer(nn.Module):
         if self.tokens_per_patch == 1 and not only_patch_tokens:
             assert tokens.size(0) % 2 == 0, f"Number of tokens should be even, got {tokens.size(0)}"
         if only_patch_tokens:
-            patch_tokens = tokens
-            positions = self.all_possible_positions
+
+            num_tokens = tokens.shape[0]
+            positions = self.all_possible_positions.to(tokens.device)
+            num_positions = positions.shape[0]
+
+            # truncate either pred tokens or positions if they don't align
+            tokens = tokens[:num_positions]
+            positions = positions[:num_tokens]
+
+            patch_tokens = tokens[tokens != self.special_token_mapping["<NUL>"]]
+            positions = positions[tokens != self.special_token_mapping["<NUL>"]]
+
         else:
             patch_tokens = tokens[::2]
             pos_tokens = tokens[1::2]
             positions = self.decode_positions(pos_tokens)
+
+        if patch_tokens.nelement() == 0:
+            print("EMPTY TENSOR AFTER FILTERING SPECIAL TOKENS!")
+            return None, None, None
+
         bezier_points, visual_attribute_dict = self.decode_patches(patch_tokens)
         return bezier_points, visual_attribute_dict, positions
     
@@ -578,17 +609,21 @@ class RasterVQTokenizer(nn.Module):
         
         bezier_points, visual_attribute_dict, positions = self.decode(tokens, ignore_special_tokens=True, only_patch_tokens=only_patch_tokens)
 
+        if bezier_points is None:
+            return torch.ones(3, 480, 480)
+
+        # TODO: potentially remove, moved inside self.decode
         # Ugly fix: truncate CL if prediction does not have stop token in the right place
         # or replicate the last shape if it is too short
-        if bezier_points.shape[0] > positions.shape[0]:
-            shape_limit = positions.shape[0]
-            bezier_points = bezier_points[:shape_limit]
-            for key in visual_attribute_dict:
-                if visual_attribute_dict[key] is None:
-                    continue
-                visual_attribute_dict[key] = visual_attribute_dict[key][:shape_limit]
-        elif bezier_points.shape[0] < positions.shape[0]:
-            positions = positions[:bezier_points.shape[0]]
+        # if bezier_points.shape[0] > positions.shape[0]:
+        #     shape_limit = positions.shape[0]
+        #     bezier_points = bezier_points[:shape_limit]
+        #     for key in visual_attribute_dict:
+        #         if visual_attribute_dict[key] is None:
+        #             continue
+        #         visual_attribute_dict[key] = visual_attribute_dict[key][:shape_limit]
+        # elif bezier_points.shape[0] < positions.shape[0]:
+        #     positions = positions[:bezier_points.shape[0]]
 
         drawing = self.assemble_svg(bezier_points.to(positions.device), visual_attribute_dict, positions, w=480)
         return_tensor = drawing_to_tensor(drawing)

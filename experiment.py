@@ -110,7 +110,7 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
         if batch_idx % self.train_log_interval == 0 and self.wandb:
             out, logging_dict = self.forward(text_tokens, text_attention_mask, vq_tokens, logging=True)
             text_condition = self.tokenizer.decode_text(text_tokens[0])
-            if isinstance(self.tokenizer, RasterVQTokenizer):
+            if isinstance(self.tokenizer, RasterVQTokenizer):  # TODO: this must be addressed inside the tokenizer!
                 self.tokenizer.use_text_encoder_only = False # TODO: why this gets changed somewhere!
                 only_patch_tokens=True
                 rasterized_gt = self.tokenizer._tokens_to_image_tensor(
@@ -176,7 +176,11 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
         targets = vq_targets.view(-1)
 
         # mask out pad token for loss calculation
-        mask = targets != pad_token[0]
+        mask = targets != self.tokenizer.special_token_mapping["<PAD>"]
+        # mask = torch.logical_and(
+        #     targets != self.tokenizer.special_token_mapping["<PAD>"],
+        #     targets != self.tokenizer.special_token_mapping["<NUL>"]
+        # )
         pred_logits = pred_logits[mask]
         targets = targets[mask]
 

@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader
 import pandas as pd
 import re
 from dataset import TiledMNIST, MNISTDataset
-import torch.nn as nn
+from utils import get_filter_function
 from pathlib import Path
 
 
@@ -47,14 +47,17 @@ def main():
     rlimit = resource.getrlimit(resource.RLIMIT_NOFILE)
     resource.setrlimit(resource.RLIMIT_NOFILE, (2048, rlimit[1]))
 
+    ######
     # setting 1 - 8x8 grid, full random color VSQ
     # MODEL_WEIGHTS_PATH = "/raid/marco.cipriano/results/svg/Grimoire/VSQ/TiledMNIST/checkpoints/last.ckpt"
     # CONFIG_PATH = "configs/MNIST_VSQ.yaml"
     # OUT_PATH = "/home/marco.cipriano/data/SVG/Grimoire/MNIST/8x8_randomcolor"
+
+    ######
     # setting 2 - 8x8 grid, black and white VSQ
-    MODEL_WEIGHTS_PATH = "/raid/marco.cipriano/results/svg/VSQ/TiledMNIST/checkpoints/last.ckpt"
+    MODEL_WEIGHTS_PATH = "/raid/marco.cipriano/results/svg/VSQ/TiledMNIST/VSQ MNIST BW 128 th 0.1/checkpoints/last.ckpt"
     CONFIG_PATH = "configs/MNIST/MNIST_VSQ_BW.yaml"
-    OUT_PATH = "/home/marco.cipriano/data/SVG/Grimoire/MNIST/8x8_bnw"
+    OUT_PATH = "/home/marco.cipriano/data/SVG/Grimoire/MNIST/8x8_bnw_t0.1"
 
     with open(CONFIG_PATH, 'r') as file:
         try:
@@ -94,14 +97,23 @@ def main():
         except:
             model.load_state_dict({k.replace("model.", ""): v for k, v in state_dict.items()})
 
+    filter_fn = None
+    filter_th = config['data_params']["filter_th"]
+    if filter_th is not None:
+        print("Filtering patches with less than ", filter_th, " non-white pixels")
+        filter_fn = get_filter_function(filter_th, parse_patches=False)
+
     model = model.eval()
     model = model.to(device)
-    tokenizer = RasterVQTokenizer(model, 
-                                  tokens_per_patch=1, 
-                                  do_tokenize_positions=False,
-                                  patch_size=config['data_params']["patch_size"],
-                                  num_tiles_per_row=config['data_params']["num_tiles_per_row"],
-                                  device=device)
+    tokenizer = RasterVQTokenizer(
+        model,
+        tokens_per_patch=1,
+        do_tokenize_positions=False,
+        patch_size=config['data_params']["patch_size"],
+        num_tiles_per_row=config['data_params']["num_tiles_per_row"],
+        device=device,
+        filter_fn=filter_fn
+    )
 
     print("Loading dataset..")
     config['data_params']["train_batch_size"] = 1
@@ -134,6 +146,12 @@ def main():
             
             # print(imgs.shape, descriptions, filenames)
             start_token, text_tokens, vq_tokens, end_token = tokenizer.tokenize(imgs, text=descriptions[0], return_np_uint16=True)
+            # debug
+            # rasterized_gt = tokenizer._tokens_to_image_tensor(
+            #     torch.asarray(np.concatenate([vq_tokens, end_token])).int().cuda(),
+            #     ignore_special_tokens=True,
+            #     only_patch_tokens=True
+            # )
             assert vq_tokens.max() <= tokenizer.num_tokens, f"out of boundary tokens in iteration {i}. Max token: {vq_tokens.max()}"
             save_csv["index_in_numpy_array"].append(numpy_counter)
             save_csv["filename"].append(filenames[0])
@@ -147,11 +165,6 @@ def main():
             text_token_array.append(text_tokens)
             full_token_array.append(np.concatenate([start_token, text_tokens, vq_tokens, end_token]))
             numpy_counter += 1
-            # if numpy_counter % 200 == 0:
-            #     print("start_token: ", start_token)
-            #     print("text_tokens: ", text_tokens)
-            #     print("vq_tokens: ", vq_tokens)
-            #     print("end_token: ", end_token)
 
     np.save(os.path.join(OUT_PATH, "vsq_tokenized.npy"), np.concatenate(vsq_token_array))
     np.save(os.path.join(OUT_PATH, "text_tokenized.npy"), np.concatenate(text_token_array))
