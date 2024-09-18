@@ -1,14 +1,46 @@
 # paper notes
-## VSQ experiment
-| ID                    | 0    | 1    | 2    | 3    | 4          | 5    | 6    | 7    | 8    | 9          | 10   | 11   | 12   | 13   | 14         |
-|-----------------------|------|------|------|------|------------|------|------|------|------|------------|------|------|------|------|------------|
-| num_codes_per_shape   | 1    | 1    | 2    | 2    | 1          | 1    | 1    | 2    | 2    | 1          | 1    | 1    | 2    | 2    | 1          |
-| individual_max_length | 3.0  | 3.0  | 3.0  | 3.0  | 3.0        | 5.0  | 5.0  | 5.0  | 5.0  | 5.0        | 8.0  | 8.0  | 8.0  | 8.0  | 8.0        |
-| num_segments          | 1    | 2    | 1    | 2    | 2          | 1    | 2    | 1    | 2    | 2          | 1    | 2    | 1    | 2    | 2          |
-| geometric_constraint  | null | null | null | null | inner_dist | null | null | null | null | inner_dist | null | null | null | null | inner_dist |
-| stroke_width          | 0.4  | 0.4  | 0.4  | 0.4  | 0.4        | 0.66 | 0.66 | 0.66 | 0.66 | 0.66       | 1.06 | 1.06 | 1.06 | 1.06 | 1.06       |
 
-# thesis
+## VSQ MODULE CONFIGURATIONS
+
+save directory: `/raid/marco.cipriano/results/svg/Grimoire/VSQ`
+
+### experiments
+
+| Name                                | Notes                     |
+|-------------------------------------|---------------------------|
+| VSQ_MNIST_BW_P128_T6_P20_TH0.1      |                           |
+| VSQ_MNIST_BW_P128_T14_P20_TH0.2     | larger sequence for ART   |
+| VSQ_MNIST_COLOR_P128_T3_P20         |                           |
+| VSQ_MNIST_BW_P128_T14_P20_TH0.2_S64 | more segmentens per shape |
+
+
+## ART MODULE CONFIGURATIONS
+
+load directory: `/raid/marco.cipriano/results/svg/Grimoire/VSQ/`
+
+save directory: `/raid/marco.cipriano/results/svg/Grimoire/ART`
+
+### experiments
+
+- ART_MNIST_BW_AUG
+
+
+## Datasets
+
+### MNIST
+```
+/raid/marco.cipriano/data/SVG/Grimoire/MNIST/
+├─ mnist_png/
+│  ├─ testing/
+│  ├─ training/
+├─ mnist_tokenized/
+│  ├─ P128_T14_P20_TH0.2
+├─ mnist_pretiled/
+│  ├─ P128_T14_P20_TH0.2
+│  ├─ ...
+```
+
+# Install
 Master's thesis on conditional SVG generative models.
 ## Setup
 First of all, make a new python env and install requirements.txt:
@@ -33,7 +65,7 @@ pip install torch-tools
 pip install visdom
 python setup.py install
 ```
-Install our requirements: 
+Install our requirements:
 ```bash
 $ conda env update -n SVG --file requirements.yaml
 ```
@@ -97,7 +129,7 @@ TODO:
 TheNounProject is a custom scraped dataset. It was generated with the following procedure:
 1. Register an account at [The Noun Project](https://thenounproject.com/)
 2. Get your API keys at the [developer portal](https://thenounproject.com/developers/apps)
-3. Write your API key and secret inside an .env file in the root directory as 
+3. Write your API key and secret inside an .env file in the root directory as
 ```bash
 NOUN_PROJECT_API_KEY="key"
 NOUN_PROJECT_API_SECRET="private"
