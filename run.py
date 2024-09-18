@@ -11,7 +11,7 @@ from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, Le
 from dataset import GenericRasterizedSVGDataModule,GenericRasterDatamodule, PrecomputedMNISTDataset, MNISTDataset, MNISTppDataset, NounProjectDataset, EmojiDataset, MNISTDatasetCSVG, CausalSVGDataModule, NewCausalSVGDataModule, CenterShapeLayersFromSVGDataModule, VQDataModule, GlyphazznStage1Datamodule
 from models import VAEctorGen, VectorGPT, VanillaVAE, VectorVAEnLayers, VectorGPTv2, Vector_VQVAE, VQ_Transformer
 from experiment import VAEXperiment, VectorGPTExperiment, VectorGPTExperimentv2, VectorVQVAE_Experiment_Stage1, SVG_VQVAE_Stage2_Experiment
-import wandb
+import json
 from utils import get_rank
 import torch
 from pytorch_lightning.profilers import SimpleProfiler
@@ -75,6 +75,9 @@ config['logging_params']['save_dir'] = os.path.join(
     config['logging_params']['name']
 )
 Path(config['logging_params']['save_dir']).mkdir(parents=True, exist_ok=True)
+
+with open(os.path.join(config['logging_params']['save_dir'], 'config.json'), 'w') as f:
+    json.dump(config, f)
 
 current_process_rank = get_rank()
 
