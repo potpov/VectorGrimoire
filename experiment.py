@@ -264,6 +264,11 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
                 out, logging_dict = self.forward(text_tokens, text_attention_mask, vq_tokens, logging=False)
 
             if batch_idx % self.val_metric_log_interval == 0 and self.wandb:
+                if isinstance(self.tokenizer, RasterVQTokenizer):
+                    self.tokenizer.use_text_encoder_only = False  # TODO: why this gets changed somewhere!
+                    only_patch_tokens = True
+                else:
+                    only_patch_tokens = False
                 num_samples = 8
                 temperatures = [random.uniform(0.0, 1.5) for _ in range(num_samples)]
                 clip_score_metric, generations, texts = self._get_clip_score_for_batch(
