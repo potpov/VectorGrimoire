@@ -10,7 +10,7 @@ from dataset import VQDataModule
 from models import VQ_SVG_Stage2, Vector_VQVAE
 from tokenizer import RasterVQTokenizer
 from experiment import SVG_VQVAE_Stage2_Experiment
-import wandb
+import json
 from utils import get_rank
 import torch
 from pytorch_lightning.profilers import SimpleProfiler
@@ -46,6 +46,14 @@ if args.debug:
     config["data_params"]["num_workers"] = 0
 
 current_process_rank = get_rank()
+config['logging_params']['save_dir'] = os.path.join(
+    config['logging_params']['save_dir'],
+    config['logging_params']['name']
+)
+print(f"Updated configuration to log in: {config['logging_params']['save_dir']}")
+# dumping config file
+with open(os.path.join(config['logging_params']['save_dir'], 'config.json'), 'w') as f:
+    json.dump(config, f)
 
 if args.wandb:
     if "entity" not in config['logging_params']:
@@ -81,7 +89,7 @@ except:
     vq_model.load_state_dict({k.replace("model.", ""): v for k, v in state_dict.items()})
 vq_model = vq_model.eval()
 tokenizer = RasterVQTokenizer(vq_model, 
-                              tokens_per_patch=1, 
+                                tokens_per_patch=1,
                                 do_tokenize_positions=False,
                                 patch_size=config['data_params']["patch_size"],
                                 num_tiles_per_row=config['data_params']["num_tiles_per_row"],
@@ -125,7 +133,7 @@ runner = Trainer(
     logger=wandb_logger,
     callbacks=[
         LearningRateMonitor(logging_interval="epoch", log_momentum=True),
-        # EarlyStopping("val_loss", 0.005, 5, verbose=True),
+        EarlyStopping("val_loss", 0.005, 5, verbose=True),
         ModelCheckpoint(save_top_k=3,
                         dirpath=os.path.join(config['logging_params']['save_dir'], "checkpoints"),
                         monitor="val_loss",

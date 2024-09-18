@@ -1,20 +1,21 @@
+from torch.utils.data import DataLoader
+from pathlib import Path
 from models import Vector_VQVAE
 from tokenizer import RasterVQTokenizer
 import numpy as np
 import torch
-from glob import glob
-import os
-from tqdm import tqdm
+import cv2
 import yaml
+import os
 import resource
-
-from torch.utils.data import DataLoader
-import pandas as pd
-import re
+import torch.nn.functional as F
+from tqdm import tqdm
 from dataset import TiledMNIST, MNISTDataset
 from utils import get_filter_function
-from pathlib import Path
-
+import pandas as pd
+from PIL import Image
+from torchvision import transforms
+from torchvision.transforms import v2
 
 def get_existing_Data(tokenizer_dir):
     existing = []
@@ -42,7 +43,166 @@ class SkipDataset(torch.utils.data.Dataset):
         return len(self.original_dataset)
 
 
-def main():
+def tokenize_MNIST_augmented():
+
+    rlimit = resource.getrlimit(resource.RLIMIT_NOFILE)
+    resource.setrlimit(resource.RLIMIT_NOFILE, (2048, rlimit[1]))
+    ######
+    # setting 2 - 8x8 grid, black and white VSQ
+    MODEL_WEIGHTS_PATH = "/raid/marco.cipriano/results/svg/VSQ/TiledMNIST/VSQ MNIST BW 128 th 0.1/checkpoints/last.ckpt"
+    CONFIG_PATH = "configs/MNIST/MNIST_VSQ_BW.yaml"
+    OUT_PATH = "/home/marco.cipriano/data/SVG/Grimoire/MNIST/8x8_bnw_t0.1_augmented"
+
+    with open(CONFIG_PATH, 'r') as file:
+        try:
+            config = yaml.safe_load(file)
+        except yaml.YAMLError as exc:
+            print(exc)
+    #################
+    ###  MODEL
+    print("Loading model..")
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
+    model = Vector_VQVAE(patch_size=config['data_params']["patch_size"], **config['model_params'])
+    if MODEL_WEIGHTS_PATH is not None:
+        state_dict = torch.load(MODEL_WEIGHTS_PATH, map_location=device)["state_dict"]
+        try:
+            model.load_state_dict(state_dict)
+        except:
+            model.load_state_dict({k.replace("model.", ""): v for k, v in state_dict.items()})
+
+    filter_fn = None
+    filter_th = config['data_params']["filter_th"]
+    if filter_th is not None:
+        print("Filtering patches with less than ", filter_th, " non-white pixels")
+        filter_fn = get_filter_function(filter_th, parse_patches=False)
+
+    model = model.eval()
+    model = model.to(device)
+    tokenizer = RasterVQTokenizer(
+        model,
+        tokens_per_patch=1,
+        do_tokenize_positions=False,
+        patch_size=config['data_params']["patch_size"],
+        num_tiles_per_row=config['data_params']["num_tiles_per_row"],
+        device=device,
+        filter_fn=filter_fn
+    )
+    print("Loading dataset..")
+    config['data_params']["train_batch_size"] = 1
+    config['data_params']["test_batch_size"] = 1
+    config['data_params']["val_batch_size"] = 1
+    datamodule = MNISTDataset(**config['data_params'], return_filename=True)
+    datamodule.setup()
+
+    dl_train = datamodule.train_dataloader()
+
+    all_paths = dl_train.dataset.image_paths
+    all_desc = dl_train.dataset.labels
+
+    print("Number of Tokens: ", tokenizer.num_tokens)
+    patch_size = config['data_params']["patch_size"]
+    num_tiles_per_row = config['data_params']["num_tiles_per_row"]
+    padding_frac = config['data_params']["padding_frac"]
+    total_padding = total_padding = (int(patch_size * padding_frac) // 2) * 2
+    new_dimension = (patch_size - total_padding) * num_tiles_per_row
+    single_side_padding = total_padding // 2
+    base_transforms = transforms.Compose(
+        [
+            transforms.Resize(new_dimension, antialias=True),
+            transforms.RandomInvert(1.0),
+            transforms.Grayscale(num_output_channels=3),
+            transforms.ToTensor(),
+        ]
+    )
+    def patch(image):
+        patches = []
+        for i in range(0, image.shape[1], patch_size - single_side_padding * 2):
+            for j in range(0, image.shape[2], patch_size - single_side_padding * 2):
+                patch = image[:, i: i + patch_size - total_padding, j: j + patch_size - total_padding]
+                patch = F.pad(patch,
+                              (single_side_padding, single_side_padding, single_side_padding, single_side_padding),
+                              value=1.)
+                patches.append(patch)
+        return patches
+
+    num_shift, num_rotation, num_zoom, num_shear = 30, 40, 10, 3
+    print("FINAL EXPECTED NUMBER OF SAMPLES: ", len(all_paths) * (num_shift + num_rotation + num_zoom + num_shear))
+    shift_vals = np.random.uniform(-100, 100, (num_shift, 2))
+    rotation_vals = np.random.uniform(-45, 45, num_rotation)
+    zoom_vals = np.random.uniform(0.5, 1.5, num_zoom)
+    shear_vals = np.random.uniform(-20, 20, num_shear)
+
+
+    save_csv = {
+        "index_in_numpy_array": [], "filename": [],
+        "split": [], "label": [], "text_token_length": [],
+        "vq_token_length": [], "description": []
+    }
+    vsq_token_array = []
+    text_token_array = []
+    full_token_array = []
+    numpy_counter = 0
+
+
+    for idx in tqdm(range(len(all_paths)), total=len(all_paths)):
+
+        path = all_paths[idx]
+        desc = all_desc[idx]
+        all_variations = []
+        image = Image.open(path)
+        image = base_transforms(image)
+
+        # ORIGINAL IMAGE
+        all_variations.append(image)
+
+        # ALL ROTATIONS
+        for angle in rotation_vals:
+            all_variations.append(v2.functional.affine(image, angle=angle, translate=(0, 0), fill=1., shear=0, scale=1))
+
+        # ALL SHIFTING
+        for a, b in shift_vals:
+            all_variations.append(
+                v2.functional.affine(image, angle=0, translate=(float(a), float(b)), fill=1., shear=0, scale=1))
+
+            # # ALL ZOOMS
+        for zoom_val in zoom_vals:
+            all_variations.append(v2.functional.affine(image, angle=0, translate=(0, 0), fill=1., shear=0, scale=zoom_val))
+        #
+        # # ALL SHEARS
+        for shear_val in shear_vals:
+            all_variations.append(v2.functional.affine(image, angle=0, translate=(0, 0), fill=1., shear=shear_val, scale=1))
+
+        # PROCESSING AND SAVING
+        description = f"number {desc}"
+        for variation in all_variations:
+            variation = torch.stack(patch(variation))
+            start_token, text_tokens, vq_tokens, end_token = tokenizer.tokenize(variation.cuda(), text=description,
+                                                                                return_np_uint16=True)
+
+            assert vq_tokens.max() <= tokenizer.num_tokens, f"out of boundary tokens in iteration ??. Max token: {vq_tokens.max()}"
+            save_csv["index_in_numpy_array"].append(numpy_counter)
+            save_csv["filename"].append("")
+            save_csv["split"].append("train")
+            save_csv["description"].append(description.lower())
+            save_csv["label"].append(desc)
+            save_csv["text_token_length"].append(len(text_tokens))
+            save_csv["vq_token_length"].append(len(vq_tokens))
+            vsq_token_array.append(vq_tokens)
+            text_token_array.append(text_tokens)
+            full_token_array.append(np.concatenate([start_token, text_tokens, vq_tokens, end_token]))
+            numpy_counter += 1
+
+    np.save(os.path.join(OUT_PATH, "vsq_tokenized.npy"), np.concatenate(vsq_token_array))
+    np.save(os.path.join(OUT_PATH, "text_tokenized.npy"), np.concatenate(text_token_array))
+    np.save(os.path.join(OUT_PATH, "full_tokenized.npy"), np.concatenate(full_token_array))
+    df = pd.DataFrame(save_csv)
+    df.to_csv(os.path.join(OUT_PATH, "split.csv"), index=False)
+
+
+def tokenize_MNIST():
 
     rlimit = resource.getrlimit(resource.RLIMIT_NOFILE)
     resource.setrlimit(resource.RLIMIT_NOFILE, (2048, rlimit[1]))
@@ -138,6 +298,7 @@ def main():
     text_token_array = []
     full_token_array = []
     numpy_counter = 0
+
     for split_name, split in {"train": dl_train, "test": dl_test}.items():
         for i, batch in tqdm(enumerate(split), total=len(split), desc=f"processing {split_name}"):
             imgs, labels, _, descriptions, filenames = batch
@@ -174,4 +335,4 @@ def main():
 
 if __name__ == '__main__':
     # print(get_latest_data_checkpoint("/scratch2/moritz_data/glyphazzn"))
-    main()
+    tokenize_MNIST_augmented()
