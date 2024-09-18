@@ -4,14 +4,15 @@ from torch import Tensor
 from typing import Any, List, Optional, Sequence, Union
 from pytorch_lightning import LightningDataModule
 from torch.utils.data import DataLoader, Dataset
-from torchvision import transforms
+import torch.nn.functional as F
 from PIL import Image
 import glob
 import pandas as pd
 import numpy as np
 import string
 from utils import svg2paths2, disvg, raster, get_filter_function, get_single_paths, get_similar_length_paths, check_for_continouity, get_rasterized_segments, all_paths_to_max_diff, Path, svg_string_to_tensor
-import copy
+import torchvision.transforms as transforms
+from utils import drawing_to_tensor
 import random
 import math
 from tokenizer import VQTokenizer, RasterVQTokenizer
@@ -165,7 +166,7 @@ class VQDataset(Dataset):
             if train:
                 self.split = self.split[self.split["split"] == "train"].reset_index(drop=True)
             else:
-                self.split = self.split[self.split["split"] == "val"].reset_index(drop=True)
+                self.split = self.split[self.split["split"] == "test"].reset_index(drop=True)  # TODO: reset this to val after testing
 
         self.split["index_in_numpy_array"] = self.split["index_in_numpy_array"].astype(int)
         samples_before_filtering = len(self.split)
@@ -270,6 +271,7 @@ class VQDataset(Dataset):
         attention_mask = torch.from_numpy(text_attention_mask.astype(np.int32)).long()
 
         return text_tokens, attention_mask, vq_tokens, vq_targets, torch.ones(1).to(text_tokens.device)*self.pad_token
+
 
 class VQDataModule(LightningDataModule):
 
@@ -400,7 +402,8 @@ class VQDataModule(LightningDataModule):
             shuffle=False,
             pin_memory=False,
         )
-    
+
+
 class GlyphazznStage1Dataset(Dataset):
     """
     Glyphazzn dataset that requires already normalized SVGs. Yields patches, positions, and labels. The label is the index of string.printable -> label = string.printable.index(label)
@@ -584,6 +587,7 @@ class GlyphazznStage1Dataset(Dataset):
     def __len__(self):
         return len(self.df)
 
+
 class GlyphazznStage1Datamodule(LightningDataModule):
     def __init__(
         self,
@@ -710,6 +714,7 @@ class GlyphazznStage1Datamodule(LightningDataModule):
             collate_fn=self.collate_fn
         )
 
+
 class CenterShapeLayersFromSVGDataset(Dataset):
     """
     This dataset takes SVG files and preprocesses them into rasterized centered shape layers.
@@ -813,6 +818,7 @@ class CenterShapeLayersFromSVGDataset(Dataset):
     def __len__(self):
         return len(self.split)
 
+
 class CenterShapeLayersFromSVGDataModule(LightningDataModule):
     def __init__(
         self,
@@ -895,6 +901,7 @@ class CenterShapeLayersFromSVGDataModule(LightningDataModule):
             pin_memory=False,
             collate_fn=self.collate_fn
         )
+
 
 class NewCausalSVGDataset(Dataset):
     """
@@ -994,6 +1001,7 @@ class NewCausalSVGDataset(Dataset):
     def __len__(self):
         return len(self.split)
 
+
 class NewCausalSVGDataModule(LightningDataModule):
     def __init__(
         self,
@@ -1071,6 +1079,7 @@ class NewCausalSVGDataModule(LightningDataModule):
             pin_memory=False,
         )
 
+
 # Add your custom dataset class here
 class MyDataset(Dataset):
     def __init__(self):
@@ -1081,8 +1090,7 @@ class MyDataset(Dataset):
 
     def __getitem__(self, idx):
         pass
-import torchvision.transforms as transforms
-from utils import drawing_to_tensor
+
 
 class GenericRasterizedSVGDataset(Dataset):
     def __init__(self,
@@ -1142,6 +1150,7 @@ class GenericRasterizedSVGDataset(Dataset):
 
     def __len__(self) -> int:
         return len(self.df)
+
 
 class GenericRasterizedSVGDataModule(LightningDataModule):
     def __init__(self,
@@ -1220,7 +1229,6 @@ class GenericRasterizedSVGDataModule(LightningDataModule):
         )
 
 
-
 class GenericRasterDataset(Dataset):
     def __init__(self,
                  csv_path:str,
@@ -1281,6 +1289,7 @@ class GenericRasterDataset(Dataset):
     
     def __len__(self) -> int:
         return len(self.df)
+
 
 class GenericRasterDatamodule(LightningDataModule):
     def __init__(self,
@@ -1358,6 +1367,7 @@ class GenericRasterDatamodule(LightningDataModule):
             pin_memory=False,
         )
 
+
 class MNIST(Dataset):
     """
     MNIST dataset from a root directory:
@@ -1402,7 +1412,6 @@ class MNIST(Dataset):
     def __len__(self):
         return len(self.image_paths)
 
-import torch.nn.functional as F
 
 """
 MNIST dataset from a root directory where each image is split into tiles:
@@ -1416,6 +1425,10 @@ training    testing
 """
 
 class PrecomputedTiledMNIST(Dataset):
+    """
+    use scripts/create_precomputed_mnist.py to generate the precomputed patches and store them as pt file for this
+    dataset.
+    """
     def __init__(self,
                  root,
                  train=True,
@@ -1426,8 +1439,6 @@ class PrecomputedTiledMNIST(Dataset):
                  use_palette: bool = True,
                  total_padding: int = 20,
                  return_filename: bool = False,
-                 force: bool = False,
-                 filter_th: float = 0,
                  ):
 
         super(PrecomputedTiledMNIST, self)
@@ -1440,44 +1451,17 @@ class PrecomputedTiledMNIST(Dataset):
         self.use_palette = use_palette
         self.total_padding = total_padding
         self.return_filename = return_filename
-        self.force = force
-        self.th = filter_th
-        self.image_folder = os.path.join(root, "training" if train else "testing")
+        self.image_folder = os.path.join(root, "train.pt" if train else "test.pt")
 
         self.precompute_patches = []
         self.labels = []
         self.samples = []
 
         num_digits = 10
-        pathlib.Path(os.path.join(self.image_folder, "cache")).mkdir(parents=True, exist_ok=True)
-        cache_path = os.path.join(self.image_folder, "cache", f"th_{str(self.th)}.pt")
-        if os.path.exists(cache_path) and not self.force:
-            print(f"loading patches from {cache_path}")
-            self.samples = list(torch.load(cache_path, weights_only=False))
-        else:
-            print("Pre-computing all patches and saving...")
-
-            # the > make it work for threshold 0 as well because if there are 0 black
-            # pixels then the sum is equal to the count of total pixels in the patch, not greater
-            # alternative for the 0-th is:
-            # filter_fn = lambda patches: patches[torch.any(patches != 1., dim=(1, 2, 3))]
-            filter_fn = get_filter_function(self.th, parse_patches=True)
-
-            for label in tqdm(range(num_digits), total=num_digits):
-                label_folder = os.path.join(self.image_folder, str(label))
-                image_files = os.listdir(label_folder)
-                for image_file in tqdm(image_files, total=len(image_files), desc=f"patching {str(label)}", leave=False):
-                    image_path = os.path.join(label_folder, image_file)
-                    image = Image.open(image_path)
-                    if self.transform is not None:
-                        image = self.transform(image)
-                    patches = self.make_patches(image)
-                    # removing empty patches
-                    patches = filter_fn(patches)
-
-                    # caching and continuing
-                    self.samples += list(patches)
-            torch.save(torch.stack(self.samples), cache_path)
+        assert os.path.exists(self.image_folder), f"Folder {self.image_folder} does not exist."
+        print(f"loading patches from {self.image_folder}")
+        self.samples = list(torch.load(self.image_folder, weights_only=False))
+        print(f"loaded {len(self.samples)} samples")
 
     def __getitem__(self, index):
         patch = self.samples[index]
@@ -2052,14 +2036,7 @@ class MNISTDataset(LightningDataModule):
         )
 
     def test_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
-        return DataLoader(
-            self.val_dataset,
-            batch_size=144,
-            num_workers=self.num_workers,
-            shuffle=True,
-            pin_memory=self.pin_memory,
-            collate_fn=self.collate_fn,
-        )
+        return self.val_dataloader()
     #       ===============================================================
 
 
@@ -2089,8 +2066,6 @@ class PrecomputedMNISTDataset(LightningDataModule):
             pin_memory: bool = False,
             padding_frac: float = 0.1,
             return_filename: bool =False,
-            force: bool = False,
-            filter_th: float = 0,
             **kwargs,
     ):
         super().__init__()
@@ -2105,8 +2080,7 @@ class PrecomputedMNISTDataset(LightningDataModule):
         self.padding_frac = padding_frac
         self.total_padding = (int(self.patch_size * self.padding_frac) // 2) * 2
         self.return_filename = return_filename
-        self.filter_th = filter_th
-        self.force = force
+
     def collate_fn(self, batch):
         if self.return_filename:
             patches, labels, _, descriptions, filenames = zip(*batch)  # (tiles, channels, height, width)
@@ -2150,9 +2124,7 @@ class PrecomputedMNISTDataset(LightningDataModule):
             num_tiles_per_row=self.num_tiles_per_row,
             patch_size=self.patch_size,
             total_padding=self.total_padding,
-            return_filename=self.return_filename,
-            filter_th=self.filter_th,
-            force=self.force
+            return_filename=self.return_filename
         )
 
         self.val_dataset = PrecomputedTiledMNIST(
@@ -2162,11 +2134,8 @@ class PrecomputedMNISTDataset(LightningDataModule):
             num_tiles_per_row=self.num_tiles_per_row,
             patch_size=self.patch_size,
             total_padding=self.total_padding,
-            return_filename=self.return_filename,
-            filter_th=self.filter_th,
-            force=self.force
+            return_filename=self.return_filename
         )
-
 
     #       ===============================================================
 
