@@ -49,15 +49,31 @@ def tokenize_MNIST_augmented():
     resource.setrlimit(resource.RLIMIT_NOFILE, (2048, rlimit[1]))
     ######
     # setting 2 - 8x8 grid, black and white VSQ
-    MODEL_WEIGHTS_PATH = "/raid/marco.cipriano/results/svg/VSQ/TiledMNIST/VSQ MNIST BW 128 th 0.1/checkpoints/last.ckpt"
-    CONFIG_PATH = "configs/MNIST/MNIST_VSQ_BW.yaml"
-    OUT_PATH = "/home/marco.cipriano/data/SVG/Grimoire/MNIST/8x8_bnw_t0.1_augmented"
+    MODEL_WEIGHTS_PATH = "/raid/marco.cipriano/results/svg/Grimoire/VSQ/VSQ_MNIST_BW_P128_T14_P20_TH0.2/checkpoints/last.ckpt"
+    OUT_PATH = "/raid/marco.cipriano/data/SVG/Grimoire/MNIST/mnist_tokenized/VSQ_MNIST_BW_P128_T14_P20_TH0.2"
+    CONFIG_PATH = "../configs/MNIST/MNIST_VSQ_BW.yaml"
+    FILTER_TH = 0.2
+
+    MNIST_SETTING = {
+        "data_path": "/raid/marco.cipriano/data/SVG/Grimoire/MNIST/mnist_png",
+        "train_batch_size": 1,
+        "val_batch_size": 1,
+        "patch_size": 128,
+        "num_tiles_per_row": 14,
+        "num_workers": 0,
+        "pin_memory": False,
+        "random_colors": False,
+        "use_palette": False,
+        "padding_frac": 0.1,
+        "return_filename": True,
+    }
 
     with open(CONFIG_PATH, 'r') as file:
         try:
             config = yaml.safe_load(file)
         except yaml.YAMLError as exc:
             print(exc)
+
     #################
     ###  MODEL
     print("Loading model..")
@@ -65,7 +81,7 @@ def tokenize_MNIST_augmented():
         device = torch.device("cuda")
     else:
         device = torch.device("cpu")
-    model = Vector_VQVAE(patch_size=config['data_params']["patch_size"], **config['model_params'])
+    model = Vector_VQVAE(patch_size=MNIST_SETTING["patch_size"], **config['model_params'])
     if MODEL_WEIGHTS_PATH is not None:
         state_dict = torch.load(MODEL_WEIGHTS_PATH, map_location=device)["state_dict"]
         try:
@@ -74,10 +90,9 @@ def tokenize_MNIST_augmented():
             model.load_state_dict({k.replace("model.", ""): v for k, v in state_dict.items()})
 
     filter_fn = None
-    filter_th = config['data_params']["filter_th"]
-    if filter_th is not None:
-        print("Filtering patches with less than ", filter_th, " non-white pixels")
-        filter_fn = get_filter_function(filter_th, parse_patches=False)
+    if FILTER_TH is not None:
+        print("Filtering patches with less than ", FILTER_TH, " non-white pixels")
+        filter_fn = get_filter_function(FILTER_TH, parse_patches=False)
 
     model = model.eval()
     model = model.to(device)
@@ -85,27 +100,25 @@ def tokenize_MNIST_augmented():
         model,
         tokens_per_patch=1,
         do_tokenize_positions=False,
-        patch_size=config['data_params']["patch_size"],
-        num_tiles_per_row=config['data_params']["num_tiles_per_row"],
+        patch_size=MNIST_SETTING["patch_size"],
+        num_tiles_per_row=MNIST_SETTING["num_tiles_per_row"],
         device=device,
         filter_fn=filter_fn
     )
     print("Loading dataset..")
-    config['data_params']["train_batch_size"] = 1
-    config['data_params']["test_batch_size"] = 1
-    config['data_params']["val_batch_size"] = 1
-    datamodule = MNISTDataset(**config['data_params'], return_filename=True)
+    datamodule = MNISTDataset(**MNIST_SETTING)
     datamodule.setup()
 
     dl_train = datamodule.train_dataloader()
+    dl_test = datamodule.test_dataloader()
 
     all_paths = dl_train.dataset.image_paths
     all_desc = dl_train.dataset.labels
 
     print("Number of Tokens: ", tokenizer.num_tokens)
-    patch_size = config['data_params']["patch_size"]
-    num_tiles_per_row = config['data_params']["num_tiles_per_row"]
-    padding_frac = config['data_params']["padding_frac"]
+    patch_size = MNIST_SETTING["patch_size"]
+    num_tiles_per_row = MNIST_SETTING["num_tiles_per_row"]
+    padding_frac = MNIST_SETTING["padding_frac"]
     total_padding = total_padding = (int(patch_size * padding_frac) // 2) * 2
     new_dimension = (patch_size - total_padding) * num_tiles_per_row
     single_side_padding = total_padding // 2
@@ -128,10 +141,10 @@ def tokenize_MNIST_augmented():
                 patches.append(patch)
         return patches
 
-    num_shift, num_rotation, num_zoom, num_shear = 30, 40, 10, 3
+    num_shift, num_rotation, num_zoom, num_shear = 5, 5, 5, 1
     print("FINAL EXPECTED NUMBER OF SAMPLES: ", len(all_paths) * (num_shift + num_rotation + num_zoom + num_shear))
     shift_vals = np.random.uniform(-100, 100, (num_shift, 2))
-    rotation_vals = np.random.uniform(-45, 45, num_rotation)
+    rotation_vals = np.random.uniform(-30, 30, num_rotation)
     zoom_vals = np.random.uniform(0.5, 1.5, num_zoom)
     shear_vals = np.random.uniform(-20, 20, num_shear)
 
@@ -146,7 +159,6 @@ def tokenize_MNIST_augmented():
     full_token_array = []
     numpy_counter = 0
 
-
     for idx in tqdm(range(len(all_paths)), total=len(all_paths)):
 
         path = all_paths[idx]
@@ -154,6 +166,7 @@ def tokenize_MNIST_augmented():
         all_variations = []
         image = Image.open(path)
         image = base_transforms(image)
+        image = torch.where(image > 0.6, 1., 0.)  # makes binary
 
         # ORIGINAL IMAGE
         all_variations.append(image)
@@ -195,6 +208,28 @@ def tokenize_MNIST_augmented():
             full_token_array.append(np.concatenate([start_token, text_tokens, vq_tokens, end_token]))
             numpy_counter += 1
 
+    #####
+    ## adding test split without augmentations
+    for i, batch in tqdm(enumerate(dl_test), total=len(dl_test), desc=f"processing test"):
+        imgs, labels, _, descriptions, filenames = batch
+        imgs = imgs.to(device)
+        imgs = torch.where(imgs > 0.6, 1., 0.)  # makes binary
+        start_token, text_tokens, vq_tokens, end_token = tokenizer.tokenize(imgs, text=descriptions[0],
+                                                                            return_np_uint16=True)
+
+        assert vq_tokens.max() <= tokenizer.num_tokens, f"out of boundary tokens in iteration {i}. Max token: {vq_tokens.max()}"
+        save_csv["index_in_numpy_array"].append(numpy_counter)
+        save_csv["filename"].append(filenames[0])
+        save_csv["split"].append("test")
+        save_csv["description"].append(descriptions[0].lower())
+        save_csv["label"].append(labels[0])
+        save_csv["text_token_length"].append(len(text_tokens))
+        save_csv["vq_token_length"].append(len(vq_tokens))
+        vsq_token_array.append(vq_tokens)
+        text_token_array.append(text_tokens)
+        full_token_array.append(np.concatenate([start_token, text_tokens, vq_tokens, end_token]))
+        numpy_counter += 1
+
     np.save(os.path.join(OUT_PATH, "vsq_tokenized.npy"), np.concatenate(vsq_token_array))
     np.save(os.path.join(OUT_PATH, "text_tokenized.npy"), np.concatenate(text_token_array))
     np.save(os.path.join(OUT_PATH, "full_tokenized.npy"), np.concatenate(full_token_array))
@@ -216,7 +251,7 @@ def tokenize_MNIST():
     ######
     # setting 2 - 8x8 grid, black and white VSQ
     MODEL_WEIGHTS_PATH = "/raid/marco.cipriano/results/svg/VSQ/TiledMNIST/VSQ MNIST BW 128 th 0.1/checkpoints/last.ckpt"
-    CONFIG_PATH = "configs/MNIST/MNIST_VSQ_BW.yaml"
+    CONFIG_PATH = "../configs/MNIST/MNIST_VSQ_BW.yaml"
     OUT_PATH = "/home/marco.cipriano/data/SVG/Grimoire/MNIST/8x8_bnw_t0.1"
 
     with open(CONFIG_PATH, 'r') as file:
