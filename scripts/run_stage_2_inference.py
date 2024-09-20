@@ -1,4 +1,4 @@
-from models import VQ_Transformer, Vector_VQVAE
+from models import VQ_Transformer, VSQ
 from tokenizer import VQTokenizer
 from dataset import VQDataset
 import torch
@@ -27,7 +27,7 @@ def main(args):
     vq_transformer = vq_transformer.eval()
 
     # Load the VQVAE
-    vq_model = Vector_VQVAE(codebook_size=128, image_loss="mse", vq_method="fsq")
+    vq_model = VSQ(codebook_size=128, image_loss="mse", vq_method="fsq")
     ckpt = "/scratch2/moritz_logs/SVG_VQVAE/Stage1/glyphazzn_B_simplified_single_code/checkpoints/last-v3.ckpt"
     state_dict = torch.load(ckpt, map_location=device)["state_dict"]
     # map keys to remove the prefix "model."

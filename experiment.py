@@ -5,7 +5,7 @@ import torch
 from torch import Tensor
 from torch import optim
 import wandb
-from models import BaseVAE, VectorVAEnLayers, VectorGPT, VectorGPTv2, Vector_VQVAE, VQ_SVG_Stage2
+from models import BaseVAE, VectorVAEnLayers, VectorGPT, VectorGPTv2, VSQ, VQ_SVG_Stage2
 import pytorch_lightning as pl
 from utils import log_images, log_all_images, get_side_by_side_reconstruction, add_points_to_image, get_merged_image_for_logging, interpolate_rows
 from torchmetrics.image.fid import FrechetInceptionDistance
@@ -17,7 +17,9 @@ import pandas as pd
 from torchmetrics.functional.multimodal import clip_score
 from tokenizer import VQTokenizer, RasterVQTokenizer
 # import torch_optimizer as optim_
-from dataset import GlyphazznStage1Datamodule, MNISTDataset, PrecomputedMNISTDataset
+from dataset import VSQDatamodule, MNISTDataset, PrecomputedMNISTDataset
+from transformers import get_cosine_schedule_with_warmup, get_linear_schedule_with_warmup
+
 
 class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
     def __init__(self,
@@ -330,7 +332,7 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
         param_group_1 = {'params': self.model.parameters(), 'lr': self.lr}
         param_groups = [param_group_1]
 
-        if not self.weight_decay:
+        if self.weight_decay is not None:
             optimizer = optim.AdamW(
                 param_groups,
                 lr=self.lr,
@@ -342,11 +344,20 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
         optims.append(optimizer)
 
         try:
+            warmup_steps = self.warmup_steps or 0
             if self.scheduler_gamma is not None:
-                scheduler = optim.lr_scheduler.ExponentialLR(optims[0],
-                                                             gamma=self.scheduler_gamma)
+                scheduler = get_cosine_schedule_with_warmup(optims[0],
+                                                            num_warmup_steps=warmup_steps,
+                                                            num_training_steps=self.total_training_steps,
+                                                            last_epoch=self.current_epoch)
                 scheds.append(scheduler)
-
+                return optims, scheds
+            else:
+                scheduler = get_linear_schedule_with_warmup(optims[0],
+                                                            warmup_steps,
+                                                            self.total_training_steps,
+                                                            last_epoch=self.current_epoch)
+                scheds.append(scheduler)
                 return optims, scheds
         except:
             pass
@@ -361,7 +372,7 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
     """
 
     def __init__(self,
-                 model: Vector_VQVAE,
+                 model: VSQ,
                  lr: float = 0.0003,
                  schedule_pyramid_method: str = None,
                  weight_decay: float = 0.0,
@@ -404,9 +415,9 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
         self.end_weights = torch.tensor([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
         interpolation_epochs = 10
 
-        if self.schedule_pyramid_method.lower() == "linear":
+        if self.schedule_pyramid_method is not None and self.schedule_pyramid_method.lower() == "linear":
             self.pyramid_weight_schedule = interpolate_rows(self.start_weights, self.end_weights, interpolation_epochs, method="linear")
-        elif self.schedule_pyramid_method.lower() == "exponential":
+        elif self.schedule_pyramid_method is not None and self.schedule_pyramid_method.lower() == "exponential":
             self.pyramid_weight_schedule = interpolate_rows(self.start_weights, self.end_weights, interpolation_epochs, method="exponential")
         else:
             self.pyramid_weight_schedule = self.start_weights.unsqueeze(0)
@@ -457,7 +468,7 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
                 # SIDE BY SIDE RECON
                 if not isinstance(self.datamodule, PrecomputedMNISTDataset):  # not possible for MNIST with custom patches
                     random_idx = random.randint(0, len(self.datamodule.train_dataset))
-                    if isinstance(self.datamodule, GlyphazznStage1Datamodule):
+                    if isinstance(self.datamodule, VSQDatamodule):
                         dataset_name = "glyphazzn"
                     elif isinstance(self.datamodule, MNISTDataset):
                         dataset_name = "mnist"
@@ -468,7 +479,7 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
                             {"train/side_by_side_recons": [
                                 wandb.Image(side_by_side_recons, caption="side by side reconstructions of training sample")
                             ]},
-                            step=current_trainer_global_step,
+                            # step=current_trainer_global_step,
                         )
 
 
@@ -478,7 +489,7 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
                 else:
                     log_amount = reconstructions.shape[0]
 
-                if isinstance(self.datamodule, GlyphazznStage1Datamodule):
+                if isinstance(self.datamodule, VSQDatamodule):
                     log_reconstructions = add_points_to_image(all_points, reconstructions[:,:3,:,:], image_scale=reconstructions.shape[-1])
                 elif isinstance(self.datamodule, (MNISTDataset, PrecomputedMNISTDataset)):
                     log_reconstructions = reconstructions[:,:3,:,:]
@@ -493,7 +504,7 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
                 current_trainer_global_step = self.trainer.global_step
                 self.trainer.logger.experiment.log(
                     {"samples": [i]},
-                    step=current_trainer_global_step,
+                    # step=current_trainer_global_step,
                 )
 
         self.log_dict(loss_dict, logger=True, prog_bar=True)
@@ -535,7 +546,7 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
                 # SIDE BY SIDE RECON
                 if not isinstance(self.datamodule, PrecomputedMNISTDataset):
                     random_idx = random.randint(0, len(self.datamodule.val_dataset))
-                    if isinstance(self.datamodule, GlyphazznStage1Datamodule):
+                    if isinstance(self.datamodule, VSQDatamodule):
                         dataset_name = "glyphazzn"
                     elif isinstance(self.datamodule, MNISTDataset):
                         dataset_name = "mnist"
@@ -545,7 +556,7 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
                         {"val/side_by_side_recons": [
                             wandb.Image(side_by_side_recons, caption="side by side reconstructions of validation sample")
                         ]},
-                        step=current_trainer_global_step,
+                        # step=current_trainer_global_step,
                     )
 
                 # OTHER RECON
@@ -554,7 +565,7 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
                 else:
                     log_amount = reconstructions.shape[0]
 
-                if isinstance(self.datamodule, GlyphazznStage1Datamodule):
+                if isinstance(self.datamodule, VSQDatamodule):
                     log_reconstructions = add_points_to_image(all_points[:log_amount], reconstructions[:log_amount,:3,:,:], image_scale=reconstructions.shape[-1])
                 elif isinstance(self.datamodule, (MNISTDataset, PrecomputedMNISTDataset)):
                     log_reconstructions = reconstructions[:log_amount,:3,:,:]
@@ -569,7 +580,7 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
                 current_trainer_global_step = self.trainer.global_step
                 self.trainer.logger.experiment.log(
                     {"samples": [i]},
-                    step=current_trainer_global_step,
+                    # step=current_trainer_global_step,
                 )
 
         self.log("val_loss", loss_dict["loss"], prog_bar=True)
@@ -584,7 +595,7 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
         param_group_1 = {'params': self.model.parameters(), 'lr': self.lr}
         param_groups = [param_group_1]
 
-        if not self.weight_decay:
+        if self.weight_decay is not None:
             optimizer = optim.AdamW(
                 param_groups,
                 lr=self.lr,

@@ -157,21 +157,47 @@ def svg_string_to_tensor(svg_string):
     
     return tensor
 
-def get_side_by_side_reconstruction(model, dataset, idx, device, w=480, dataset_name:str = "glyphazzn"):
+
+def get_side_by_side_reconstruction(model, dataset, idx, device, w=480, dataset_name:str = "glyphazzn", return_drawing=False, use_model_width_prediction:bool=False, override_global_stroke_width:float=0.04, quantize_grid_size:int=None):
     """
     cannot type hint dataset and model because of circular import
-    model must be Vector_VQVAE
-    dataset must be GlyphazznStage1Dataset
+    model must be VSQ
+    dataset must be VSQDataset
     """
     if "glyphazzn" in dataset_name.lower():
-        # Get the ground truth SVG drawing
+        # # Get the ground truth SVG drawing
+        # gt = dataset._get_full_svg_drawing(idx, width=w, as_tensor=True)
+        #
+        # # Reconstruct the SVG drawing
+        # patches, labels, positions, _ = dataset._get_full_item(idx)
+        # patches = patches.to(device)
+        # positions = positions.to(device)
+        # _, recons_rastered_drawing = model.reconstruct(patches, positions, dataset.individual_max_length +2, dataset.stroke_width, rendered_w=w)
+
         gt = dataset._get_full_svg_drawing(idx, width=w, as_tensor=True)
 
+        # print("we gettin full")
         # Reconstruct the SVG drawing
         patches, labels, positions, _ = dataset._get_full_item(idx)
         patches = patches.to(device)
         positions = positions.to(device)
-        _, recons_rastered_drawing = model.reconstruct(patches, positions, dataset.individual_max_length +2, dataset.stroke_width, rendered_w=w)
+
+        if quantize_grid_size is not None:
+            # FIXME finish this
+            positions = positions * quantize_grid_size
+            positions = positions.round()
+            positions = positions / quantize_grid_size
+
+        # print("we reconstructing")
+        if use_model_width_prediction:
+            recons_drawing, _ = model.reconstruct(patches, positions, dataset.individual_max_length + 2, None,
+                                                  rendered_w=w)
+        else:
+            recons_drawing, _ = model.reconstruct(patches, positions, dataset.individual_max_length + 2,
+                                                  local_stroke_width=override_global_stroke_width, rendered_w=w)
+        recons_rastered_drawing = svg_string_to_tensor(recons_drawing.tostring())
+
+
     elif "mnist" in dataset_name.lower():
         gt, label, _, _ = dataset.__getitem__(idx)
         recons_rastered_drawing = model.forward(gt.to(device), only_return_recons=True).cpu()
@@ -602,31 +628,65 @@ def get_viewbox(single_path, total_max_diff, offset: float = 1.0):
     viewbox = f"{new_top_left.real - offset} {new_top_left.imag - offset} {total_max_diff + offset*2} {total_max_diff + offset*2}"
     return viewbox, [center.real, center.imag]
 
-def get_rasterized_segments(single_paths:list, stroke_width:float, total_max_diff: float, svg_attributes, centered = False, height: int = 128, width: int = 128, colors=None) -> List:
+
+def get_rasterized_segments(single_paths: list,
+                            stroke_width: float,
+                            total_max_diff: float,
+                            svg_attributes,
+                            centered=False,
+                            height: int = 128,
+                            width: int = 128,
+                            colors=None,
+                            fill: bool = False) -> List:
+    # this is important as it matches the rendering of DiffVG, so reconstructions are more consistent
+    base_attribute = {
+        "stroke-linecap": "round",
+    }
+
+    # filter out zero lengths
     if centered:
         single_paths = [my_path for my_path in single_paths if my_path.length() > 0.]
+
+    # build attribute dict for visual attributes
+    all_attributes = []
+    for i, path in enumerate(single_paths):
+        curr_attribute = base_attribute.copy()
+        curr_attribute["stroke-width"] = f"{stroke_width}"
+        if colors is not None:
+            curr_attribute["stroke"] = colors[i]
+            if fill:
+                curr_attribute["fill"] = colors[i]
+            else:
+                curr_attribute["fill"] = "none"
+        else:
+            curr_attribute["stroke"] = "black"
+            curr_attribute["fill"] = "none"
+        all_attributes.append(curr_attribute)
+
+    if centered:
         if len(single_paths) == 0:
-            # print("[INFO] tried to rasterize an empty path")
-            return [torch.ones((3, height, width)), torch.ones((3, height, width))], [[width/2,height/2], [width/2,height/2]]
+            print("[INFO] tried to rasterize an empty path")
+            return [torch.ones((3, height, width)), torch.ones((3, height, width))], [[width / 2, height / 2],
+                                                                                      [width / 2, height / 2]]
         out = [get_viewbox(my_path, total_max_diff) for my_path in single_paths]
         viewboxes = [x[0] for x in out]
         centers = [x[1] for x in out]
-        if colors is not None:
-            rasterized_segments = [raster(disvg(my_path, paths2Drawing=True, colors=[colors[i]], stroke_widths=[stroke_width] * len(my_path), viewbox=viewboxes[i]), out_h = height, out_w = width) for i, my_path in enumerate(single_paths)]
-        else:
-            rasterized_segments = [raster(disvg(my_path, paths2Drawing=True, stroke_widths=[stroke_width] * len(my_path), viewbox=viewboxes[i]), out_h = height, out_w = width) for i, my_path in enumerate(single_paths)]
+
+        rasterized_segments = []
+        for i, my_path in enumerate(single_paths):
+            single_path_drawing = disvg(my_path, attributes=[all_attributes[i]], paths2Drawing=True,
+                                        viewbox=viewboxes[i])
+            rasterized_single_path_drawing = raster(single_path_drawing, out_h=height, out_w=width)
+            rasterized_segments.append(rasterized_single_path_drawing)
+
         return rasterized_segments, centers
     else:
-        viewbox=svg_attributes["viewBox"]
-        if colors is not None:
-            rasterized_segments = [
-                raster(disvg(my_path, paths2Drawing=True, stroke_widths=[stroke_width] * len(my_path), colors=colors, viewbox=viewbox),
-                       out_h=height, out_w=width) for my_path in single_paths if my_path.length() > 0.]
-        else:
-            rasterized_segments = [raster(disvg(my_path, paths2Drawing=True, stroke_widths=[stroke_width] * len(my_path), viewbox=viewbox), out_h = height, out_w = width) for my_path in single_paths if my_path.length() > 0.]
-        centers = [(0,0)] * len(rasterized_segments)
+        viewbox = svg_attributes["viewBox"]
+        rasterized_segments = [
+            raster(disvg(my_path, attributes=[all_attributes[i]], paths2Drawing=True, viewbox=viewbox), out_h=height,
+                   out_w=width) for my_path in single_paths if my_path.length() > 0.]
+        centers = [(0, 0)] * len(rasterized_segments)
         return rasterized_segments, centers
-
 
 def svg_path_to_segment_image_arrays(svg_path, total_max_diff: float):
     """
@@ -697,3 +757,40 @@ def get_filter_function(threshold: float, parse_patches: bool):
     if parse_patches:
         return lambda patches: patches[torch.sum((patches != 1), dim=(1,2,3)) / patches[0].numel() > threshold]
     return lambda patches: torch.sum((patches != 1), dim=(1,2,3)) / patches[0].numel() > threshold
+
+
+def width_pred_to_local_stroke_width(width_pred: Tensor,
+                                     diff_vg_raster_resolution:int,
+                                     padded_local_viewbox_width:int):
+    """
+    this function takes the stroke width prediction of the VSQ and converts it to the stroke width that can be used in local SVG rendering
+
+    this function is required as DiffVG handles stroke width very (stupidly) different than in SVGs.
+    In SVGs the stroke width is the total thickness of the stroke and its apparence is related to the viewbox size.
+    In DiffVG, the stroke width is the thickness of the stroke in BOTH directions (not total) in pixels and related to the canvas size in the rasterization process.
+    """
+    return width_pred / diff_vg_raster_resolution * padded_local_viewbox_width * 2
+
+
+def rgb_tensor_to_svg_color(rgb_tensor):
+    """
+    Converts an RGB tensor to a hexadecimal color string for SVG.
+
+    Parameters:
+    rgb_tensor (torch.Tensor): A 1D tensor of shape [3] with values in the range [0, 1].
+
+    Returns:
+    str: A hexadecimal color string usable in SVG.
+    """
+    # Ensure the tensor has the right shape
+    if rgb_tensor.shape != (3,):
+        raise ValueError("Input tensor must be a 1D tensor with 3 elements (R, G, B).")
+
+    # Clamp the values to [0, 1] to ensure valid RGB range
+    rgb_tensor = torch.clamp(rgb_tensor, 0.0, 1.0)
+
+    # Convert to 8-bit values and then to hexadecimal
+    hex_color = ''.join([f'{int(c * 255):02X}' for c in rgb_tensor])
+
+    # Prepend '#' to form a valid SVG color string
+    return f'#{hex_color}'

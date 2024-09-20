@@ -10,7 +10,7 @@ import glob
 import pandas as pd
 import numpy as np
 import string
-from utils import svg2paths2, disvg, raster, get_filter_function, get_single_paths, get_similar_length_paths, check_for_continouity, get_rasterized_segments, all_paths_to_max_diff, Path, svg_string_to_tensor
+from utils import svg2paths2, disvg, raster, rgb_tensor_to_svg_color, get_single_paths, get_similar_length_paths, check_for_continouity, get_rasterized_segments, all_paths_to_max_diff, Path, svg_string_to_tensor
 import torchvision.transforms as transforms
 from utils import drawing_to_tensor
 import random
@@ -404,7 +404,7 @@ class VQDataModule(LightningDataModule):
         )
 
 
-class GlyphazznStage1Dataset(Dataset):
+class VSQDataset(Dataset):
     """
     Glyphazzn dataset that requires already normalized SVGs. Yields patches, positions, and labels. The label is the index of string.printable -> label = string.printable.index(label)
 
@@ -439,12 +439,17 @@ class GlyphazznStage1Dataset(Dataset):
                  individual_max_length: float = 10.,
                  stroke_width: float = 0.3,
                  max_shapes_per_svg: int = 64,
-                 use_single_paths:bool = False,
-                 return_index = False,
-                 subset_class:str=None,
+                 use_single_paths: bool = False,
+                 return_index=False,
+                 return_filename=False,
+                 subset_class: str = None,
+                 use_random_stroke_widths: bool = False,
+                 color_mode: str = None,
+                 return_visual_attributes: bool = False,
                  **kwargs):
-        super(GlyphazznStage1Dataset, self)
-        print(f"[INFO] These keywords were provided in GlyphazznStage1Dataset but are not used: {kwargs.keys()}")
+        super(VSQDataset, self)
+        print(f"[INFO] These keywords were provided in VSQDataset but are not used: {kwargs.keys()}")
+        assert not (return_filename and return_index), "can only additionally return filename or index, not both"
         self.csv_path = csv_path
         self.individual_min_length = individual_min_length
         self.individual_max_length = individual_max_length
@@ -455,8 +460,27 @@ class GlyphazznStage1Dataset(Dataset):
         self.train = train
         self.use_single_paths = use_single_paths
         self.return_index = return_index
+        self.return_filename = return_filename
         self.subset_class = subset_class
-        print("[GlyphazznStage1Dataset] loading df...")
+        self.use_random_stroke_widths = use_random_stroke_widths
+        self.color_mode = color_mode
+        self.return_visual_attributes = return_visual_attributes
+
+        assert color_mode in ["palette", None, "random",
+                              "None"], "color mode must be either 'palette' or None, fully random is not yet implemented"
+
+        self.stroke_width_range = (0.1, 0.5)
+        self.color_palette = [
+            [0.1, 0.2, 0.3],  # Dark Blue
+            [0.2, 0.6, 0.2],  # Forest Green
+            [0.8, 0.2, 0.2],  # Red
+            [0.9, 0.9, 0.1],  # Yellow
+            [0.3, 0.3, 0.8],  # Royal Blue
+            [0.5, 0.0, 0.5],  # Purple
+            [1.0, 0.5, 0.0],  # Orange
+            [0.0, 0.5, 0.5],  # Teal
+            [0.0, 0.0, 0.0]  # Black
+        ]
 
         self.df = pd.read_csv(csv_path)
         self.class2id = {id_name: class_name for class_name, id_name in enumerate(self.df["class"].unique())}
@@ -472,7 +496,7 @@ class GlyphazznStage1Dataset(Dataset):
         if subset_class is not None and subset_class in self.df["class"].unique():
             self.df = self.df[self.df["class"] == subset_class].reset_index(drop=True)
 
-    def crop_path_into_segments(self, path:Path, length:float = 5.):
+    def crop_path_into_segments(self, path: Path, length: float = 5.):
         """
         a single input path is cropped into segments of approx length `length`. I say "approx" because we divide the path into same length segments, which will not be exactly `length` long.
         """
@@ -480,13 +504,13 @@ class GlyphazznStage1Dataset(Dataset):
         try:
             num_iters = math.ceil(path.length() / length)
             for i in range(num_iters):
-                cropped_segment = path.cropped(i/num_iters, (i+1)/num_iters)
+                cropped_segment = path.cropped(i / num_iters, (i + 1) / num_iters)
                 segments.append(cropped_segment)
         except Exception as e:
             pass
         return segments
 
-    def get_similar_length_paths(self, single_paths, max_length: float = 5., filter_min_length:bool = False):
+    def get_similar_length_paths(self, single_paths, max_length: float = 5., filter_min_length: bool = False):
         """
         splits all the paths into similar length segments if they're too long
         """
@@ -508,7 +532,7 @@ class GlyphazznStage1Dataset(Dataset):
                 print("Error while cropping path into segments, skipping...")
                 continue
         return similar_length_paths
-    
+
     def get_similar_length_paths_from_index(self, index, max_length: float = 5.):
         svg_path = self.df.iloc[index].simplified_svg_file_path
         paths, attributes, svg_attributes = svg2paths2(svg_path)
@@ -516,38 +540,97 @@ class GlyphazznStage1Dataset(Dataset):
         sim_length_paths = self.get_similar_length_paths(single_paths, max_length=max_length)
         return sim_length_paths
 
+    def _get_local_stroke_width(self):
+        if self.use_random_stroke_widths:
+            return random.uniform(*self.stroke_width_range)
+        else:
+            return self.stroke_width
+
     def __getitem__(self, index) -> tuple:
         svg_path = self.df.iloc[index]["simplified_svg_file_path"]
         label = self.df.iloc[index]["class"]
         label = self.class2id[label]
-        description = self.df.iloc[index]["description"]
+        if "description" in self.df.columns:
+            description = self.df.iloc[index]["description"]  #
+        elif "desc" in self.df.columns:
+            description = self.df.iloc[index]["desc"]
+        else:
+            description = "class: " + str(self.df.iloc[index]["class"])
+
         try:
             paths, attributes, svg_attributes = svg2paths2(svg_path)
         except Exception as e:
             print(f"[ERROR] Could not load {svg_path}. Exception: {e}")
-            return torch.ones(2,3,128,128), torch.ones(2).int(), torch.ones(2,2), "EMPTY"
+            return torch.ones(2, 3, 128, 128), torch.ones(2).int(), torch.ones(2, 2), "EMPTY"
         if self.use_single_paths:
             single_paths = get_single_paths(paths)
-            single_paths = self.get_similar_length_paths(single_paths, self.individual_max_length, filter_min_length=False)
+            single_paths = self.get_similar_length_paths(single_paths, self.individual_max_length,
+                                                         filter_min_length=False)
         else:
             single_paths = self.get_similar_length_paths(paths, self.individual_max_length)
-        
+
         assert check_for_continouity(single_paths), "paths are not continous"
         # select a random slice of the paths of length max_shapes_per_svg
         single_paths = [path for path in single_paths if path.length() > 0.]
         if len(single_paths) > self.max_shapes_per_svg:
-            start_idx = random.randint(0, len(single_paths) - self.max_shapes_per_svg)
-            single_paths = single_paths[start_idx:start_idx+self.max_shapes_per_svg]
-        rasterized_segments, centers = get_rasterized_segments(single_paths, self.stroke_width, self.individual_max_length, svg_attributes, centered=True, height=self.width, width=self.width)
+            indices = random.sample(range(len(single_paths)), self.max_shapes_per_svg)
+            single_paths = [single_paths[i] for i in indices]
+        render_stroke_width = self._get_local_stroke_width()
+        if self.color_mode == "palette":
+            random_colors = [torch.tensor(random.choice(self.color_palette), dtype=torch.float32) for i in
+                             range(len(single_paths))]
+            random_rgb_colors = torch.stack(random_colors)
+            random_colors = [rgb_tensor_to_svg_color(color) for color in random_colors]
+        elif self.color_mode == "random":
+            random_colors = [torch.rand(3, dtype=torch.float32) for i in range(len(single_paths))]
+            random_rgb_colors = torch.stack(random_colors)
+            random_colors = [rgb_tensor_to_svg_color(color) for color in random_colors]
+        else:
+            random_rgb_colors = None
+            random_colors = None
+        rasterized_segments, centers = get_rasterized_segments(single_paths,
+                                                               render_stroke_width,
+                                                               self.individual_max_length,
+                                                               svg_attributes,
+                                                               centered=True,
+                                                               height=self.width,
+                                                               width=self.width,
+                                                               colors=random_colors,
+                                                               fill=False)
+        viewbox_dims = [float(x) for x in svg_attributes["viewBox"].split(" ")]
+        assert viewbox_dims[0] == 0 and viewbox_dims[
+            1] == 0, f"viewbox has to be 0 0 at the start, got {viewbox_dims[0]} {viewbox_dims[1]}"
+        assert viewbox_dims[2] == viewbox_dims[
+            3], f"viewbox has to be same dimensions at the end, got {viewbox_dims[2]} {viewbox_dims[3]}"
         imgs = torch.stack(rasterized_segments)  # (n_shapes, channels, width, width)
         centers = torch.tensor(centers)  # (n_shapes, 2)
+        centers = centers / viewbox_dims[2]  # scale them to be in [0, 1] range
         labels = torch.ones(imgs.size(0)) * label
         if self.return_index:
             return imgs, labels.int(), centers, description, index
+        elif self.return_filename:
+            return imgs, labels.int(), centers, description, svg_path
+        elif self.return_visual_attributes:
+            return imgs, labels.int(), centers, description, {"colors": random_rgb_colors,
+                                                              "stroke_width": render_stroke_width}
         else:
             return imgs, labels.int(), centers, description
-    
-    def _get_full_item(self, index:int) -> List[Tensor]:
+
+    def _get_split_path_count(self, index) -> int:
+        svg_path = self.df.iloc[index]["simplified_svg_file_path"]
+
+        try:
+            paths, attributes, svg_attributes = svg2paths2(svg_path)
+        except Exception as e:
+            print(f"[ERROR] Could not load {svg_path}. Exception: {e}")
+            return -1
+
+        single_paths = self.get_similar_length_paths(paths, self.individual_max_length)
+        single_paths = [path for path in single_paths if path.length() > 0.]
+
+        return len(single_paths)
+
+    def _get_full_item(self, index: int) -> List[Tensor]:
         """
         This function is intended to be used by the tokenization process.
         """
@@ -563,13 +646,26 @@ class GlyphazznStage1Dataset(Dataset):
             single_paths = self.get_similar_length_paths(paths, self.individual_max_length)
         assert check_for_continouity(single_paths), "paths are not continous"
         single_paths = [path for path in single_paths if path.length() > 0.]
-        rasterized_segments, centers = get_rasterized_segments(single_paths, self.stroke_width, self.individual_max_length, svg_attributes, centered=True, height=self.width, width=self.width)
+        render_stroke_width = self._get_local_stroke_width()
+        rasterized_segments, centers = get_rasterized_segments(single_paths, render_stroke_width,
+                                                               self.individual_max_length, svg_attributes,
+                                                               centered=True, height=self.width, width=self.width)
+        viewbox_dims = [float(x) for x in svg_attributes["viewBox"].split(" ")]
+        assert viewbox_dims[0] == 0 and viewbox_dims[
+            1] == 0, f"viewbox has to be 0 0 at the start, got {viewbox_dims[0]} {viewbox_dims[1]}"
+        assert viewbox_dims[2] == viewbox_dims[
+            3], f"viewbox has to be same dimensions at the end, got {viewbox_dims[2]} {viewbox_dims[3]}"
         imgs = torch.stack(rasterized_segments)  # (n_shapes, channels, width, width)
         centers = torch.tensor(centers)  # (n_shapes, 2)
+        centers = centers / viewbox_dims[2]  # scale them to be in [0, 1] range
+        imgs = torch.stack(rasterized_segments)  # (n_shapes, channels, width, width)
+        if not isinstance(centers, Tensor):
+            centers = torch.tensor(centers)  # (n_shapes, 2)
         labels = torch.ones(imgs.size(0)) * label
         return imgs, labels.int(), centers, description
-    
-    def _get_full_svg_drawing(self, index, width:int = 720, as_tensor:bool = False):
+
+    def _get_full_svg_drawing(self, index, width: int = 720, as_tensor: bool = False,
+                              override_global_stroke_width: float = None):
         svg_path = self.df.iloc[index].simplified_svg_file_path
         paths, attributes, svg_attributes = svg2paths2(svg_path)
         if self.use_single_paths:
@@ -578,7 +674,13 @@ class GlyphazznStage1Dataset(Dataset):
             single_paths = self.get_similar_length_paths(paths, self.individual_max_length)
         # single_paths = get_single_paths(paths)
         single_paths = [path for path in single_paths if path.length() > 0.]
-        drawing = disvg(single_paths, paths2Drawing=True, stroke_widths=[self.stroke_width]*len(single_paths), viewbox = svg_attributes["viewBox"],dimensions=(width, width))
+        if override_global_stroke_width is None:
+            render_stroke_width = self._get_local_stroke_width()
+        else:
+            render_stroke_width = override_global_stroke_width
+        # TODO add the color here
+        drawing = disvg(single_paths, paths2Drawing=True, stroke_widths=[render_stroke_width] * len(single_paths),
+                        viewbox=svg_attributes["viewBox"], dimensions=(width, width))
         if as_tensor:
             return svg_string_to_tensor(drawing.tostring())
         else:
@@ -588,7 +690,7 @@ class GlyphazznStage1Dataset(Dataset):
         return len(self.df)
 
 
-class GlyphazznStage1Datamodule(LightningDataModule):
+class VSQDatamodule(LightningDataModule):
     def __init__(
         self,
         csv_path: str,
@@ -604,6 +706,9 @@ class GlyphazznStage1Datamodule(LightningDataModule):
         subset:str = None,
         use_single_paths:bool = False,
         return_index = False,
+        return_filename: bool = False,
+        color_mode:str = None,
+        use_random_stroke_widths:bool = False,
         **kwargs,
     ):
         super().__init__()
@@ -622,13 +727,16 @@ class GlyphazznStage1Datamodule(LightningDataModule):
         self.max_shapes_per_svg = max_shapes_per_svg
         self.use_single_paths = use_single_paths
         self.return_index = return_index
+        self.return_filename = return_filename
+        self.color_mode = color_mode
+        self.use_random_stroke_widths = use_random_stroke_widths
 
     def setup(self, stage: Optional[str] = None) -> None:
         if stage not in ["train", "test", "val"]:
             stage = None
 
         if stage is None or stage == "train":
-            self.train_dataset = GlyphazznStage1Dataset(
+            self.train_dataset = VSQDataset(
                 self.csv_path,
                 self.channels,
                 self.width,
@@ -638,11 +746,14 @@ class GlyphazznStage1Datamodule(LightningDataModule):
                 max_shapes_per_svg=self.max_shapes_per_svg,
                 use_single_paths=self.use_single_paths,
                 return_index = self.return_index,
-                subset_class=self.subset
+                return_filename = self.return_filename,
+                subset_class=self.subset,
+                use_random_stroke_widths=self.use_random_stroke_widths,
+                color_mode=self.color_mode
             )
 
         if stage is None or stage == "val":
-            self.val_dataset = GlyphazznStage1Dataset(
+            self.val_dataset = VSQDataset(
                 self.csv_path,
                 self.channels,
                 self.width,
@@ -652,11 +763,14 @@ class GlyphazznStage1Datamodule(LightningDataModule):
                 max_shapes_per_svg=self.max_shapes_per_svg,
                 use_single_paths=self.use_single_paths,
                 return_index = self.return_index,
-                subset_class=self.subset
+                return_filename = self.return_filename,
+                subset_class=self.subset,
+                use_random_stroke_widths=self.use_random_stroke_widths,
+                color_mode=self.color_mode
             )
 
         if stage is None or stage == "test":
-            self.test_dataset = GlyphazznStage1Dataset(
+            self.test_dataset = VSQDataset(
                 self.csv_path,
                 self.channels,
                 self.width,
@@ -666,7 +780,10 @@ class GlyphazznStage1Datamodule(LightningDataModule):
                 max_shapes_per_svg=self.max_shapes_per_svg,
                 use_single_paths=self.use_single_paths,
                 return_index = self.return_index,
-                subset_class=self.subset
+                return_filename = self.return_filename,
+                subset_class=self.subset,
+                use_random_stroke_widths=self.use_random_stroke_widths,
+                color_mode=self.color_mode
             )
 
     #       ===============================================================
@@ -674,6 +791,8 @@ class GlyphazznStage1Datamodule(LightningDataModule):
     def collate_fn(self, batch):
         if self.return_index:
             imgs, labels, centers, descriptions, idxs = zip(*batch)
+        elif self.return_filename:
+            imgs, labels, centers, descriptions, filenames = zip(*batch)
         else:
             imgs, labels, centers, descriptions = zip(*batch)
         imgs = torch.concat(imgs)
@@ -681,6 +800,8 @@ class GlyphazznStage1Datamodule(LightningDataModule):
         centers = torch.concat(centers)
         if self.return_index:
             return imgs, labels, centers, descriptions, idxs
+        elif self.return_filename:
+            return imgs, labels, centers, descriptions, filenames
         else:
             return imgs, labels, centers, descriptions
 

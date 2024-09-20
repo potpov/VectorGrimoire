@@ -5,7 +5,7 @@ from .vector_vae_nlayers import *
 from models.vaectorgen import VAEctorGen
 from .vectorGPT import VectorGPT
 from .vectorGPTv2 import VectorGPTv2
-from .svg_vqvae import Vector_VQVAE, VQ_Transformer
+from .vsq import VSQ
 from .stage2 import VQ_SVG_Stage2
 from .mlp_vector_head import MLPVectorHeadFixed, CNNVectorHead
 

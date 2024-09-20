@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 import os
 import yaml
 from dataset import VQDataModule, GenericRasterizedSVGDataset, GenericRasterDataset
-from models import VQ_SVG_Stage2, Vector_VQVAE
+from models import VQ_SVG_Stage2, VSQ
 from tokenizer import VQTokenizer
 from experiment import SVG_VQVAE_Stage2_Experiment
 import torch
@@ -33,7 +33,7 @@ import gc
 import os
 from typing import List
 import yaml
-from models import VQ_SVG_Stage2, Vector_VQVAE
+from models import VQ_SVG_Stage2, VSQ
 from tokenizer import VQTokenizer
 from experiment import SVG_VQVAE_Stage2_Experiment
 import torch
@@ -48,7 +48,7 @@ from torch.utils.data import DataLoader
 from torchmetrics.image.fid import FrechetInceptionDistance
 from torchmetrics.multimodal.clip_score import CLIPScore
 from transformers import AutoProcessor, CLIPModel
-from dataset import GenericRasterizedSVGDataset, GlyphazznStage1Datamodule, VQDataModule
+from dataset import GenericRasterizedSVGDataset, VSQDatamodule, VQDataModule
 from torch import nn
 from math import ceil, sqrt
 import time

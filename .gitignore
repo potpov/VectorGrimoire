@@ -10187,3 +10187,9 @@ benchmark/sgamo/stage2/fonts/vq_context_6_t0/svgs/unfixed/unfixed_669.svg
 benchmark/sgamo/stage2/fonts/vq_context_6_t0/svgs/unfixed/unfixed_670.svg
 
 .DS_Store
+
+notebooks/inference.ipynb
+
+notebooks/visualizations.ipynb
+
+datasets/shapes

@@ -7,7 +7,7 @@ from pytorch_lightning.loggers import WandbLogger, TensorBoardLogger
 from pytorch_lightning import seed_everything
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, LearningRateFinder, EarlyStopping
 from dataset import VQDataModule
-from models import VQ_SVG_Stage2, Vector_VQVAE
+from models import VQ_SVG_Stage2, VSQ
 from tokenizer import VQTokenizer
 from experiment import SVG_VQVAE_Stage2_Experiment
 import wandb
@@ -72,7 +72,7 @@ else:
     )
 
 # Load auxiliary models
-vq_model = Vector_VQVAE(**config['stage1_params'], device = device)
+vq_model = VSQ(**config['stage1_params'], device = device)
 state_dict = torch.load(config['stage1_params']["checkpoint_path"], map_location=device)["state_dict"]
 try:
     vq_model.load_state_dict(state_dict)

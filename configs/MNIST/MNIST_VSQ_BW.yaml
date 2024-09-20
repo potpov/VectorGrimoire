@@ -1,5 +1,5 @@
 model_params:
-  name: "SVG_VAQVAE"  # always keep this "VectorGPT"
+  name: "VSQ"  # always keep this "VectorGPT"
   vector_decoder_model: "cnn" # "mlp" or "raster_conv"
   quantized_dim: 512
   codebook_size: 4096  # will be ignored for FSQ
@@ -7,7 +7,7 @@ model_params:
   single_code_representation: true
   vq_method: "fsq"  # "vqvae", "FSQ", "vqtorch"
   fsq_levels: [7,5,5,5,5]  # will determine codebook_size, see Table 1 of FSQ paper - [7,5,5,5,5] for 4096 (e.g. StrokeNUWA), [8,5,5,5] for 1024
-  num_segments: 15  # default 15
+  num_segments: 64  # default 15 - or 64
   pred_color: false
 
 data_params:
@@ -17,7 +17,7 @@ data_params:
   val_batch_size:  64
   patch_size: 128 # HAS TO BE 224 FOR CLIP RES50 TO WORK, otherwise take 128
   num_workers: 16
-  num_tiles_per_row: 6
+  num_tiles_per_row: 14
   random_colors: false
   use_palette: false  # use a color palette of 9 colors rather than random colors
   padding_frac: 0.1  # fraction of the image that is padded with white background
@@ -40,7 +40,8 @@ logging_params:
   entity: "aiis-chair"  # comment to use default wandb entity "aiis-chair"
   project: "grimoire-2"  # your wandb project name
   save_dir: "/raid/marco.cipriano/results/svg/Grimoire/VSQ"
-  name: "VSQ_MNIST_BW_P128_T14_P20_TH0.2_S64"  # name of the run in wandb
+  # name: "VSQ_MNIST_BW_P128_T14_P20_TH0.2_S64"  # name of the run in wandb
+  name: "DEBUG"  # name of the run in wandb
   version: 1
   author: "Marco"  # will be a tag in wandb
   # id: null  # id of wandb run to continue

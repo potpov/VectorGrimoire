@@ -1,6 +1,6 @@
 import os
 import torch
-from models import Vector_VQVAE
+from models import VSQ
 from dataset import CenterShapeLayersFromSVGDataset
 from utils import calculate_global_positions, shapes_to_drawing
 import argparse
@@ -17,7 +17,7 @@ def main(args):
                                      individual_max_length=7.5,
                                      max_shapes_per_svg=300)
     
-    model = Vector_VQVAE(codebook_size=args.codebook_size, vq_method=args.vq_method)
+    model = VSQ(codebook_size=args.codebook_size, vq_method=args.vq_method)
     state_dict = torch.load(args.checkpoint_path)["state_dict"]
     # map keys to remove the prefix "model."
     state_dict = {k.replace("model.", ""): v for k, v in state_dict.items()}

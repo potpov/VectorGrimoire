@@ -8,8 +8,8 @@ from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import WandbLogger, TensorBoardLogger
 from pytorch_lightning import seed_everything
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, LearningRateFinder, EarlyStopping
-from dataset import GenericRasterizedSVGDataModule,GenericRasterDatamodule, PrecomputedMNISTDataset, MNISTDataset, MNISTppDataset, NounProjectDataset, EmojiDataset, MNISTDatasetCSVG, CausalSVGDataModule, NewCausalSVGDataModule, CenterShapeLayersFromSVGDataModule, VQDataModule, GlyphazznStage1Datamodule
-from models import VAEctorGen, VectorGPT, VanillaVAE, VectorVAEnLayers, VectorGPTv2, Vector_VQVAE, VQ_Transformer
+from dataset import GenericRasterizedSVGDataModule,GenericRasterDatamodule, PrecomputedMNISTDataset, MNISTDataset, MNISTppDataset, NounProjectDataset, EmojiDataset, MNISTDatasetCSVG, CausalSVGDataModule, NewCausalSVGDataModule, CenterShapeLayersFromSVGDataModule, VQDataModule, VSQDatamodule
+from models import VAEctorGen, VectorGPT, VanillaVAE, VectorVAEnLayers, VectorGPTv2, VSQ
 from experiment import VAEXperiment, VectorGPTExperiment, VectorGPTExperimentv2, VectorVQVAE_Experiment_Stage1, SVG_VQVAE_Stage2_Experiment
 import json
 from utils import get_rank
@@ -30,7 +30,8 @@ DATASETMAP = {
     "mnistCSVG": MNISTDatasetCSVG,
     "centeredShapeLayers": CenterShapeLayersFromSVGDataModule,
     "tokens": VQDataModule,
-    "stage1": GlyphazznStage1Datamodule,
+    "fonts": VSQDatamodule,
+    "figr8": VSQDatamodule,
     "raster_figr8": GenericRasterDatamodule,
     "raster_fonts": GenericRasterizedSVGDataModule,
 }
@@ -42,8 +43,7 @@ MODELS = {
     "Im2Vec": VectorVAEnLayers,
     "VectorGPT": VectorGPT,
     "VectorGPTv2": VectorGPTv2,
-    "SVG_VAQVAE": Vector_VQVAE,
-    "VQ_Transformer" : VQ_Transformer,
+    "VSQ": VSQ,
   }
 
 
@@ -119,11 +119,18 @@ else:
 seed_everything(config['exp_params']['manual_seed'], True)
 print("Loading model...")
 if args.wandb:
-    model = MODELS[config['model_params']['name']](patch_size = config['data_params']["patch_size"],**config['model_params'], wandb_logging=True)
+    model = MODELS[config['model_params']['name']](
+        patch_size = config['data_params'].get("patch_size", 128),
+        **config['model_params'],
+        wandb_logging=True
+    )
     # wandb_logger.watch(model, log="gradients", log_freq=500, log_graph=False)
     # wandb.watch(model, log='all', log_freq=100)  # can be "all"
 else:
-    model = MODELS[config['model_params']['name']](patch_size = config['data_params']["patch_size"], **config['model_params'])
+    model = MODELS[config['model_params']['name']](
+        patch_size = config['data_params'].get("patch_size", 128),
+        **config['model_params']
+    )
 print("Loading dataset...")
 if config['model_params']['name'] == "VectorGPT":
     data = DATASETMAP[config["data_params"]["dataset"]](**config["data_params"])
@@ -133,7 +140,7 @@ elif config['model_params']['name'] == "VectorGPTv2":
     data = DATASETMAP[config["data_params"]["dataset"]](**config["data_params"])
     data.setup()
     experiment = VectorGPTExperimentv2(model, **config['exp_params'], wandb = args.wandb)
-elif config['model_params']['name'] == "SVG_VAQVAE":
+elif config['model_params']['name'] == "VSQ":
     data = DATASETMAP[config["data_params"]["dataset"]](**config["data_params"])
     data.setup()
     experiment = VectorVQVAE_Experiment_Stage1(model,

@@ -1,5 +1,5 @@
 model_params:
-  name: "SVG_VAQVAE"  # always keep this "VectorGPT"
+  name: "VSQ"  # always keep this "VectorGPT"
   vector_decoder_model: "mlp" # "mlp" or "raster_conv"
   quantized_dim: 512
   codebook_size: 4096  # will be ignored for FSQ

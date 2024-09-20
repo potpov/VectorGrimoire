@@ -1,5 +1,5 @@
 stage1_params:
-  name: "SVG_VAQVAE"  # always keep this "VectorGPT"
+  name: "VSQ"  # always keep this "VectorGPT"
   vector_decoder_model: "cnn" # "mlp" or "raster_conv"
   quantized_dim: 512
   codebook_size: 4096  # will be ignored for FSQ
@@ -7,15 +7,15 @@ stage1_params:
   single_code_representation: true
   vq_method: "fsq"  # "vqvae", "FSQ", "vqtorch"
   fsq_levels: [7,5,5,5,5]  # will determine codebook_size, see Table 1 of FSQ paper - [7,5,5,5,5] for 4096 (e.g. StrokeNUWA), [8,5,5,5] for 1024
-  num_segments: 15
+  num_segments: 64
   pred_color: false
   # Update this path to the checkpoint of the model you used to encode
-  checkpoint_path: "/raid/marco.cipriano/results/svg/Grimoire/VSQ/VSQ_MNIST_BW_P128_T6_P20_TH0.1/checkpoints/last.ckpt"
+  checkpoint_path: "/raid/marco.cipriano/results/svg/Grimoire/VSQ/VSQ_MNIST_BW_P128_T14_P20_TH0.2/checkpoints/last.ckpt"
 
 
 model_params:
   name: "VQ_SVG_Stage2"
-  max_seq_len: 64  # 512
+  max_seq_len: 256  # 512
   dim: 512 # 512
   depth: 16  # 12
   heads: 8
@@ -24,14 +24,14 @@ model_params:
 
 data_params:
   dataset: "mnist"
-  csv_path: "/home/marco.cipriano/data/SVG/Grimoire/MNIST/8x8_bnw_t0.1_augmented/split.csv"  # root path for CausalSVGDataModule in dataset.py
-  vq_token_npy_path: "/home/marco.cipriano/data/SVG/Grimoire/MNIST/8x8_bnw_t0.1_augmented/vsq_tokenized.npy"
-  train_batch_size: 1024  #32
+  csv_path: "/raid/marco.cipriano/data/SVG/Grimoire/MNIST/mnist_tokenized/VSQ_MNIST_BW_P128_T14_P20_TH0.2/split.csv"  # root path for CausalSVGDataModule in dataset.py
+  vq_token_npy_path: "/raid/marco.cipriano/data/SVG/Grimoire/MNIST/mnist_tokenized/VSQ_MNIST_BW_P128_T14_P20_TH0.2/vsq_tokenized.npy"
+  train_batch_size: 256  #32
   val_batch_size:  32  # 32
   num_workers: 8
   patch_size: 128
   width: 128
-  num_tiles_per_row: 6
+  num_tiles_per_row: 14
   min_context_length: 10  # all samples below this will be removed from the dataset
   fraction_of_strokenuwa_inputs: 0.0
   fraction_of_class_only_inputs: 0.9  # fraction of samples that will only have the "class" entry of the dataframe as input
@@ -59,7 +59,7 @@ logging_params:
   entity: "aiis-chair"  # comment to use default wandb entity "mfeuer"
   project: "grimoire-2"  # your wandb project name
   save_dir: "/raid/marco.cipriano/results/svg/Grimoire/ART"
-  name: "ART_MNIST_BW_AUG"  # name of the run in wandb
+  name: "ART_MNIST_BW_P14S64"  # name of the run in wandb
   version: 0
   author: "Marco"  # will be a tag in wandb
   id: null  # id of wandb run to continue

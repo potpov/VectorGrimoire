@@ -2,7 +2,7 @@ import gc
 import os
 from typing import List
 import yaml
-from models import VQ_SVG_Stage2, Vector_VQVAE
+from models import VQ_SVG_Stage2, VSQ
 from tokenizer import VQTokenizer
 from experiment import SVG_VQVAE_Stage2_Experiment
 import torch
@@ -17,7 +17,7 @@ from torch.utils.data import DataLoader
 from torchmetrics.image.fid import FrechetInceptionDistance
 from torchmetrics.multimodal.clip_score import CLIPScore
 from transformers import AutoProcessor, CLIPModel
-from dataset import GenericRasterizedSVGDataset, GlyphazznStage1Datamodule, VQDataModule
+from dataset import GenericRasterizedSVGDataset, VSQDatamodule, VQDataModule
 from torch import nn
 from math import ceil, sqrt
 import time
@@ -48,7 +48,7 @@ def load_stage2_model(config_path, ckpt_path, device,dataset:str = None, test_ba
     if dataset is not None:
         config["data_params"]["dataset"] = dataset
 
-    vq_model = Vector_VQVAE(**config['stage1_params'], device = device)
+    vq_model = VSQ(**config['stage1_params'], device = device)
     state_dict = torch.load(config['stage1_params']["checkpoint_path"])["state_dict"]
     try:
         vq_model.load_state_dict(state_dict)
@@ -374,7 +374,7 @@ def benchmark_vsq_stage1(out_base_dir,
     if "wandb_version" in config.keys():
         config = map_wand_config(config)
 
-    model = Vector_VQVAE(**config['model_params']).to(device).eval()
+    model = VSQ(**config['model_params']).to(device).eval()
 
     state_dict = torch.load(ckpt_path, map_location=device)["state_dict"]
     model.load_state_dict({k.replace("model.", ""): v for k, v in state_dict.items()})
@@ -382,7 +382,7 @@ def benchmark_vsq_stage1(out_base_dir,
         param.requires_grad = False
 
     config["data_params"]["test_batch_size"] = test_batch_size
-    dm = GlyphazznStage1Datamodule(**config['data_params'],subset=subset)
+    dm = VSQDatamodule(**config['data_params'], subset=subset)
     dm.setup(stage="test")
     dataset = dm.test_dataset
     stroke_scale_factor = (dataset.individual_max_length+2) * config["data_params"]["stroke_width"] / 72

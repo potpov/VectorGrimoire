@@ -3,7 +3,7 @@ import torch
 import yaml
 import numpy as np
 from dataset import VQDataset
-from models import VQ_SVG_Stage2,Vector_VQVAE
+from models import VQ_SVG_Stage2,VSQ
 from tokenizer import VQTokenizer
 
 path = "/scratch2/moritz_data/glyphazzn/tokenized/full_training_text_tokens.npy"
@@ -37,7 +37,7 @@ if not os.path.exists(OUT_DIR):
 
 print("Loading model..")
 
-model = Vector_VQVAE(**config['model_params']).to(device)
+model = VSQ(**config['model_params']).to(device)
 state_dict = torch.load(MODEL_WEIGHTS_PATH, map_location=device)["state_dict"]
 try:
     model.load_state_dict(state_dict)

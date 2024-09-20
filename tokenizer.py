@@ -2,20 +2,21 @@ from typing import Iterable, List, Tuple, Union
 from utils import calculate_global_positions, shapes_to_drawing, drawing_to_tensor
 
 import numpy as np
-from models.svg_vqvae import Vector_VQVAE
+from models.vsq import VSQ
 import torch
 from torch import Tensor
 from svgwrite import Drawing
-from transformers import BertTokenizer, BertModel,PreTrainedTokenizerBase
+from transformers import BertTokenizer, PreTrainedTokenizerBase
 from torch import nn
 from svg_fixing import get_fixed_svg_render 
+
 
 class VQTokenizer(nn.Module):
     """
     Tokenizer for the SVG-VQVAE model. It tokenizes the patches of the rasterized SVGs and their middle positions + some special tokens + text conditioning.
 
     Args:
-        - vq_model (Vector_VQVAE): VQVAE model to use for patch tokenization
+        - vq_model (VSQ): VQVAE model to use for patch tokenization
         - full_image_res (int): Full resolution of the rasterized SVGs
         - tokens_per_patch (int): Number of tokens per patch
         - text_encoder_str (str): huggingface string of the BERT text encoder to use, default: bert-base-uncased
@@ -23,7 +24,7 @@ class VQTokenizer(nn.Module):
         - use_text_encoder_only (bool, optional): Whether to use the text encoder only. Defaults to False. Used to bnenefit from special token mapping and text tokenization without the need for a VQVAE model.
     """
 
-    def __init__(self, vq_model: Vector_VQVAE, 
+    def __init__(self, vq_model: VSQ,
                  full_image_res: int, 
                  tokens_per_patch:int, 
                  text_encoder_str: str = "bert-base-uncased", 
@@ -271,7 +272,7 @@ class RasterVQTokenizer(nn.Module):
     Tokenizer for the VSQ. It tokenizes the patches of the raster image and their center positions + some special tokens + text conditioning.
 
     Args:
-        - vq_model (Vector_VQVAE): VQVAE model to use for patch tokenization
+        - vq_model (VSQ): VQVAE model to use for patch tokenization
         - full_image_res (int): Full resolution of the rasterized SVGs
         - tokens_per_patch (int): Number of tokens per patch
         - text_encoder_str (str): huggingface string of the BERT text encoder to use, default: bert-base-uncased
@@ -282,7 +283,7 @@ class RasterVQTokenizer(nn.Module):
     """
 
     def __init__(self, 
-                 vq_model: Vector_VQVAE, 
+                 vq_model: VSQ, 
                  patch_size: int,
                  num_tiles_per_row:int, 
                  tokens_per_patch:int,

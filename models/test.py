@@ -9,8 +9,8 @@ from models.resnet import ResNet, BasicBlock
 from models.vq_vae import VectorQuantizer
 from models.mlp_vector_head import MLPVectorHeadFixed
 from models.mlp import MultiLayerPerceptron
-from models.svg_vqvae import Vector_VQVAE
+from models.vsq import VSQ
 
-model = Vector_VQVAE(vector_decoder_model="mlp")
+model = VSQ(vector_decoder_model="mlp")
 data = torch.randn(2, 3, 128, 128)
 out = model.forward(data)

@@ -1,6 +1,6 @@
 from torch.utils.data import DataLoader
 from pathlib import Path
-from models import Vector_VQVAE
+from models import VSQ
 from tokenizer import RasterVQTokenizer
 import numpy as np
 import torch
@@ -50,7 +50,7 @@ def tokenize_MNIST_augmented():
     ######
     # setting 2 - 8x8 grid, black and white VSQ
     MODEL_WEIGHTS_PATH = "/raid/marco.cipriano/results/svg/Grimoire/VSQ/VSQ_MNIST_BW_P128_T14_P20_TH0.2/checkpoints/last.ckpt"
-    OUT_PATH = "/raid/marco.cipriano/data/SVG/Grimoire/MNIST/mnist_tokenized/VSQ_MNIST_BW_P128_T14_P20_TH0.2"
+    OUT_PATH = "/raid/marco.cipriano/data/SVG/Grimoire/MNIST/mnist_tokenized/VSQ_MNIST_BW_P128_T14_P20_TH0.2AUG"
     CONFIG_PATH = "../configs/MNIST/MNIST_VSQ_BW.yaml"
     FILTER_TH = 0.2
 
@@ -74,6 +74,7 @@ def tokenize_MNIST_augmented():
         except yaml.YAMLError as exc:
             print(exc)
 
+    Path(OUT_PATH).mkdir(parents=True, exist_ok=True)
     #################
     ###  MODEL
     print("Loading model..")
@@ -81,7 +82,7 @@ def tokenize_MNIST_augmented():
         device = torch.device("cuda")
     else:
         device = torch.device("cpu")
-    model = Vector_VQVAE(patch_size=MNIST_SETTING["patch_size"], **config['model_params'])
+    model = VSQ(patch_size=MNIST_SETTING["patch_size"], **config['model_params'])
     if MODEL_WEIGHTS_PATH is not None:
         state_dict = torch.load(MODEL_WEIGHTS_PATH, map_location=device)["state_dict"]
         try:
@@ -250,9 +251,25 @@ def tokenize_MNIST():
 
     ######
     # setting 2 - 8x8 grid, black and white VSQ
-    MODEL_WEIGHTS_PATH = "/raid/marco.cipriano/results/svg/VSQ/TiledMNIST/VSQ MNIST BW 128 th 0.1/checkpoints/last.ckpt"
-    CONFIG_PATH = "../configs/MNIST/MNIST_VSQ_BW.yaml"
-    OUT_PATH = "/home/marco.cipriano/data/SVG/Grimoire/MNIST/8x8_bnw_t0.1"
+    # MODEL_WEIGHTS_PATH = "/raid/marco.cipriano/results/svg/Grimoire/VSQ/VSQ_MNIST_BW_P128_T14_P20_TH0.2/checkpoints/last.ckpt"
+    MODEL_WEIGHTS_PATH = "/raid/marco.cipriano/results/svg/Grimoire/VSQ/VSQ_MNIST_BW_P128_T14_P20_TH0.2_S64/checkpoints/last.ckpt"
+    OUT_PATH = "/raid/marco.cipriano/data/SVG/Grimoire/MNIST/mnist_tokenized/VSQ_MNIST_BW_P128_T14_P20_TH0.2"
+    CONFIG_PATH = "/home/marco.cipriano/projects/Grimoire/configs/MNIST/MNIST_VSQ_BW.yaml"
+    FILTER_TH = 0.2
+
+    MNIST_SETTING = {
+        "data_path": "/raid/marco.cipriano/data/SVG/Grimoire/MNIST/mnist_png",
+        "train_batch_size": 1,
+        "val_batch_size": 1,
+        "patch_size": 128,
+        "num_tiles_per_row": 14,
+        "num_workers": 0,
+        "pin_memory": False,
+        "random_colors": False,
+        "use_palette": False,
+        "padding_frac": 0.1,
+        "return_filename": True,
+    }
 
     with open(CONFIG_PATH, 'r') as file:
         try:
@@ -284,7 +301,7 @@ def tokenize_MNIST():
         device = torch.device("cuda")
     else:
         device = torch.device("cpu")
-    model = Vector_VQVAE(patch_size = config['data_params']["patch_size"], **config['model_params'])
+    model = VSQ(patch_size=MNIST_SETTING["patch_size"], **config['model_params'])
     if MODEL_WEIGHTS_PATH is not None:
         state_dict = torch.load(MODEL_WEIGHTS_PATH, map_location=device)["state_dict"]
         try:
@@ -293,10 +310,9 @@ def tokenize_MNIST():
             model.load_state_dict({k.replace("model.", ""): v for k, v in state_dict.items()})
 
     filter_fn = None
-    filter_th = config['data_params']["filter_th"]
-    if filter_th is not None:
-        print("Filtering patches with less than ", filter_th, " non-white pixels")
-        filter_fn = get_filter_function(filter_th, parse_patches=False)
+    if FILTER_TH is not None:
+        print("Filtering patches with less than ", FILTER_TH, " non-white pixels")
+        filter_fn = get_filter_function(FILTER_TH, parse_patches=False)
 
     model = model.eval()
     model = model.to(device)
@@ -304,17 +320,14 @@ def tokenize_MNIST():
         model,
         tokens_per_patch=1,
         do_tokenize_positions=False,
-        patch_size=config['data_params']["patch_size"],
-        num_tiles_per_row=config['data_params']["num_tiles_per_row"],
+        patch_size=MNIST_SETTING["patch_size"],
+        num_tiles_per_row=MNIST_SETTING["num_tiles_per_row"],
         device=device,
         filter_fn=filter_fn
     )
 
     print("Loading dataset..")
-    config['data_params']["train_batch_size"] = 1
-    config['data_params']["test_batch_size"] = 1
-    config['data_params']["val_batch_size"] = 1
-    datamodule = MNISTDataset(**config['data_params'], return_filename=True)
+    datamodule = MNISTDataset(**MNIST_SETTING)
     datamodule.setup()
 
     dl_train = datamodule.train_dataloader()
@@ -339,7 +352,7 @@ def tokenize_MNIST():
             imgs, labels, _, descriptions, filenames = batch
             # print(imgs, labels, centers, descriptions, filenames)
             imgs = imgs.to(device)
-            
+            imgs = torch.where(imgs > 0.6, 1., 0.)  # makes binary
             # print(imgs.shape, descriptions, filenames)
             start_token, text_tokens, vq_tokens, end_token = tokenizer.tokenize(imgs, text=descriptions[0], return_np_uint16=True)
             # debug
@@ -370,4 +383,5 @@ def tokenize_MNIST():
 
 if __name__ == '__main__':
     # print(get_latest_data_checkpoint("/scratch2/moritz_data/glyphazzn"))
-    tokenize_MNIST_augmented()
+    # tokenize_MNIST_augmented()
+    tokenize_MNIST()

@@ -1,5 +1,5 @@
 from tokenizer import VQTokenizer
-from models import Vector_VQVAE
+from models import VSQ
 import numpy as np
 import torch
 from glob import glob
@@ -11,7 +11,7 @@ import resource
 from torch.utils.data import DataLoader
 import pandas as pd
 import re
-from dataset import GlyphazznStage1Dataset
+from dataset import VSQDataset
 import torch.nn as nn
 from pathlib import Path
 
@@ -82,7 +82,7 @@ def main():
         ###  MODEL
         print("Loading model..")
         device = torch.device("cuda")
-        model = Vector_VQVAE(**config['model_params'])
+        model = VSQ(**config['model_params'])
         state_dict = torch.load(MODEL_WEIGHTS_PATH, map_location=device)["state_dict"]
         try:
             model.load_state_dict(state_dict)
@@ -100,11 +100,11 @@ def main():
         config['data_params']["top_level_dir"] = params["svg_simp"]
         print("loading from: ", config['data_params']["top_level_dir"])
         ds_train = SkipDataset(
-            GlyphazznStage1Dataset(train=True, **config['data_params'], return_filename=True),
+            VSQDataset(train=True, **config['data_params'], return_filename=True),
             existing_data
         )
         ds_test = SkipDataset(
-            GlyphazznStage1Dataset(train=False, **config['data_params'], return_filename=True),
+            VSQDataset(train=False, **config['data_params'], return_filename=True),
             existing_data
         )
 

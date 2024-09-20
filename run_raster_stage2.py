@@ -7,7 +7,7 @@ from pytorch_lightning.loggers import WandbLogger, TensorBoardLogger
 from pytorch_lightning import seed_everything
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, LearningRateFinder, EarlyStopping
 from dataset import VQDataModule
-from models import VQ_SVG_Stage2, Vector_VQVAE
+from models import VQ_SVG_Stage2, VSQ
 from tokenizer import RasterVQTokenizer
 from experiment import SVG_VQVAE_Stage2_Experiment
 import json
@@ -51,6 +51,8 @@ config['logging_params']['save_dir'] = os.path.join(
     config['logging_params']['name']
 )
 print(f"Updated configuration to log in: {config['logging_params']['save_dir']}")
+Path(config['logging_params']['save_dir']).mkdir(exist_ok=True, parents=True)
+
 # dumping config file
 with open(os.path.join(config['logging_params']['save_dir'], 'config.json'), 'w') as f:
     json.dump(config, f)
@@ -81,7 +83,7 @@ else:
     )
 
 # Load auxiliary models
-vq_model = Vector_VQVAE(patch_size=config['data_params']["patch_size"], **config['stage1_params'], device = device)
+vq_model = VSQ(patch_size=config['data_params']["patch_size"], **config['stage1_params'], device = device)
 state_dict = torch.load(config['stage1_params']["checkpoint_path"], map_location=device)["state_dict"]
 try:
     vq_model.load_state_dict(state_dict)
@@ -101,13 +103,9 @@ tokenizer = RasterVQTokenizer(vq_model,
 
 # For reproducibility
 seed_everything(config['exp_params']['manual_seed'], True)
-print("Loading model...")
-if args.wandb:
-    model = VQ_SVG_Stage2(tokenizer, **config['model_params'], wandb_logging=True, device=device)
-    # wandb_logger.watch(model, log="gradients", log_freq=500, log_graph=False)
-    # wandb.watch(model, log='all', log_freq=100)  # can be "all"
-else:
-    model = VQ_SVG_Stage2(tokenizer, **config['model_params'], device=device)
+model_name = config['model_params'].pop('name')
+print(f"Loading model {model_name}...")
+model = VQ_SVG_Stage2(tokenizer, **config['model_params'], device=device)
 
 print("Loading dataset...")
 data = VQDataModule(tokenizer=tokenizer,
@@ -149,7 +147,7 @@ Path(f"{wandb_logger.save_dir}/Samples").mkdir(exist_ok=True, parents=True)
 Path(f"{wandb_logger.save_dir}/Reconstructions").mkdir(exist_ok=True, parents=True)
 
 
-print(f"======= Training {config['model_params']['name']} =======")
+print(f"======= Training {model_name} =======")
 try:
     # Start training
     if "continue_checkpoint" in config["exp_params"] and os.path.exists(config["exp_params"]["continue_checkpoint"]):
