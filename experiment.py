@@ -114,7 +114,7 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
             text_condition = self.tokenizer.decode_text(text_tokens[0])
             if isinstance(self.tokenizer, RasterVQTokenizer):  # TODO: this must be addressed inside the tokenizer!
                 self.tokenizer.use_text_encoder_only = False # TODO: why this gets changed somewhere!
-                only_patch_tokens=True
+                only_patch_tokens=False
                 rasterized_gt = self.tokenizer._tokens_to_image_tensor(
                     vq_targets[:1],
                     ignore_special_tokens=True,
@@ -151,7 +151,7 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
         if batch_idx % self.train_metric_log_interval == 0 and self.wandb:
             if isinstance(self.tokenizer, RasterVQTokenizer):
                 self.tokenizer.use_text_encoder_only = False # TODO: why this gets changed somewhere!
-                only_patch_tokens=True
+                only_patch_tokens=False
             else:
                 only_patch_tokens = False
             with torch.no_grad():
@@ -227,7 +227,7 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
 
                 if isinstance(self.tokenizer, RasterVQTokenizer):
                     self.tokenizer.use_text_encoder_only = False  # TODO: why this gets changed somewhere!
-                    only_patch_tokens = True
+                    only_patch_tokens = False
                     rasterized_gt = self.tokenizer._tokens_to_image_tensor(vq_targets[:1], only_patch_tokens=only_patch_tokens)
                 else:
                     only_patch_tokens = False
@@ -268,7 +268,7 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
             if batch_idx % self.val_metric_log_interval == 0 and self.wandb:
                 if isinstance(self.tokenizer, RasterVQTokenizer):
                     self.tokenizer.use_text_encoder_only = False  # TODO: why this gets changed somewhere!
-                    only_patch_tokens = True
+                    only_patch_tokens = False
                 else:
                     only_patch_tokens = False
                 num_samples = 8

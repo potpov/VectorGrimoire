@@ -10193,3 +10193,5 @@ notebooks/inference.ipynb
 notebooks/visualizations.ipynb
 
 datasets/shapes
+
+configs/VSQ_sweep/
