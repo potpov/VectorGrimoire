@@ -76,8 +76,8 @@ config['logging_params']['save_dir'] = os.path.join(
 )
 Path(config['logging_params']['save_dir']).mkdir(parents=True, exist_ok=True)
 
-with open(os.path.join(config['logging_params']['save_dir'], 'config.json'), 'w') as f:
-    json.dump(config, f)
+with open(os.path.join(config['logging_params']['save_dir'], 'config.yaml'), 'w') as f:
+    yaml.dump(config, f, default_flow_style=False)
 
 current_process_rank = get_rank()
 
