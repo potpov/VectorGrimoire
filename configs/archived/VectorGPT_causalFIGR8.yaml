@@ -1,0 +1,50 @@
+model_params:
+  name: "VectorGPT"
+  image_encoder_model: "resnet34" # available are 18, 34, 50, 101, 152
+  latent_transformer_dim: 256 # 256
+  latent_transformer_heads: 8 # 8
+  latent_transformer_depth: 8 # 8
+  latent_transformer_layer_dropout: 0.1
+  vector_decoder_latent_dim: 256 # 256
+  vector_decoder_paths: 5
+  vector_decoder_radius: 3
+  vector_decoder_render_size : 128 # 128
+  vector_decoder_filled: False
+  stop_predictor_dims: [768, 512] #[768, 512]
+  stop_predictor_activation: "relu"
+  stop_predictor_num_classes: 1
+  context_length: 15
+  reconstruction_loss_weight: 0.99
+
+data_params:
+  dataset: "causalSVG"
+  data_path: "/scratch2/mcipriano/SVG/incremental_FIGR-8/length"
+  channels: 3
+  subset:  # use none or comment for using the whole dataset
+    - user
+  width: 128  # KEEP THIS SYNC WITH make_causal_svg_dateset
+  context_length: 15  # KEEP THIS SYNC WITH make_causal_svg_dateset
+  train_batch_size: 8
+  val_batch_size:  8
+  patch_size: 128 # HAS TO BE 224 FOR CLIP RES50 TO WORK, otherwise take 128
+  num_workers: 4
+
+exp_params:
+  LR: 0.0003 # was 0.0005 originally
+  weight_decay: 0.0
+  scheduler_gamma: 0.95
+  train_log_interval: 50 # ~ 8000 / batch_size / 4
+  manual_seed: 1265
+
+trainer_params:
+  devices: 1
+#    - 1
+#    - 2
+  max_epochs: 250
+
+logging_params:
+  project: "test"
+  save_dir: "/scratch2/mcipriano/SVG/results"
+  name: "VectorGPT_FIGR8"
+  version: 0
+  author: "Marco"

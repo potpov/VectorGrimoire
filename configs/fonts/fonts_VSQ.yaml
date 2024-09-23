@@ -28,8 +28,8 @@ exp_params:
   lr: 2.0e-05  # 0.00002
   weight_decay: 1.e-4  # specify positive float to enable, start experimenting with 1.e-4/1.e-3
   scheduler_gamma: 0.98  # 0.95 is a good starting value
-  train_log_interval: 0.0001 # len(dataset) / train_batch_size / desired_logging_frequency
-  val_log_interval: 0.002
+  train_log_interval: 0.00005 # len(dataset) / train_batch_size / desired_logging_frequency
+  val_log_interval: 0.001
   manual_seed: 42
 
 trainer_params:

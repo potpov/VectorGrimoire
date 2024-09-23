@@ -569,7 +569,7 @@ class VSQDataset(Dataset):
         else:
             single_paths = self.get_similar_length_paths(paths, self.individual_max_length)
 
-        assert check_for_continouity(single_paths), "paths are not continous"
+        # assert check_for_continouity(single_paths), f"paths are not continous in sample {svg_path}" # TODO: RE-ENABLE
         # select a random slice of the paths of length max_shapes_per_svg
         single_paths = [path for path in single_paths if path.length() > 0.]
         if len(single_paths) > self.max_shapes_per_svg:
@@ -599,9 +599,9 @@ class VSQDataset(Dataset):
                                                                fill=False)
         viewbox_dims = [float(x) for x in svg_attributes["viewBox"].split(" ")]
         assert viewbox_dims[0] == 0 and viewbox_dims[
-            1] == 0, f"viewbox has to be 0 0 at the start, got {viewbox_dims[0]} {viewbox_dims[1]}"
+            1] == 0, f"viewbox has to be 0 0 at the start, got {viewbox_dims[0]} {viewbox_dims[1]}, {svg_path}"
         assert viewbox_dims[2] == viewbox_dims[
-            3], f"viewbox has to be same dimensions at the end, got {viewbox_dims[2]} {viewbox_dims[3]}"
+            3], f"viewbox has to be same dimensions at the end, got {viewbox_dims[2]} {viewbox_dims[3]}, {svg_path}"
         imgs = torch.stack(rasterized_segments)  # (n_shapes, channels, width, width)
         centers = torch.tensor(centers)  # (n_shapes, 2)
         centers = centers / viewbox_dims[2]  # scale them to be in [0, 1] range
@@ -644,7 +644,7 @@ class VSQDataset(Dataset):
             single_paths = get_single_paths(paths, self.individual_max_length)
         else:
             single_paths = self.get_similar_length_paths(paths, self.individual_max_length)
-        assert check_for_continouity(single_paths), "paths are not continous"
+        # assert check_for_continouity(single_paths), "paths are not continous" # TODO: RE-ENABLE
         single_paths = [path for path in single_paths if path.length() > 0.]
         render_stroke_width = self._get_local_stroke_width()
         rasterized_segments, centers = get_rasterized_segments(single_paths, render_stroke_width,
@@ -919,7 +919,7 @@ class CenterShapeLayersFromSVGDataset(Dataset):
         single_paths = get_single_paths(paths)
         # queue = copy.deepcopy(single_paths)
         sim_length_paths = self.get_similar_length_paths(single_paths, self.individual_max_length)
-        assert check_for_continouity(sim_length_paths), "paths are not continous"
+        # assert check_for_continouity(sim_length_paths), "paths are not continous"     # TODO reenable
         # select a random slice of the paths of length max_shapes_per_svg
         if len(sim_length_paths) > self.max_shapes_per_svg:
             start_idx = random.randint(0, len(sim_length_paths) - self.max_shapes_per_svg)

@@ -174,6 +174,21 @@ runner = Trainer(
 )
 
 
+#### DEBUG KILLING CRAPPY SVGS
+# print("START TEMPORARY CODE TO SPOT BAD SVGs")
+# from tqdm import tqdm
+# dl_train = data.train_dataloader()
+# dl_test = data.val_dataloader()
+# for i in tqdm(range(len(dl_train)), total=len(dl_train)):
+#     try:
+#         sample = next(iter(dl_train))
+#     except Exception as e:
+#         print(f"Error at {i}: \n {e}")
+#         continue
+#
+# exit(0)
+# END DEBUG
+
 Path(f"{wandb_logger.save_dir}/Samples").mkdir(exist_ok=True, parents=True)
 Path(f"{wandb_logger.save_dir}/Reconstructions").mkdir(exist_ok=True, parents=True)
 

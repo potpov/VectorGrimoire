@@ -7,7 +7,7 @@ model_params:
   single_code_representation: true
   vq_method: "fsq"  # "vqvae", "FSQ", "vqtorch"
   fsq_levels: [7,5,5,5,5]  # will determine codebook_size, see Table 1 of FSQ paper - [7,5,5,5,5] for 4096 (e.g. StrokeNUWA), [8,5,5,5] for 1024
-  num_segments: 64  # default 15 - or 64
+  num_segments: 15  # default 15 - or 64
   pred_color: false
 
 data_params:
