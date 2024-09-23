@@ -1393,7 +1393,6 @@ class GenericRasterDataset(Dataset):
 
         self.invert_transforms = transforms.RandomInvert(p=1.0)
 
-
     def __getitem__(self, index) -> Tensor:
         img = Image.open(self.df.iloc[index]["full_path"])
         label = self.class2idx[self.df.iloc[index]["class"]]
@@ -1418,8 +1417,8 @@ class GenericRasterDatamodule(LightningDataModule):
                  img_size:int = 128,
                  channels:int = 3,
                  train_batch_size:int = 32,
-                val_batch_size:int = 32,
-                num_workers:int = 4,
+                 val_batch_size:int = 32,
+                 num_workers:int = 4,
                  invert:bool = True,
                  subset:str|List=None,
                  **kwargs) -> None:
@@ -1501,7 +1500,7 @@ class MNIST(Dataset):
     0-9           0-9
     """
 
-    def __init__(self, root, train=True, transform=None):
+    def __init__(self, root, subset:bool=False, train=True, transform=None):
         super(MNIST, self)
         self.root = root
         self.train = train
@@ -1511,7 +1510,7 @@ class MNIST(Dataset):
 
         self.image_paths = []
         self.labels = []
-
+            
         for label in range(10):
             label_folder = os.path.join(self.image_folder, str(label))
             image_files = os.listdir(label_folder)
@@ -1629,7 +1628,9 @@ class TiledMNIST(Dataset):
                  random_colors:bool=False,
                  use_palette:bool=True,
                  total_padding:int=20,
-                 return_filename:bool=False,):
+                 return_filename:bool=False,
+                 subset:str=None
+                 ):
         super(TiledMNIST, self)
         self.root = root
         self.train = train
@@ -1640,19 +1641,25 @@ class TiledMNIST(Dataset):
         self.use_palette = use_palette
         self.total_padding = total_padding
         self.return_filename = return_filename
-
+        self.subset = subset
         self.image_folder = os.path.join(root, "training" if train else "testing")
 
         self.image_paths = []
         self.labels = []
 
-        for label in range(10):
+        loop = range(10)
+        if subset is not None:
+            subset = str(subset)
+            print(f"WARNING: Loading MNIST on subset {subset}!")
+            loop = [subset]
+
+        for label in loop:
             label_folder = os.path.join(self.image_folder, str(label))
             image_files = os.listdir(label_folder)
             for image_file in image_files:
                 image_path = os.path.join(label_folder, image_file)
                 self.image_paths.append(image_path)
-                self.labels.append(label)
+                self.labels.append(int(label))
 
     def _recolor_stroke(self, tensor_image, use_palette=True):
         """
@@ -2056,6 +2063,7 @@ class MNISTDataset(LightningDataModule):
         use_palette:bool=True,
         padding_frac:float = 0.1,
         return_filename = False,
+        subset: Optional[str] = None,
         **kwargs,
     ):
         super().__init__()
@@ -2072,6 +2080,7 @@ class MNISTDataset(LightningDataModule):
         self.padding_frac = padding_frac
         self.total_padding = (int(self.patch_size * self.padding_frac) // 2) * 2
         self.return_filename = return_filename
+        self.subset = subset
 
     def collate_fn(self, batch):
         if self.return_filename:
@@ -2118,8 +2127,8 @@ class MNISTDataset(LightningDataModule):
             patch_size = self.patch_size,
             total_padding = self.total_padding,
             use_palette=self.use_palette,
-            return_filename = self.return_filename
-
+            return_filename = self.return_filename,
+            subset = self.subset
         )
 
         self.val_dataset = TiledMNIST(
@@ -2131,7 +2140,8 @@ class MNISTDataset(LightningDataModule):
             patch_size = self.patch_size,
             total_padding = self.total_padding,
             use_palette=self.use_palette,
-            return_filename = self.return_filename
+            return_filename = self.return_filename,
+            subset=self.subset
         )
 
     #       ===============================================================
