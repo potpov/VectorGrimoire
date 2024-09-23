@@ -54,8 +54,8 @@ print(f"Updated configuration to log in: {config['logging_params']['save_dir']}"
 Path(config['logging_params']['save_dir']).mkdir(exist_ok=True, parents=True)
 
 # dumping config file
-with open(os.path.join(config['logging_params']['save_dir'], 'config.json'), 'w') as f:
-    json.dump(config, f)
+with open(os.path.join(config['logging_params']['save_dir'], 'config.yaml'), 'w') as f:
+    yaml.dump(config, f, default_flow_style=False)
 
 if args.wandb:
     if "entity" not in config['logging_params']:
