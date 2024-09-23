@@ -260,6 +260,7 @@ class VQTokenizer(nn.Module):
     
     def _tokens_to_image_tensor(self, tokens:Tensor, post_process:bool = True, num_strokes_to_paint: int = 0) -> Tensor:
         bezier_points, positions = self.decode(tokens, ignore_special_tokens=True)
+
         if post_process:
             return_tensor = get_fixed_svg_render(bezier_points, positions, "min_dist_clip", 0.7, 9.5, 480, 4.5, num_strokes_to_paint=num_strokes_to_paint)
         else:
@@ -576,9 +577,7 @@ class RasterVQTokenizer(nn.Module):
                 pos_tokens = pos_tokens[valid_pos_mask]
             positions = torch.stack([self.id2position[p.item()] for p in pos_tokens])
 
-        if patch_tokens.nelement() == 0:
-            print("W: EMPTY TENSOR PREDICTED!")
-            return None, None, None
+        assert patch_tokens.nelement() > 0, "[ERROR]: EMPTY TENSOR PREDICTED!"
 
         bezier_points, visual_attribute_dict = self.decode_patches(patch_tokens)
         return bezier_points, visual_attribute_dict, positions
@@ -608,9 +607,12 @@ class RasterVQTokenizer(nn.Module):
                                 tokens: Tensor,
                                 only_patch_tokens: bool = False,
                                 **kwargs) -> Tensor:
-
-        bezier_points, visual_attribute_dict, positions = self.decode(tokens, ignore_special_tokens=True,
+        try:
+            bezier_points, visual_attribute_dict, positions = self.decode(tokens, ignore_special_tokens=True,
                                                                       only_patch_tokens=only_patch_tokens)
+        except Exception as e:
+            print(f"[ERROR] Decoding failed, returning empty tensor ({e}")
+            return torch.ones(3, 480, 480)
 
         if bezier_points is None:
             return torch.ones(3, 480, 480)
