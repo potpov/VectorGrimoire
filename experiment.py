@@ -661,7 +661,7 @@ class VectorGPTExperimentv2(pl.LightningModule):
     def forward(self, input_images: Tensor, positions: Tensor, **kwargs) -> Tensor:
         return self.model(input_images, positions, **kwargs)
     
-    def training_step(self, batch, batch_idx, optimizer_idx=0):
+    def training_step(self, batch, batch_idx):
         input_absolute_shape_layers, input_centered_shape_layers, input_merged_images, stop_signals, captions, target_centered_shape_layers, positions, gt_positions = batch
         self.curr_device = input_absolute_shape_layers.device
         bs = input_absolute_shape_layers.shape[0]
@@ -682,7 +682,6 @@ class VectorGPTExperimentv2(pl.LightningModule):
             merged_preds = None,
             position_predictions = pos_preds,
             gt_positions = gt_positions,
-            optimizer_idx=optimizer_idx,
             batch_idx=batch_idx,
             log_loss = batch_idx % self.train_log_interval == 0 and self.wandb
         )
@@ -751,7 +750,7 @@ class VectorGPTExperimentv2(pl.LightningModule):
         # torch.cuda.empty_cache()
         return {}
 
-    def validation_step(self, batch, batch_idx, optimizer_idx=0):
+    def validation_step(self, batch, batch_idx):
 
         input_absolute_shape_layers, input_centered_shape_layers, input_merged_images, stop_signals, captions, target_centered_shape_layers, positions, gt_positions = batch
         self.curr_device = input_absolute_shape_layers.device
@@ -772,7 +771,6 @@ class VectorGPTExperimentv2(pl.LightningModule):
             merged_preds = None,
             position_predictions = pos_preds,
             gt_positions = gt_positions,
-            optimizer_idx=optimizer_idx,
             batch_idx=batch_idx
         )
 
@@ -887,7 +885,7 @@ class VectorGPTExperiment(pl.LightningModule):
     def forward(self, input_shape_layers: Tensor, **kwargs) -> Tensor:
         return self.model(input_shape_layers, **kwargs)
     
-    def training_step(self, batch, batch_idx, optimizer_idx=0):
+    def training_step(self, batch, batch_idx):
         input_shape_layers, target_shape_layers, stop_signals, captions, merged_target, merged_input = batch
         self.curr_device = input_shape_layers.device
         bs = input_shape_layers.shape[0]
@@ -904,7 +902,6 @@ class VectorGPTExperiment(pl.LightningModule):
             stop_signals=stop_preds,
             gt_merged_targets = merged_target,
             merged_preds = merged_preds,
-            optimizer_idx=optimizer_idx,
             batch_idx=batch_idx,
             log_loss = batch_idx % self.train_log_interval == 0 and self.wandb
         )
@@ -962,7 +959,7 @@ class VectorGPTExperiment(pl.LightningModule):
         # torch.cuda.empty_cache()
         return {}
 
-    def validation_step(self, batch, batch_idx, optimizer_idx=0):
+    def validation_step(self, batch, batch_idx):
 
         input_shape_layers, gt_shape_layers, stop_signals, captions, merged_target, merged_input = batch
         self.curr_device = input_shape_layers.device
@@ -979,7 +976,6 @@ class VectorGPTExperiment(pl.LightningModule):
             stop_signals=stop_preds,
             gt_merged_targets = merged_target,
             merged_preds = merged_preds,
-            optimizer_idx=optimizer_idx,
             batch_idx=batch_idx
         )
 
@@ -1125,8 +1121,8 @@ class VAEXperiment(pl.LightningModule):
                 else:
                     param.requires_grad = False
 
-    def training_step(self, batch, batch_idx, optimizer_idx = 0):
-        real_img, labels = batch
+    def training_step(self, batch, batch_idx):
+        real_img, labels, _, description = batch
         self.curr_device = real_img.device
 
         # regularely log training reconstructions
@@ -1139,7 +1135,6 @@ class VAEXperiment(pl.LightningModule):
             log_images(results[0][:log_amount], real_img[:log_amount], log_key="training")
             train_loss = self.model.loss_function(*results,
                                             M_N = self.params['kld_weight'],
-                                            optimizer_idx=optimizer_idx,
                                             batch_idx = batch_idx,
                                             log_loss_images = False)#was true
             with torch.no_grad():
@@ -1148,7 +1143,6 @@ class VAEXperiment(pl.LightningModule):
             results = self.forward(real_img, labels = labels)
             train_loss = self.model.loss_function(*results,
                                                 M_N = self.params['kld_weight'], #al_img.shape[0]/ self.num_train_imgs,
-                                                optimizer_idx=optimizer_idx,
                                                 batch_idx = batch_idx)
 
         self.log_dict(train_loss, sync_dist=True, prog_bar=True)
@@ -1173,15 +1167,14 @@ class VAEXperiment(pl.LightningModule):
         torch.cuda.empty_cache()
         return {}
 
-    def validation_step(self, batch, batch_idx, optimizer_idx = 0):
+    def validation_step(self, batch, batch_idx):
         print("Entering validation step.")
-        real_img, labels = batch
+        real_img, labels, _, description = batch
         self.curr_device = real_img.device
 
         results = self.forward(real_img, labels = labels)
         val_loss = self.model.loss_function(*results,
                                             M_N = 1.0, #real_img.shape[0]/ self.num_val_imgs,
-                                            optimizer_idx = optimizer_idx,
                                             batch_idx = batch_idx)
 
         self.log_dict({f"val_{key}": val for key, val in val_loss.items()}, sync_dist=True, prog_bar=True)
@@ -1204,27 +1197,29 @@ class VAEXperiment(pl.LightningModule):
             num_of_samples = 100
         else:
             num_of_samples = 10
-        test_input, test_label = next(iter(self.trainer.datamodule.test_dataloader()))
+        test_input, test_label, _, _ = next(iter(self.trainer.datamodule.test_dataloader()))
         test_input = test_input[:num_of_samples].to(self.curr_device)
-        test_label = test_label[:num_of_samples].to(self.curr_device)
+        test_label = torch.tensor(test_label[:num_of_samples]).to(self.curr_device)
 
         with torch.no_grad():
             # test_input, test_label = batch
-            recons = self.model.generate(test_input, labels = test_label, verbose=True)
+            recons = self.model.generate(test_input, labels=test_label, verbose=True)
         
         # make sure there are no small negative numbers for rendering
         dummy = torch.nn.ReLU()
         recons = dummy(recons)
-        
-        log_images(recons[:5], test_input[:5], log_key="val_recons")
 
-        # if(self.logger.save_dir is not None):
-        #     vutils.save_image(recons.data[:10],
-        #                     os.path.join(self.logger.save_dir , 
-        #                                 "Reconstructions", 
-        #                                 f"recons_{self.logger.name}_Epoch_{self.current_epoch}.png"),
-        #                     normalize=True,
-        #                     nrow=5)
+        k, i = log_images(
+            recons[:5],
+            test_input[:5],
+            log_key="val_recons",
+            captions="input (left) vs. reconstruction (right)"
+        )
+        self.trainer.logger.experiment.log(
+            {"val_recons": [i]},
+        )
+
+
 
         try:
             print("sampling from model.")
@@ -1234,14 +1229,16 @@ class VAEXperiment(pl.LightningModule):
             if samples.ndim >4:
                 samples = samples[:,0,:,:,:]
             samples = dummy(samples[:,:3,:,:]).cpu() # drop the alpha channel for metric calculation
-            log_images(samples[:5], samples[5:10], log_key="samples")
-            # if(self.logger.save_dir is not None):
-            #     vutils.save_image(samples.cpu().data,
-            #                     os.path.join(self.logger.save_dir , 
-            #                                 "Samples",      
-            #                                 f"{self.logger.name}_Epoch_{self.current_epoch}.png"),
-            #                     normalize=True,
-            #                     nrow=5)
+            k, i = log_images(
+                samples[:5],
+                samples[5:10],
+                log_key="samples",
+                captions="samples from the model"
+            )
+            self.trainer.logger.experiment.log(
+                {"samples": [i]},
+            )
+
             # Log FID score
             if self.log_fid:
                 self.fid.update(test_input, real = True)
