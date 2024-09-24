@@ -133,8 +133,8 @@ class VQDataset(Dataset):
 
         if dataset == "figr8":
             assert "class" in self.split.columns if self.fraction_of_class_only_inputs > 0 else True, "Column 'class' is required for figr8 dataset."
-            assert "strokenuwa_prompt" in self.split.columns if self.fraction_of_strokenuwa_inputs > 0 else True, "Column 'strokenuwa_prompt' is required for figr8 dataset."
-            assert "iconshop_sentence_prompt" in self.split.columns if self.fraction_of_iconshop_chatgpt_inputs > 0 else True, "Column 'iconshop_sentence_prompt' is required for figr8 dataset."
+            # assert "strokenuwa_prompt" in self.split.columns if self.fraction_of_strokenuwa_inputs > 0 else True, "Column 'strokenuwa_prompt' is required for figr8 dataset."
+            # assert "iconshop_sentence_prompt" in self.split.columns if self.fraction_of_iconshop_chatgpt_inputs > 0 else True, "Column 'iconshop_sentence_prompt' is required for figr8 dataset."
             assert "description" in self.split.columns if self.fraction_of_full_description_inputs > 0 else True, "Column 'description' is required for figr8 dataset."
 
         self.use_pre_computed_text_tokens_only = use_pre_computed_text_tokens_only
@@ -183,9 +183,13 @@ class VQDataset(Dataset):
         else:
             print(f"[WARNING] No samples found for {'train' if train else 'test'} split.")
 
-    def _get_padded_text_tokens(self, text_tokens: np.ndarray):
-        padded_text = np.append(text_tokens, np.zeros(self.max_text_length - len(text_tokens), dtype=np.ushort) + self.bert_pad_token)
-        return padded_text
+    def _get_padded_text_tokens(self, text_tokens: np.ndarray | torch.Tensor):
+        if self.max_text_length - len(text_tokens) > 0:
+            return np.append(text_tokens, np.zeros(self.max_text_length - len(text_tokens), dtype=np.ushort) + self.bert_pad_token)
+        else:
+            text_tokens = text_tokens[:self.max_text_length] # truncate
+            text_tokens[-1] = self.bert_sep_token
+            return text_tokens.numpy().astype(np.ushort) if torch.is_tensor(text_tokens) else text_tokens
     
     def _get_padded_vq_tokens(self, vq_tokens: np.ndarray):
         if vq_tokens[0] != self.bos_token:
@@ -219,16 +223,17 @@ class VQDataset(Dataset):
             text_tokens = self.tokenizer.tokenize_text(text_to_tokenize)
             return text_tokens
         elif self.dataset == "figr8":
-            text_to_tokenize = np.random.choice([row.get("class"), 
-                                                 row.get("strokenuwa_prompt"), 
-                                                 row.get("iconshop_sentence_prompt"), 
-                                                 row.get("description"),
-                                                 ""],
-                                                p=[self.fraction_of_class_only_inputs, 
-                                                   self.fraction_of_strokenuwa_inputs, 
-                                                   self.fraction_of_iconshop_chatgpt_inputs, 
-                                                   self.fraction_of_full_description_inputs,
-                                                   self.fraction_of_blank_inputs])
+            text_to_tokenize = row.get("description")
+            # text_to_tokenize = np.random.choice([row.get("class"),
+            #                                      row.get("strokenuwa_prompt"),
+            #                                      row.get("iconshop_sentence_prompt"),
+            #                                      row.get("description"),
+            #                                      ""],
+            #                                     p=[self.fraction_of_class_only_inputs,
+            #                                        self.fraction_of_strokenuwa_inputs,
+            #                                        self.fraction_of_iconshop_chatgpt_inputs,
+            #                                        self.fraction_of_full_description_inputs,
+            #                                        self.fraction_of_blank_inputs])
             if text_to_tokenize is None:
                 text_to_tokenize = "None"
             text_tokens = self.tokenizer.tokenize_text(text_to_tokenize)

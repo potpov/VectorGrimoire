@@ -31,6 +31,17 @@ with open(args.filename, 'r') as file:
     except yaml.YAMLError as exc:
         print(exc)
 
+config['logging_params']['save_dir'] = os.path.join(
+    config['logging_params']['save_dir'],
+    config['logging_params']['name']
+)
+print(f"Updated configuration to log in: {config['logging_params']['save_dir']}")
+Path(config['logging_params']['save_dir']).mkdir(exist_ok=True, parents=True)
+
+# dumping config file
+with open(os.path.join(config['logging_params']['save_dir'], 'config.yaml'), 'w') as f:
+    yaml.dump(config, f, default_flow_style=False)
+
 if "continue_checkpoint" in config["exp_params"] and config["exp_params"]["continue_checkpoint"] is not None:
     assert os.path.exists(config["exp_params"]["continue_checkpoint"]), f"checkpoint {config['exp_params']['continue_checkpoint']} does not exist"
     print(f"Found checkpoint to continue training from: {config['exp_params']['continue_checkpoint']}")
@@ -77,25 +88,50 @@ state_dict = torch.load(config['stage1_params']["checkpoint_path"], map_location
 try:
     vq_model.load_state_dict(state_dict)
 except:
-    vq_model.load_state_dict({k.replace("model.", ""): v for k, v in state_dict.items()})
+    new_dict = state_dict.copy()
+    new_dict = {k.replace("model.", ""): v for k, v in new_dict.items()}
+    # new_dict = {k.replace("model.tokenizer.vq_encoder.", "encoder."): v for k, v in new_dict.items()}
+    # new_dict = {k.replace("model.tokenizer.vq_quantize_layer.", "quantize_layer."): v for k, v in new_dict.items()}
+    # new_dict = {k.replace("model.tokenizer.vq_decoder.", "decoder."): v for k, v in new_dict.items()}
+    # new_dict = {k.replace("model.tokenizer.vq_model.", ""): v for k, v in new_dict.items()}
+    vq_model.load_state_dict(new_dict)
 vq_model = vq_model.eval()
-tokenizer = VQTokenizer(vq_model, config["data_params"]["width"], 1, "bert-base-uncased", device = device)
+tokenizer = VQTokenizer(vq_model,
+                        config["data_params"]["grid_size"],
+                        config['stage1_params']["num_codes_per_shape"],
+                        config["model_params"]["text_encoder_str"],
+                        lseg = config["stage1_params"]["lseg"],
+                        device = device)
 
 
 
 # For reproducibility
 seed_everything(config['exp_params']['manual_seed'], True)
-print("Loading model...")
+model_name = config['model_params'].pop('name')
+print("Loading model...", model_name)
 if args.wandb:
-    model = VQ_SVG_Stage2(tokenizer, **config['model_params'], wandb_logging=True, device = device)
+    model = VQ_SVG_Stage2(tokenizer, **config['model_params'], device=device)
     # wandb_logger.watch(model, log="gradients", log_freq=500, log_graph=False)
     # wandb.watch(model, log='all', log_freq=100)  # can be "all"
 else:
     model = VQ_SVG_Stage2(tokenizer, **config['model_params'], device = device)
 
 print("Loading dataset...")
-text_only_tokenizer = VQTokenizer(vq_model, config["data_params"]["width"], 1, "bert-base-uncased", use_text_encoder_only=True, codebook_size=tokenizer.codebook_size)
-data = VQDataModule(tokenizer=text_only_tokenizer,**config["data_params"], context_length=config['model_params']['max_seq_len'])
+text_only_tokenizer = VQTokenizer(
+    vq_model,
+    config["data_params"]["grid_size"],
+    config['stage1_params']["num_codes_per_shape"],
+    config["model_params"]["text_encoder_str"],
+    use_text_encoder_only=True,
+    lseg=config["stage1_params"]["lseg"],
+    codebook_size=tokenizer.codebook_size
+)
+
+data = VQDataModule(
+    tokenizer=text_only_tokenizer,
+    **config["data_params"],
+    context_length=config['model_params']['max_seq_len']
+)
 
 print("Setting up data...")
 data.setup()
@@ -126,7 +162,7 @@ Path(f"{wandb_logger.save_dir}/Samples").mkdir(exist_ok=True, parents=True)
 Path(f"{wandb_logger.save_dir}/Reconstructions").mkdir(exist_ok=True, parents=True)
 
 
-print(f"======= Training {config['model_params']['name']} =======")
+print(f"======= Training {model_name} =======")
 try:
     # Start training
     if "continue_checkpoint" in config["exp_params"] and os.path.exists(config["exp_params"]["continue_checkpoint"]):
