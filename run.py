@@ -74,7 +74,8 @@ config['logging_params']['save_dir'] = os.path.join(
     config['logging_params']['save_dir'],
     config['logging_params']['name']
 )
-Path(config['logging_params']['save_dir']).mkdir(parents=True, exist_ok=True)
+print(f"Updated configuration to log in: {config['logging_params']['save_dir']}")
+Path(config['logging_params']['save_dir']).mkdir(exist_ok=True, parents=True)
 
 with open(os.path.join(config['logging_params']['save_dir'], 'config.yaml'), 'w') as f:
     yaml.dump(config, f, default_flow_style=False)
@@ -90,6 +91,11 @@ if "continue_checkpoint" in config["exp_params"] and config["exp_params"]["conti
 else:
     assert "id" not in config["logging_params"], f"wandb id must not be set if not continuing from a checkpoint"
 
+# disabling multi-threading when debugging
+if args.debug:
+    config["data_params"]["num_workers"] = 0
+current_process_rank = get_rank()
+
 if args.wandb:
     if "entity" not in config['logging_params']:
         entity = "aiis-chair"
@@ -102,9 +108,9 @@ if args.wandb:
         project=config["logging_params"]["project"],
         log_model=True,
         entity=entity,
-        mode="disabled" if args.debug else "online",
+        mode="offline" if args.debug else "online",
         resume="must" if "continue_checkpoint" in config["exp_params"] else "allow",
-        id=config["logging_params"].get("id")
+        id=config["logging_params"]["id"] if "id" in config["logging_params"] else None
     )
     if current_process_rank == 0:
         allow_val_change = True if config["logging_params"].get("allow_val_change") else False
@@ -122,7 +128,6 @@ if args.wandb:
     model = MODELS[config['model_params']['name']](
         patch_size = config['data_params'].get("patch_size", 128),
         **config['model_params'],
-        wandb_logging=True
     )
     # wandb_logger.watch(model, log="gradients", log_freq=500, log_graph=False)
     # wandb.watch(model, log='all', log_freq=100)  # can be "all"
@@ -145,8 +150,8 @@ elif config['model_params']['name'] == "VSQ":
     data.setup()
     experiment = VectorVQVAE_Experiment_Stage1(model,
                                                **config['exp_params'],
-                                               wandb = args.wandb,
-                                               datamodule = data,
+                                               wandb=args.wandb,
+                                               datamodule=data,
                                                max_epochs=config["trainer_params"]["max_epochs"])
 elif config['model_params']['name'] == "VQ_Transformer":
     raise ValueError("VQ_Transformer is deprecated, please use run_stage2.py instead.")
@@ -165,6 +170,7 @@ runner = Trainer(
         EarlyStopping("val_loss", 0.005, 15, verbose=True),
         ModelCheckpoint(save_top_k=3,
                         dirpath=os.path.join(config['logging_params']['save_dir'], "checkpoints"),
+                        every_n_train_steps=100,
                         monitor="val_loss",
                         save_last=True),
     ],
@@ -172,22 +178,6 @@ runner = Trainer(
     profiler=profiler,
     **config['trainer_params']
 )
-
-
-#### DEBUG KILLING CRAPPY SVGS
-# print("START TEMPORARY CODE TO SPOT BAD SVGs")
-# from tqdm import tqdm
-# dl_train = data.train_dataloader()
-# dl_test = data.val_dataloader()
-# for i in tqdm(range(len(dl_train)), total=len(dl_train)):
-#     try:
-#         sample = next(iter(dl_train))
-#     except Exception as e:
-#         print(f"Error at {i}: \n {e}")
-#         continue
-#
-# exit(0)
-# END DEBUG
 
 Path(f"{wandb_logger.save_dir}/Samples").mkdir(exist_ok=True, parents=True)
 Path(f"{wandb_logger.save_dir}/Reconstructions").mkdir(exist_ok=True, parents=True)
@@ -198,7 +188,9 @@ try:
     # Start training
     if "continue_checkpoint" in config["exp_params"] and os.path.exists(config["exp_params"]["continue_checkpoint"]):
         runner.fit(experiment, datamodule=data, ckpt_path=config["exp_params"]["continue_checkpoint"])
+        print(f"[INFO] Successfully loaded checkpoint from {config['exp_params']['continue_checkpoint']}.")
     else:
+        print("[INFO] Started training from scratch.")
         runner.fit(experiment, datamodule=data)
     profiler.describe()
     # print(profiler.summary())
