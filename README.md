@@ -13,16 +13,19 @@ save directory: `/raid/marco.cipriano/results/svg/Grimoire/VSQ`
 | VSQ_MNIST_COLOR_P128_T3_P20         |                           |
 | VSQ_MNIST_BW_P128_T14_P20_TH0.2_S64 | more segmentens per shape |
 
+final experiments path
 
-## ART MODULE CONFIGURATIONS
 
-load directory: `/raid/marco.cipriano/results/svg/Grimoire/VSQ/`
 
-save directory: `/raid/marco.cipriano/results/svg/Grimoire/ART`
-
-### experiments
-
-- ART_MNIST_BW_AUG
+| Name           | Notes                                                                                         |
+|----------------|-----------------------------------------------------------------------------------------------|
+| FIGR8 - ART    | /raid/marco.cipriano/results/svg/Grimoire/ART/figr8/nseg=4_ncode=2_lseg=5_alpha01_256grid     |
+| FIGR8 - VSQ    | /raid/marco.cipriano/results/svg/Grimoire/VSQ/figr8/VSQ_nseg=4_ncode=2_lseg=5.0_alpha=0.1None |
+| FONTS - ART    |                                                                                               |
+| FONTS - VSQ    | /raid/marco.cipriano/results/svg/Grimoire/VSQ/VSQ_FONTS                                       |
+| MNIST - ART    | /raid/marco.cipriano/results/svg/Grimoire/ART/ART_MNIST_BW_P6T0.2                             |
+| MNIST - VSQ    | /raid/marco.cipriano/results/svg/Grimoire/VSQ/VSQ_MNIST_BW_P128_T6_P20_TH0.1                  |
+| MNIST - im2vec |                                                                                               |
 
 
 ## Datasets
