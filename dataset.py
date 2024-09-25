@@ -71,7 +71,7 @@ class Legacy_VQDataset(Dataset):
         targets = torch.from_numpy(np.roll(row, -1).astype(np.int32)).long()
         targets[-1] = 2  # <PAD> token
         return inputs, targets
-    
+
 
 class VQDataset(Dataset):
     """
@@ -84,57 +84,58 @@ class VQDataset(Dataset):
     - shuffle_vq_order: bool (default False), if True, `<SOS>, <CLS>, t_1, ..., t_n, <SEP>, <BOS>, v_1, p_1, v_2, p_2, ... v_m, p_m, <EOS>` will become `<SOS>, <CLS>, t_1, ..., t_n, <SEP>, <BOS>, v_i, p_i, v_i+1, p_i+1, ..., v_m, p_m, v_1, p_1, ..., v_i-1, p_i-1, <EOS>` for random index i
     its not really "shuffling", but more cutting the sequence into two parts and switching their order
     """
+
     def __init__(self,
-                 csv_path:str,
-                 vq_token_npy_path:str,
-                 tokenizer: VQTokenizer | RasterVQTokenizer,
+                 csv_path: str,
+                 vq_token_npy_path: str,
+                 tokenizer: VQTokenizer|RasterVQTokenizer,
                  context_length: int,
-                 dataset:str,
+                 dataset: str,
+                 max_text_token_length: int = 50,
                  min_context_length: int = 10,
-                fraction_of_strokenuwa_inputs:float= 0.0,
-                fraction_of_class_only_inputs:float= 0.9,
-                fraction_of_blank_inputs:float= 0.1,
-                fraction_of_iconshop_chatgpt_inputs:float= 0.0,
-                 shuffle_vq_order:bool=True,
-                 use_pre_computed_text_tokens_only: bool=False,
-                 train:bool = True,
-                 subset:str=None,):
-        super(VQDataset, self).__init__()
+                 fraction_of_class_only_inputs: float = 0.0,
+                 fraction_of_blank_inputs: float = 0.1,
+                 fraction_of_iconshop_chatgpt_inputs: float = 0.3,
+                 fraction_of_full_description_inputs: float = 0.6,
+                 shuffle_vq_order: bool = True,
+                 use_pre_computed_text_tokens_only: bool = False,
+                 train: bool = True,
+                 subset: str = None,
+                 return_ids: bool = False,
+                 **kwargs):
+        super(VQDataset, self)  # .__init__()
+
+        print(f"[INFO] These keywords were provided in VQDataset but are not used: {kwargs.keys()}")
 
         self.split = pd.read_csv(csv_path)
         self.train = train
         self.subset = subset
+        self.return_ids = return_ids
 
         self.context_length = context_length
         self.min_context_length = min_context_length
+        self.max_text_token_length = max_text_token_length
 
-        sum_of_fractions = fraction_of_class_only_inputs + fraction_of_blank_inputs + fraction_of_strokenuwa_inputs + fraction_of_iconshop_chatgpt_inputs if train else 0.0
+        sum_of_fractions = fraction_of_class_only_inputs + fraction_of_blank_inputs + fraction_of_iconshop_chatgpt_inputs + fraction_of_full_description_inputs
         if subset is not None:
             assert subset in self.split["class"].unique(), f"Subset {subset} not found in the dataset."
             self.split = self.split[self.split["class"] == subset].reset_index(drop=True)
         assert dataset in ["figr8", "fonts", "mnist"], f"Dataset must be either 'figr8' or 'fonts', got {dataset}."
-        assert sum_of_fractions <= 1, f"All fractions must be less or equal to 1, got {sum_of_fractions}."
+        assert sum_of_fractions == 1. or dataset == "mnist", f"All fractions must be equal to 1, got {sum_of_fractions}."
 
+        if (not train or train is None) and fraction_of_full_description_inputs < 1.0:
+            raise ValueError(
+                f"Youre trying to validate/test with only {fraction_of_full_description_inputs} description inputs, must be 1.0")
 
-
-        self.fraction_of_class_only_inputs = fraction_of_class_only_inputs if train else 0.0
-        self.fraction_of_blank_inputs = fraction_of_blank_inputs if train else 0.0
-        self.fraction_of_strokenuwa_inputs = fraction_of_strokenuwa_inputs if train else 0.0
-        self.fraction_of_iconshop_chatgpt_inputs = fraction_of_iconshop_chatgpt_inputs if train else 0.0
+        self.fraction_of_class_only_inputs = fraction_of_class_only_inputs
+        self.fraction_of_blank_inputs = fraction_of_blank_inputs
+        self.fraction_of_iconshop_chatgpt_inputs = fraction_of_iconshop_chatgpt_inputs
+        self.fraction_of_full_description_inputs = fraction_of_full_description_inputs
         self.dataset = dataset
-
-        if sum_of_fractions < 1:
-            self.fraction_of_full_description_inputs = 1 - sum_of_fractions
-        else:
-            self.fraction_of_full_description_inputs = 0.
-
-        if not train or train is None:
-            self.fraction_of_full_description_inputs = 1.0
 
         if dataset == "figr8":
             assert "class" in self.split.columns if self.fraction_of_class_only_inputs > 0 else True, "Column 'class' is required for figr8 dataset."
-            # assert "strokenuwa_prompt" in self.split.columns if self.fraction_of_strokenuwa_inputs > 0 else True, "Column 'strokenuwa_prompt' is required for figr8 dataset."
-            # assert "iconshop_sentence_prompt" in self.split.columns if self.fraction_of_iconshop_chatgpt_inputs > 0 else True, "Column 'iconshop_sentence_prompt' is required for figr8 dataset."
+            assert "iconshop_description" in self.split.columns if self.fraction_of_iconshop_chatgpt_inputs > 0 else True, "Column 'iconshop_description' is required for figr8 dataset."
             assert "description" in self.split.columns if self.fraction_of_full_description_inputs > 0 else True, "Column 'description' is required for figr8 dataset."
 
         self.use_pre_computed_text_tokens_only = use_pre_computed_text_tokens_only
@@ -157,45 +158,46 @@ class VQDataset(Dataset):
         self.vq_numpy_array = np.split(numpy_array, np.where(numpy_array == self.bos_token)[0])[1:]
 
         if not len(self.vq_numpy_array) == len(self.split) and self.subset is None:
-            print(f"[WARNING] Number of samples in the numpy array and the csv file do not match. Numpy array has {len(self.vq_numpy_array)} samples, csv has {len(self.split)} samples.")
-        
+            print(
+                f"[WARNING] Number of samples in the numpy array and the csv file do not match. Numpy array has {len(self.vq_numpy_array)} samples, csv has {len(self.split)} samples.")
+
         if train is None:
             self.split = self.split[self.split["split"] == "test"].reset_index(drop=True)
-            self.split = self.split.sample(frac=1, random_state=42).reset_index(drop=True)
+            # self.split = self.split.sample(frac=1, random_state=42).reset_index(drop=True)
         else:
             if train:
                 self.split = self.split[self.split["split"] == "train"].reset_index(drop=True)
             else:
-                self.split = self.split[self.split["split"] == "test"].reset_index(drop=True)  # TODO: reset this to val after testing
+                self.split = self.split[self.split["split"] == "val"].reset_index(drop=True)
 
         self.split["index_in_numpy_array"] = self.split["index_in_numpy_array"].astype(int)
         samples_before_filtering = len(self.split)
 
-        self.split = self.split[self.split["text_token_length"] < 16]
-        self.max_text_length = self.split["text_token_length"].max()
+        self.split = self.split[self.split["text_token_length"] <= self.max_text_token_length]
+
         # TODO add font blacklisting here
-        self.split = self.split[self.split["vq_token_length"] + self.max_text_length + 2 <= self.context_length]
+        self.split = self.split[self.split["vq_token_length"] + self.max_text_token_length + 2 <= self.context_length]
         self.split = self.split[self.split["vq_token_length"] >= self.min_context_length]
 
         samples_after_filtering = len(self.split)
         if samples_before_filtering > 0:
-            print(f"[INFO] Filtered {samples_before_filtering - samples_after_filtering} samples because they were too long or too short. That is {np.round((samples_before_filtering - samples_after_filtering) / samples_before_filtering * 100, decimals=2)}% of the dataset.")
+            print(
+                f"[INFO] Filtered {samples_before_filtering - samples_after_filtering} samples because they were too long or too short. That is {np.round((samples_before_filtering - samples_after_filtering) / samples_before_filtering * 100, decimals=2)}% of the dataset.")
         else:
             print(f"[WARNING] No samples found for {'train' if train else 'test'} split.")
 
-    def _get_padded_text_tokens(self, text_tokens: np.ndarray | torch.Tensor):
-        if self.max_text_length - len(text_tokens) > 0:
-            return np.append(text_tokens, np.zeros(self.max_text_length - len(text_tokens), dtype=np.ushort) + self.bert_pad_token)
-        else:
-            text_tokens = text_tokens[:self.max_text_length] # truncate
-            text_tokens[-1] = self.bert_sep_token
-            return text_tokens.numpy().astype(np.ushort) if torch.is_tensor(text_tokens) else text_tokens
-    
+    def _get_padded_text_tokens(self, text_tokens: np.ndarray):
+        padded_text = np.append(text_tokens, np.zeros(self.max_text_token_length - len(text_tokens),
+                                                      dtype=np.ushort) + self.bert_pad_token)
+        return padded_text
+
     def _get_padded_vq_tokens(self, vq_tokens: np.ndarray):
         if vq_tokens[0] != self.bos_token:
             vq_tokens = np.concatenate([np.array([self.bos_token]), vq_tokens])
         vq_with_eos = np.append(vq_tokens, np.zeros(1, dtype=np.ushort) + self.eos_token)
-        final_padded_vq = np.append(vq_with_eos, np.zeros(self.context_length - self.max_text_length - len(vq_with_eos) - 1, dtype=np.ushort) + self.pad_token)  # -1 because SOS token is prefixed to the sequence later
+        final_padded_vq = np.append(vq_with_eos,
+                                    np.zeros(self.context_length - self.max_text_token_length - len(vq_with_eos) - 1,
+                                             dtype=np.ushort) + self.pad_token)  # -1 because SOS token is prefixed to the sequence later
         return final_padded_vq
 
         # assert len(self.text_tokens) == len(self.vq_tokens), "Text and VQ tokens should have the same shape."
@@ -205,41 +207,38 @@ class VQDataset(Dataset):
 
     def __len__(self):
         return len(self.split)
-    
+
     def _get_tokenized_text(self, row):
         if self.dataset == "mnist":
             text_tokens = self.tokenizer.tokenize_text(row["description"])
             assert len(text_tokens) == row["text_token_length"]
             return text_tokens
-        if self.dataset == "fonts":
-            text_to_tokenize = np.random.choice([row["class"], 
-                                                 row["description"], 
+        elif self.dataset == "fonts":
+            text_to_tokenize = np.random.choice([row["class"],
+                                                 row["description"],
                                                  ""],
-                                             p=[self.fraction_of_class_only_inputs, 
-                                                self.fraction_of_full_description_inputs, 
-                                                self.fraction_of_blank_inputs])
+                                                p=[self.fraction_of_class_only_inputs,
+                                                   self.fraction_of_full_description_inputs,
+                                                   self.fraction_of_blank_inputs])
             if text_to_tokenize in "ABCDEFGHIJKLMNOPQRSTUVWXYZ" and len(text_to_tokenize) == 1:
                 text_to_tokenize = f"capital {text_to_tokenize}"
             text_tokens = self.tokenizer.tokenize_text(text_to_tokenize)
             return text_tokens
         elif self.dataset == "figr8":
-            text_to_tokenize = row.get("description")
-            # text_to_tokenize = np.random.choice([row.get("class"),
-            #                                      row.get("strokenuwa_prompt"),
-            #                                      row.get("iconshop_sentence_prompt"),
-            #                                      row.get("description"),
-            #                                      ""],
-            #                                     p=[self.fraction_of_class_only_inputs,
-            #                                        self.fraction_of_strokenuwa_inputs,
-            #                                        self.fraction_of_iconshop_chatgpt_inputs,
-            #                                        self.fraction_of_full_description_inputs,
-            #                                        self.fraction_of_blank_inputs])
+            text_to_tokenize = np.random.choice([row.get("class"),
+                                                 row.get("iconshop_description"),
+                                                 row.get("description"),
+                                                 ""],
+                                                p=[self.fraction_of_class_only_inputs,
+                                                   self.fraction_of_iconshop_chatgpt_inputs,
+                                                   self.fraction_of_full_description_inputs,
+                                                   self.fraction_of_blank_inputs])
             if text_to_tokenize is None:
                 text_to_tokenize = "None"
             text_tokens = self.tokenizer.tokenize_text(text_to_tokenize)
             return text_tokens
 
-    def __getitem__(self, idx:int):
+    def __getitem__(self, idx: int):
         """
         IMPORTANT
         text tokens have their special tokens and padding already included.
@@ -252,20 +251,29 @@ class VQDataset(Dataset):
             text_tokens = np.load(row["text_token_path"])
         else:
             text_tokens = self._get_tokenized_text(row)
+
+        # it could be the case that the calculation of text token lengths was only done for one kind of description which could cause an error here if the other is longer
+        if len(text_tokens) > self.max_text_token_length:
+            last_token = text_tokens[-1:]
+            text_tokens = text_tokens[:self.max_text_token_length - 1]
+            text_tokens = torch.concat([text_tokens, last_token])
         text_tokens = self._get_padded_text_tokens(text_tokens)
 
         # vq_tokens = np.load(row["vq_token_path"])
         vq_tokens = self.vq_numpy_array[row["index_in_numpy_array"]]
+        if len(vq_tokens) != row["vq_token_length"]:
+            print(
+                f"[ERROR] Length of vq tokens in numpy array and csv file do not match. Numpy array has {len(vq_tokens)} tokens, csv has {row['vq_token_length']})")
 
         if self.shuffle_vq_order:
             try:
                 i = np.random.randint(5, len(vq_tokens) - 5)
             except:
                 # if something goes wrong, just take the middle of the min-sequence
-                i = self.min_context_length//2
+                i = self.min_context_length // 2
             if self.tokenizer._is_position(vq_tokens[i]):
-                i -= 1  # position is guaranteed to be preceded by a patch
-            vq_tokens = np.concatenate([np.array([self.bos_token]),vq_tokens[i:], vq_tokens[1:i]])
+                i -= self.tokenizer.tokens_per_patch
+            vq_tokens = np.concatenate([np.array([self.bos_token]), vq_tokens[i:], vq_tokens[1:i]])
         vq_tokens = self._get_padded_vq_tokens(vq_tokens)
         text_attention_mask = (text_tokens != self.bert_pad_token).astype(np.int64)
 
@@ -274,8 +282,10 @@ class VQDataset(Dataset):
         vq_targets = torch.roll(vq_tokens, -1)
         vq_targets[-1] = self.pad_token
         attention_mask = torch.from_numpy(text_attention_mask.astype(np.int32)).long()
-
-        return text_tokens, attention_mask, vq_tokens, vq_targets, torch.ones(1).to(text_tokens.device)*self.pad_token
+        if self.return_ids:
+            return text_tokens, attention_mask, vq_tokens, vq_targets, torch.ones(1).to(
+                text_tokens.device) * self.pad_token, row["id"]
+        return text_tokens, attention_mask, vq_tokens, vq_targets, torch.ones(1).to(text_tokens.device) * self.pad_token
 
 
 class VQDataModule(LightningDataModule):
@@ -285,17 +295,17 @@ class VQDataModule(LightningDataModule):
         csv_path: str,
         dataset:str,
         vq_token_npy_path: str,
-        tokenizer: VQTokenizer,
+        tokenizer: VQTokenizer|RasterVQTokenizer,
         context_length: int,
         train_batch_size: int,
         val_batch_size: int,
         test_batch_size:int = 32,
         num_workers: int = 0,
         min_context_length: int = 10,
-        fraction_of_class_only_inputs: float = 0.2,
+        fraction_of_class_only_inputs: float = 0.0,
         fraction_of_blank_inputs: float = 0.1,
-        fraction_of_strokenuwa_inputs: float = 0.0,
-        fraction_of_iconshop_chatgpt_inputs: float = 0.0,
+        fraction_of_iconshop_chatgpt_inputs: float = 0.3,
+        fraction_of_full_description_inputs: float = 0.6,
         shuffle_vq_order:bool=False,
         use_pre_computed_text_tokens_only: bool=False,
         subset:str=None,
@@ -315,14 +325,14 @@ class VQDataModule(LightningDataModule):
         self.min_context_length = min_context_length
         self.fraction_of_class_only_inputs = fraction_of_class_only_inputs
         self.fraction_of_blank_inputs = fraction_of_blank_inputs
-        self.fraction_of_strokenuwa_inputs = fraction_of_strokenuwa_inputs
         self.fraction_of_iconshop_chatgpt_inputs = fraction_of_iconshop_chatgpt_inputs
+        self.fraction_of_full_description_inputs = fraction_of_full_description_inputs
         self.shuffle_vq_order = shuffle_vq_order
         self.use_pre_computed_text_tokens_only = use_pre_computed_text_tokens_only
         self.subset = subset
 
 
-    def setup(self, stage: Optional[str] = None) -> None:
+    def setup(self, stage: Optional[str] = None, return_ids:Optional[bool]=False) -> None:
         if stage not in ["train", "test", "val"]:
             stage = None
 
@@ -338,10 +348,11 @@ class VQDataModule(LightningDataModule):
                 fraction_of_class_only_inputs = self.fraction_of_class_only_inputs,
                 fraction_of_blank_inputs = self.fraction_of_blank_inputs,
                 fraction_of_iconshop_chatgpt_inputs=self.fraction_of_iconshop_chatgpt_inputs,
-                fraction_of_strokenuwa_inputs=self.fraction_of_strokenuwa_inputs,
+                fraction_of_full_description_inputs=self.fraction_of_full_description_inputs,
                 shuffle_vq_order = self.shuffle_vq_order,
                 use_pre_computed_text_tokens_only = self.use_pre_computed_text_tokens_only,
                 subset=self.subset,
+                return_ids=return_ids,
             )
 
         if stage is None or stage == "val":
@@ -353,13 +364,14 @@ class VQDataModule(LightningDataModule):
                 dataset=self.dataset,
                 train=False,
                 min_context_length=self.min_context_length,
-                fraction_of_class_only_inputs = self.fraction_of_class_only_inputs,
-                fraction_of_blank_inputs = self.fraction_of_blank_inputs,
-                fraction_of_iconshop_chatgpt_inputs=self.fraction_of_iconshop_chatgpt_inputs,
-                fraction_of_strokenuwa_inputs=self.fraction_of_strokenuwa_inputs,
+                fraction_of_class_only_inputs = 0.0,
+                fraction_of_blank_inputs = 0.0,
+                fraction_of_iconshop_chatgpt_inputs=0.0,
+                fraction_of_full_description_inputs=1.0,
                 shuffle_vq_order = self.shuffle_vq_order,
                 use_pre_computed_text_tokens_only = self.use_pre_computed_text_tokens_only,
                 subset=self.subset,
+                return_ids=return_ids,
             )
         if stage is None or stage == "test":
             self.test_dataset = VQDataset(
@@ -370,13 +382,14 @@ class VQDataModule(LightningDataModule):
                 dataset=self.dataset,
                 train=None,
                 min_context_length=self.min_context_length,
-                fraction_of_class_only_inputs = self.fraction_of_class_only_inputs,
-                fraction_of_blank_inputs = self.fraction_of_blank_inputs,
-                fraction_of_iconshop_chatgpt_inputs=self.fraction_of_iconshop_chatgpt_inputs,
-                fraction_of_strokenuwa_inputs=self.fraction_of_strokenuwa_inputs,
+                fraction_of_class_only_inputs = 0.0,
+                fraction_of_blank_inputs = 0.0,
+                fraction_of_iconshop_chatgpt_inputs=0.0,
+                fraction_of_full_description_inputs=1.0,
                 shuffle_vq_order = self.shuffle_vq_order,
                 use_pre_computed_text_tokens_only = self.use_pre_computed_text_tokens_only,
                 subset=self.subset,
+                return_ids=return_ids,
             )
 
     #       ===============================================================
@@ -1657,6 +1670,8 @@ class TiledMNIST(Dataset):
             subset = str(subset)
             print(f"WARNING: Loading MNIST on subset {subset}!")
             loop = [subset]
+        else:
+            print("Loading MNIST on all classes.")
 
         for label in loop:
             label_folder = os.path.join(self.image_folder, str(label))

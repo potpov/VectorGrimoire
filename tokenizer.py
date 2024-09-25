@@ -739,19 +739,21 @@ class RasterVQTokenizer(nn.Module):
         if bezier_points is None:
             return torch.ones(3, 480, 480)
 
-        # TODO: potentially remove, moved inside self.decode
-        # Ugly fix: truncate CL if prediction does not have stop token in the right place
-        # or replicate the last shape if it is too short
-        # if bezier_points.shape[0] > positions.shape[0]:
-        #     shape_limit = positions.shape[0]
-        #     bezier_points = bezier_points[:shape_limit]
-        #     for key in visual_attribute_dict:
-        #         if visual_attribute_dict[key] is None:
-        #             continue
-        #         visual_attribute_dict[key] = visual_attribute_dict[key][:shape_limit]
-        # elif bezier_points.shape[0] < positions.shape[0]:
-        #     positions = positions[:bezier_points.shape[0]]
-
         drawing = self.assemble_svg(bezier_points.to(positions.device), visual_attribute_dict, positions, w=480)
         return_tensor = drawing_to_tensor(drawing)
         return return_tensor
+
+    def _tokens_to_svg_drawing(self,
+                               tokens: Tensor,
+                               only_patch_tokens: bool = False,
+                               w=480):
+        try:
+            bezier_points, visual_attribute_dict, positions = self.decode(
+                tokens,
+                ignore_special_tokens=True,
+                only_patch_tokens=only_patch_tokens
+            )
+        except Exception as e:
+            raise Exception(f"[ERROR] Decoding failed, returning empty tensor ({e}")
+
+        return self.assemble_svg(bezier_points.to(positions.device), visual_attribute_dict, positions, w=w)

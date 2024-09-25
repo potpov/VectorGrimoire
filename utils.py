@@ -44,11 +44,23 @@ def interpolate_rows(a, b, n, method='linear'):
     
     return tensor
 
+
 def get_color_gradient(num_colors: int, start_color="red", end_color="blue"):
     gradient = mcolors.LinearSegmentedColormap.from_list('gradient', [start_color, end_color])
     colors = [gradient(i / num_colors) for i in range(num_colors)]
     hex_colors = [mcolors.rgb2hex(color) for color in colors]
     return hex_colors
+
+
+def map_wand_config(config):
+    if not "wandb_version" in config:
+        return config
+    new_config = {}
+    for k, v in config.items():
+        if not "wandb" in k:
+            new_config[k] = v["value"]
+    return new_config
+
 
 def get_rendered_svg_with_gradient(svg_path):
     base_attribute = {
@@ -263,13 +275,25 @@ def svg_to_tensor(file_path, new_stroke_width:float = None):
         tensor = svg_string_to_tensor(new_svg_content)
     return tensor
 
-def calculate_global_positions(local_positions: Tensor, local_viewbox_width:float, global_center_positions: Tensor):
+
+def calculate_global_positions(local_positions: Tensor, local_viewbox_width: float, global_center_positions: Tensor):
     """
     Calculates the global positions of svg shapes from the local centered positions.
+
+    local_positions in [0,1]
+
     """
+    assert local_positions.max() <= 1.0 and local_positions.min() >= 0.0, f"local_positions must be in [0,1], got max-min of {local_positions.max()} {local_positions.min()}"
+    assert global_center_positions.max() > 1.0, f"global_center_positions must NOT be in [0,1], but got max of {global_center_positions.max()}"
+    assert global_center_positions.max() <= 72, f"global_center_positions must be in [0,72] to keep the original ratio of full SVG and local viewbox intact, but got max of {global_center_positions.max()}"
+
     local_points_delta_to_middle = local_positions - 0.5
     scaled_local_points_delta_to_middle = local_points_delta_to_middle * local_viewbox_width
-    global_center_positions = global_center_positions.unsqueeze(1).unsqueeze(1).repeat(1, scaled_local_points_delta_to_middle.shape[1], scaled_local_points_delta_to_middle.shape[2], 1)
+    global_center_positions = global_center_positions.unsqueeze(1).unsqueeze(1).repeat(1,
+                                                                                       scaled_local_points_delta_to_middle.shape[
+                                                                                           1],
+                                                                                       scaled_local_points_delta_to_middle.shape[
+                                                                                           2], 1)
     global_positions = global_center_positions + scaled_local_points_delta_to_middle
     return global_positions
 

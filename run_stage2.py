@@ -10,7 +10,6 @@ from dataset import VQDataModule
 from models import VQ_SVG_Stage2, VSQ
 from tokenizer import VQTokenizer
 from experiment import SVG_VQVAE_Stage2_Experiment
-import wandb
 from utils import get_rank
 import torch
 from pytorch_lightning.profilers import SimpleProfiler
@@ -59,7 +58,7 @@ current_process_rank = get_rank()
 
 if args.wandb:
     if "entity" not in config['logging_params']:
-        entity = "mfeuer"
+        entity = "aiis-chair"
     else:
         entity = config['logging_params']['entity']
     wandb_logger = WandbLogger(
