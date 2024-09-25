@@ -15,36 +15,17 @@ from models import VQ_SVG_Stage2, VSQ
 from tokenizer import VQTokenizer
 from experiment import SVG_VQVAE_Stage2_Experiment
 import torch
-import random
-import matplotlib.pyplot as plt
-import numpy as np
-import torchvision.utils as vutils
-from PIL import Image
-from torch import Tensor
+
 import pydiffvg
-from torchvision.utils import make_grid, save_image
-torch.cuda.is_available()
-from utils import calculate_global_positions, shapes_to_drawing, drawing_to_tensor
-from svg_fixing import get_fixed_svg_drawing, get_fixed_svg_render
-import pandas as pd
+
 from models import VectorVAEnLayers
 
 import gc
 import os
 from typing import List
 import yaml
-from models import VQ_SVG_Stage2, VSQ
-from tokenizer import VQTokenizer
-from experiment import SVG_VQVAE_Stage2_Experiment
 import torch
-import random
-import matplotlib.pyplot as plt
-import numpy as np
-import torchvision.utils as vutils
-from PIL import Image
-from torch import Tensor
 from tqdm import tqdm
-from torch.utils.data import DataLoader
 from torchmetrics.image.fid import FrechetInceptionDistance
 from torchmetrics.multimodal.clip_score import CLIPScore
 from transformers import AutoProcessor, CLIPModel
@@ -56,9 +37,7 @@ import random
 import argparse
 from torchvision.utils import make_grid, save_image
 torch.cuda.is_available()
-from utils import calculate_global_positions, shapes_to_drawing, drawing_to_tensor
-from svg_fixing import get_fixed_svg_drawing, get_fixed_svg_render, get_svg_render, min_dist_fix
-import re
+
 
 def map_wand_config(config):
     new_config = {}
@@ -153,15 +132,6 @@ def compute_clip_score(generated_images:List, captions:List, device, model_str:s
 
     return metric.compute()
 
-# # base_path = "/scratch2/moritz_logs/Im2Vec/figr8_star"
-# # base_path = "/scratch2/moritz_logs/Im2Vec/fonts"
-# base_path = "/scratch2/moritz_logs/Im2Vec/fonts_A_final"
-# # base_path = "/scratch2/moritz_logs/Im2Vec/figr8"
-# im2vec_model_path = os.path.join(base_path, "checkpoints/last.ckpt")
-# out_base_dir = "/scratch2/moritz_logs/benchmark/im2vec/fonts_A_final"
-# # out_base_dir = "/scratch2/moritz_logs/benchmark/im2vec/full_figr8"
-# dataset = "fonts"
-# class_name = "capital A"
 fonts_a_config = {
     "base_path": "/scratch2/moritz_logs/Im2Vec/fonts_A_final",
     "im2vec_model_path": "checkpoints/last.ckpt",
@@ -201,19 +171,16 @@ mnist_5_config = {
     "im2vec_config_path": "config.yaml",
     "out_base_dir": "/raid/marco.cipriano/results/svg/im2vec/im2vec_mnist_num_5/benchmark",
     "dataset": "mnist",
-    "class_name": "5"
+    "class_name": "5",  # set this to None if you wanna use the full dataset
 }
 
 # ##>>>>>>>
 selected_config = mnist_5_config
 # ##<<<<<<<
 
-# base_path = selected_config["base_path"]
-# im2vec_model_path = os.path.join(base_path, selected_config["im2vec_model_path"])
-# dataset = selected_config["dataset"]
-# out_base_dir = selected_config["out_base_dir"]
-# class_name = selected_config["class_name"]
-# im2vec_config_path = os.path.join(base_path, "wandb/latest-run/files/config.yaml")
+### GLOBAL CONF FOR CONSISTENCY WITH OUR BENCHMARK
+IM_SIZE = 128  # mnist -> 128, other datasets were tested with 480
+EVALUATION_SAMPLES = 3000
 
 
 class_name = selected_config["class_name"]
@@ -225,8 +192,6 @@ im2vec_config_path = os.path.join(base_path, selected_config["im2vec_config_path
 dataset = selected_config["dataset"]
 out_base_dir = os.path.join(selected_config["out_base_dir"], class_name)
 
-
-# class_name = "SVG"
 
 assert dataset in ["fonts", "icons", "mnist"]
 if dataset == "icons":
@@ -252,22 +217,25 @@ im2vec_config["data_params"]["img_size"] = im2vec_config["data_params"]["patch_s
 if dataset in ["fonts", "icons"]:
     ds = GenericRasterizedSVGDataset(**im2vec_config["data_params"], train=None)
 else:
+    im2vec_config["data_params"]["patch_size"] = IM_SIZE  # forcing image size to our config
+    im2vec_config["data_params"]["subset"] = im2vec_config[class_name]  # forcing image size to our config
     data_module = MNISTDataset(**im2vec_config["data_params"], train=None)
+    if im2vec_config[class_name] is None:
+        print("LOADING THE FULL DATASET!")
+        class_name = "full"
     data_module.setup()
     ds = data_module.train_dataloader()
 
 im2vec = VectorVAEnLayers(**im2vec_config["model_params"])
 state_dict = torch.load(im2vec_model_path, map_location=device)["state_dict"]
 
-num_samples = min(1000, len(ds))
-# out_base_dir = "/scratch2/moritz_logs/benchmark/im2vec/fonts_a"
-# out_base_dir = "/scratch2/moritz_logs/benchmark/im2vec/star_fig8_with_mse"
+num_samples = min(EVALUATION_SAMPLES, len(ds))
+
 if os.path.exists(out_base_dir):
-    # input(f"out_base_dir {out_base_dir} already exists, press enter to continue or CTRL+C to cancel")
-    pass
+    print("WARNING: PATH ALREADY EXISTS, OVERWRITING!")
+
 for subdir in ["reconstructions", "samples", "gt"]:
     os.makedirs(os.path.join(out_base_dir, subdir), exist_ok=True)
-
 
 try:
     im2vec.load_state_dict(state_dict)
@@ -291,11 +259,9 @@ with torch.no_grad():
         gt_image = ds.dataset.__getitem__(idx)[0].to(device)
         reconstruction_points.append(im2vec.generate(gt_image, return_points=True))
         if dataset in ["mnist"]:
-            IM_SIZE = im2vec_config["data_params"]["patch_size"]
             original_images_filled.append(gt_image.squeeze().cpu())
             save_image(gt_image, os.path.join(out_base_dir, "gt", f"gt_filled_{idx}.png"))
         elif dataset in ["fonts", "icons"]:
-            IM_SIZE = 480
             filled_original = ds._rasterize_svg(ds.df.iloc[idx]["simplified_svg_file_path"], IM_SIZE, fill=True)
             original_images_filled.append(filled_original)
             save_image(filled_original, os.path.join(out_base_dir,"gt",f"gt_filled_{idx}.png"))
@@ -304,8 +270,8 @@ with torch.no_grad():
             original_images.append(unfilled_original)
             save_image(unfilled_original, os.path.join(out_base_dir,"gt",f"gt_unfilled_{idx}.png"))
 
-        save_im2vec_points_to_svg(im2vec, samples_points[i], 72,os.path.join(out_base_dir,"samples"),f"im2vec_sample_{idx}.svg")
-        save_im2vec_points_to_svg(im2vec, reconstruction_points[i], 72,os.path.join(out_base_dir,"reconstructions"),f"im2vec_reconstruction_{idx}.svg")
+        save_im2vec_points_to_svg(im2vec, samples_points[i], 72, os.path.join(out_base_dir, "samples"), f"im2vec_sample_{idx}.svg")
+        save_im2vec_points_to_svg(im2vec, reconstruction_points[i], 72, os.path.join(out_base_dir, "reconstructions"), f"im2vec_reconstruction_{idx}.svg")
 
 # evaluate
 from utils import svg_file_path_to_tensor
