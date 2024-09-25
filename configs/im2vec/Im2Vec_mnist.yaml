@@ -25,7 +25,7 @@ data_params:
   val_batch_size:  32
   patch_size: 128 # HAS TO BE 224 FOR CLIP RES50 TO WORK, otherwise take 128
   num_workers: 4
-  subset: 0
+#  subset: 0
 
 exp_params:
   log_fid: False # True
@@ -42,13 +42,13 @@ exp_params:
 
 trainer_params:
   devices: 1
-  max_epochs: 300
+  max_epochs: 100
 
 logging_params:
   entity: "aiis-chair"
   project: "grimoire-2"  # your wandb project name
   save_dir: "/raid/marco.cipriano/results/svg/im2vec/"
   other_interpolations: True
-  name: "im2vec_mnist_num_0"
+  name: "im2vec_mnist_full"
   author: "Marco"
   version: 0

@@ -37,10 +37,6 @@ data_params:
 #  num_tiles_per_row: 14
   num_tiles_per_row: 6
   min_context_length: 10  # all samples below this will be removed from the dataset
-  fraction_of_strokenuwa_inputs: 0.0
-  fraction_of_class_only_inputs: 0.9  # fraction of samples that will only have the "class" entry of the dataframe as input
-  fraction_of_blank_inputs: 0.1  # fraction of samples that will have empty text input
-  fraction_of_iconshop_chatgpt_inputs: 0.0
   shuffle_vq_order: False  # whether to shuffle the order of the VQ tokens, its not really "shuffling", but more cutting the sequence into two parts and switching their order
   use_pre_computed_text_tokens_only: False  # if True, the text tokens that were pre-computed will be used as input, if False, the text will be tokenized in the dataloader (according to the specified fractions).
 

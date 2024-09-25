@@ -122,7 +122,7 @@ num_batches_val = len(data.val_dataloader())
 experiment = SVG_VQVAE_Stage2_Experiment(model, 
                                          tokenizer, 
                                          **config['exp_params'], 
-                                         wandb = args.wandb, 
+                                         wandb=args.wandb,
                                          num_batches_train=num_batches_train, 
                                          num_batches_val=num_batches_val)
 

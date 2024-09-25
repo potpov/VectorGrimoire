@@ -123,7 +123,8 @@ class VQ_SVG_Stage2(nn.Module):
         text_embedding[~(text_attn_mask.bool())] = 0.0  # remove impact of padding tokens
         vq_embeddings = self.vq_embedding.forward(vq_tokens)  # (bs, max_vq_len, dim)
         sos_embedding = self.vq_embedding.forward(
-            torch.ones(bs, 1, dtype=torch.long, device=device) * self.special_token_mapping['<SOS>'])  # (bs, 1, dim)
+            torch.ones(bs, 1, dtype=torch.long, device=device) * self.special_token_mapping['<SOS>']
+        )  # (bs, 1, dim)
 
         stacked_embeddings = torch.cat([sos_embedding, text_embedding, vq_embeddings], dim=1)
         if stacked_embeddings.shape[1] > self.max_seq_len:
