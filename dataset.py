@@ -116,10 +116,13 @@ class VQDataset(Dataset):
         self.min_context_length = min_context_length
         self.max_text_token_length = max_text_token_length
 
+        self.split["label"] = self.split["label"].astype(str)  # in case these were digits
         sum_of_fractions = fraction_of_class_only_inputs + fraction_of_blank_inputs + fraction_of_iconshop_chatgpt_inputs + fraction_of_full_description_inputs
         if subset is not None:
-            assert subset in self.split["class"].unique(), f"Subset {subset} not found in the dataset."
-            self.split = self.split[self.split["class"] == subset].reset_index(drop=True)
+            assert subset in self.split["label"].unique(), f"Subset {subset} not found in the dataset."
+            total = len(self.split)
+            self.split = self.split[self.split["label"] == subset].reset_index(drop=True)
+            print(f"LOADED SUBSET {subset}. passed from {total} to {len(self.split)} samples.")
         assert dataset in ["figr8", "fonts", "mnist"], f"Dataset must be either 'figr8' or 'fonts', got {dataset}."
         assert sum_of_fractions == 1. or dataset == "mnist", f"All fractions must be equal to 1, got {sum_of_fractions}."
 
