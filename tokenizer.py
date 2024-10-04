@@ -373,8 +373,16 @@ class VQTokenizer(nn.Module):
                                 num_strokes_to_paint: int = 0,
                                 render_w: int = 480) -> Tensor:
         tokens = tokens.clone().detach()
-        bezier_points, positions, visual_attribute_dict = self.decode(tokens, ignore_special_tokens=True,
-                                                                      return_visual_attribute_dict=True)
+        try:
+            bezier_points, positions, visual_attribute_dict = self.decode(
+                tokens,
+                ignore_special_tokens=True,
+                return_visual_attribute_dict=True
+            )
+        except Exception as e:
+            print(f"W: exception while decoding, returning empty patch: {e}")
+            return torch.ones(3, render_w, render_w)
+
         padded_lseg = self.lseg + 2
         stroke_width = self.lseg / 3.0 * 0.4
         original_center_positions = positions / self.full_image_res * 72
@@ -754,6 +762,6 @@ class RasterVQTokenizer(nn.Module):
                 only_patch_tokens=only_patch_tokens
             )
         except Exception as e:
-            raise Exception(f"[ERROR] Decoding failed, returning empty tensor ({e}")
+            raise Exception(f"[ERROR] Decoding failed: ({e}")
 
         return self.assemble_svg(bezier_points.to(positions.device), visual_attribute_dict, positions, w=w)
