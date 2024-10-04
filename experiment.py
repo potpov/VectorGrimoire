@@ -527,7 +527,7 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
                 for key, value in logging_dict.items():
                     if "codebook_histogram" in key:
                         continue
-                    self.log(f"train/{key}", value)
+                    self.log(f"val/{key}", value)
 
                 # SIDE BY SIDE RECON
                 if not isinstance(self.datamodule, PrecomputedMNISTDataset):
