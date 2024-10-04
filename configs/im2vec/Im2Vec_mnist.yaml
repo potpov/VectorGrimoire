@@ -13,7 +13,7 @@ model_params:
   other_losses_weight: 0
   composite_fn: 'soft'
   b_w: True
-  T: 1
+  T: 10
   optimize_colors: False
   encoder_string: "im2vec_encoder" # must be one of ["im2vec_encoder", 'RN50', 'RN101', 'RN50x4', 'RN50x16', 'RN50x64', 'ViT-B/32', 'ViT-B/16', 'ViT-L/14', 'ViT-L/14@336px']
   freeze_encoder: False
@@ -49,6 +49,7 @@ logging_params:
   project: "grimoire-2"  # your wandb project name
   save_dir: "/raid/marco.cipriano/results/svg/im2vec/"
   other_interpolations: True
-  name: "im2vec_mnist_full"
+#  name: "im2vec_mnist_full"
+  name: "im2vec_mnist_full_T10"
   author: "Marco"
   version: 0
