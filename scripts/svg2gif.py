@@ -1,18 +1,14 @@
-import torch
-from svgpathtools import svg2paths
+
 from tqdm import tqdm
 from utils import get_rasterized_segments, svg2paths2, get_single_paths
 import imageio
 from pathlib import Path
-from cairosvg import svg2png
-from PIL import Image
-import io
 import numpy as np
 import os
 import natsort
 from utils import raster
 from svgpathtools import disvg
-
+import argparse
 
 def svg_to_gif(svg_file, gif_file, context=0):
     # Read paths from SVG
@@ -75,25 +71,29 @@ def svg_to_gif(svg_file, gif_file, context=0):
     imgs = imgs + [final]
     imageio.mimsave(gif_file, imgs, loop=1, duration=3 / len(imgs))
 
-for context in [0]:
-# for context in [6, 12]:
-    main_dir = f"/Users/marcocipriano/Desktop/ECCV SVG/benchmark/stage2/figr8/temp_0_1/vq_context_{context}_t0"
-    # main_dir = f"/Users/marcocipriano/Desktop/ECCV SVG/benchmark/stage2/figr8/temp_0/vq_context_{context}_t0"
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Convert an svg into a gift.')
+    parser.add_argument('--root', type=str, help='path to svgs')
+    parser.add_argument('--context', type=int, help='vector context', default=0)
+    # Parse arguments
+    args = parser.parse_args()
 
-    with open(os.path.join(main_dir, "svgs", "prompts.txt")) as f:
-        prompts = f.readlines()
+    # Retrieve the configuration object using the provided key
+    main_dir = args.root
+    context = args.context
 
-    in_subdir = os.path.join(main_dir, "svgs", "pi_fixed")
-    out_subdir = os.path.join(main_dir, "gifs", "pi_fixed")
+    in_subdir = os.path.join(main_dir, "svgs")
+    out_subdir = os.path.join(main_dir, "gifs")
     Path(out_subdir).mkdir(parents=True, exist_ok=True)
     files = os.listdir(in_subdir)
     files = [f for f in files if f != ".DS_Store"]
     files = natsort.natsorted(files)  # sorting like finder
     for p_id, filename in tqdm(enumerate(files), total=len(files)):
         svg_file = os.path.join(in_subdir, filename)
-        gif_path = os.path.join(out_subdir, f"{p_id}_{prompts[p_id].strip()}.gif")
+        gif_path = os.path.join(out_subdir, f"{p_id}.gif")
         svg_to_gif(
             svg_file=svg_file,
             gif_file=gif_path,
             context=context
         )
+
