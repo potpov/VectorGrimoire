@@ -8,7 +8,7 @@ from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import WandbLogger, TensorBoardLogger
 from pytorch_lightning import seed_everything
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, LearningRateFinder, EarlyStopping
-from dataset import GenericRasterizedSVGDataModule,GenericRasterDatamodule, PrecomputedMNISTDataset, MNISTDataset, MNISTppDataset, NounProjectDataset, EmojiDataset, MNISTDatasetCSVG, CausalSVGDataModule, NewCausalSVGDataModule, CenterShapeLayersFromSVGDataModule, VQDataModule, VSQDatamodule
+from dataset import GenericRasterizedSVGDataModule,GenericRasterDatamodule, CartoonDataset, PrecomputedMNISTDataset, MNISTDataset, MNISTppDataset, NounProjectDataset, EmojiDataset, MNISTDatasetCSVG, CausalSVGDataModule, NewCausalSVGDataModule, CenterShapeLayersFromSVGDataModule, VQDataModule, VSQDatamodule
 from models import VAEctorGen, VectorGPT, VanillaVAE, VectorVAEnLayers, VectorGPTv2, VSQ
 from experiment import VAEXperiment, VectorGPTExperiment, VectorGPTExperimentv2, VectorVQVAE_Experiment_Stage1, SVG_VQVAE_Stage2_Experiment
 import json
@@ -34,6 +34,7 @@ DATASETMAP = {
     "figr8": VSQDatamodule,
     "raster_figr8": GenericRasterDatamodule,
     "raster_fonts": GenericRasterizedSVGDataModule,
+    "cartoons": CartoonDataset,
 }
 
 MODELS = {

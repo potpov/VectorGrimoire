@@ -291,139 +291,6 @@ class VQDataset(Dataset):
         return text_tokens, attention_mask, vq_tokens, vq_targets, torch.ones(1).to(text_tokens.device) * self.pad_token
 
 
-class VQDataModule(LightningDataModule):
-
-    def __init__(
-        self,
-        csv_path: str,
-        dataset:str,
-        vq_token_npy_path: str,
-        tokenizer: VQTokenizer|RasterVQTokenizer,
-        context_length: int,
-        train_batch_size: int,
-        val_batch_size: int,
-        test_batch_size:int = 32,
-        num_workers: int = 0,
-        min_context_length: int = 10,
-        fraction_of_class_only_inputs: float = 0.0,
-        fraction_of_blank_inputs: float = 0.1,
-        fraction_of_iconshop_chatgpt_inputs: float = 0.3,
-        fraction_of_full_description_inputs: float = 0.6,
-        shuffle_vq_order:bool=False,
-        use_pre_computed_text_tokens_only: bool=False,
-        subset:str=None,
-        **kwargs,
-    ):
-        super().__init__()
-
-        self.csv_path = csv_path
-        self.dataset = dataset
-        self.vq_token_npy_path= vq_token_npy_path
-        self.train_batch_size = train_batch_size
-        self.val_batch_size = val_batch_size
-        self.test_batch_size = test_batch_size
-        self.num_workers = num_workers
-        self.context_length = context_length
-        self.tokenizer = tokenizer
-        self.min_context_length = min_context_length
-        self.fraction_of_class_only_inputs = fraction_of_class_only_inputs
-        self.fraction_of_blank_inputs = fraction_of_blank_inputs
-        self.fraction_of_iconshop_chatgpt_inputs = fraction_of_iconshop_chatgpt_inputs
-        self.fraction_of_full_description_inputs = fraction_of_full_description_inputs
-        self.shuffle_vq_order = shuffle_vq_order
-        self.use_pre_computed_text_tokens_only = use_pre_computed_text_tokens_only
-        self.subset = subset
-
-
-    def setup(self, stage: Optional[str] = None, return_ids:Optional[bool]=False) -> None:
-        if stage not in ["train", "test", "val"]:
-            stage = None
-
-        if stage is None or stage == "train":
-            self.train_dataset = VQDataset(
-                self.csv_path,
-                self.vq_token_npy_path,
-                tokenizer=self.tokenizer,
-                context_length=self.context_length,
-                dataset=self.dataset,
-                train=True,
-                min_context_length=self.min_context_length,
-                fraction_of_class_only_inputs = self.fraction_of_class_only_inputs,
-                fraction_of_blank_inputs = self.fraction_of_blank_inputs,
-                fraction_of_iconshop_chatgpt_inputs=self.fraction_of_iconshop_chatgpt_inputs,
-                fraction_of_full_description_inputs=self.fraction_of_full_description_inputs,
-                shuffle_vq_order = self.shuffle_vq_order,
-                use_pre_computed_text_tokens_only = self.use_pre_computed_text_tokens_only,
-                subset=self.subset,
-                return_ids=return_ids,
-            )
-
-        if stage is None or stage == "val":
-            self.val_dataset = VQDataset(
-                self.csv_path,
-                self.vq_token_npy_path,
-                tokenizer=self.tokenizer,
-                context_length=self.context_length,
-                dataset=self.dataset,
-                train=False,
-                min_context_length=self.min_context_length,
-                fraction_of_class_only_inputs = 0.0,
-                fraction_of_blank_inputs = 0.0,
-                fraction_of_iconshop_chatgpt_inputs=0.0,
-                fraction_of_full_description_inputs=1.0,
-                shuffle_vq_order = self.shuffle_vq_order,
-                use_pre_computed_text_tokens_only = self.use_pre_computed_text_tokens_only,
-                subset=self.subset,
-                return_ids=return_ids,
-            )
-        if stage is None or stage == "test":
-            self.test_dataset = VQDataset(
-                self.csv_path,
-                self.vq_token_npy_path,
-                tokenizer=self.tokenizer,
-                context_length=self.context_length,
-                dataset=self.dataset,
-                train=None,
-                min_context_length=self.min_context_length,
-                fraction_of_class_only_inputs = 0.0,
-                fraction_of_blank_inputs = 0.0,
-                fraction_of_iconshop_chatgpt_inputs=0.0,
-                fraction_of_full_description_inputs=1.0,
-                shuffle_vq_order = self.shuffle_vq_order,
-                use_pre_computed_text_tokens_only = self.use_pre_computed_text_tokens_only,
-                subset=self.subset,
-                return_ids=return_ids,
-            )
-
-    #       ===============================================================
-
-    def train_dataloader(self) -> DataLoader:
-        return DataLoader(
-            self.train_dataset,
-            batch_size=self.train_batch_size,
-            num_workers=self.num_workers,
-            shuffle=True,
-            pin_memory=False,
-        )
-
-    def val_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
-        return DataLoader(
-            self.val_dataset,
-            batch_size=self.val_batch_size,
-            num_workers=self.num_workers,
-            shuffle=False,
-            pin_memory=False,
-        )
-
-    def test_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
-        return DataLoader(
-            self.test_dataset,
-            batch_size=self.test_batch_size,
-            num_workers=self.num_workers,
-            shuffle=False,
-            pin_memory=False,
-        )
-
 
 class VSQDataset(Dataset):
     """
@@ -711,152 +578,6 @@ class VSQDataset(Dataset):
         return len(self.df)
 
 
-class VSQDatamodule(LightningDataModule):
-    def __init__(
-        self,
-        csv_path: str,
-        train_batch_size: int,
-        val_batch_size: int,
-        channels: int,
-        width: int,
-        test_batch_size:int = 32,
-        individual_max_length: float = 10.,
-        max_shapes_per_svg:int=64,
-        num_workers: int = 0,
-        stroke_width: float = 0.3,
-        subset:str = None,
-        use_single_paths:bool = False,
-        return_index = False,
-        return_filename: bool = False,
-        color_mode:str = None,
-        use_random_stroke_widths:bool = False,
-        **kwargs,
-    ):
-        super().__init__()
-
-        self.train_batch_size = train_batch_size
-        self.val_batch_size = val_batch_size
-        self.test_batch_size = test_batch_size
-        self.num_workers = num_workers
-        self.csv_path = csv_path
-        self.channels = channels
-        self.width = width
-        self.num_workers = num_workers
-        self.stroke_width = stroke_width
-        self.individual_max_length = individual_max_length
-        self.subset = subset
-        self.max_shapes_per_svg = max_shapes_per_svg
-        self.use_single_paths = use_single_paths
-        self.return_index = return_index
-        self.return_filename = return_filename
-        self.color_mode = color_mode
-        self.use_random_stroke_widths = use_random_stroke_widths
-
-    def setup(self, stage: Optional[str] = None) -> None:
-        if stage not in ["train", "test", "val"]:
-            stage = None
-
-        if stage is None or stage == "train":
-            self.train_dataset = VSQDataset(
-                self.csv_path,
-                self.channels,
-                self.width,
-                train=True,
-                individual_max_length=self.individual_max_length,
-                stroke_width=self.stroke_width,
-                max_shapes_per_svg=self.max_shapes_per_svg,
-                use_single_paths=self.use_single_paths,
-                return_index = self.return_index,
-                return_filename = self.return_filename,
-                subset_class=self.subset,
-                use_random_stroke_widths=self.use_random_stroke_widths,
-                color_mode=self.color_mode
-            )
-
-        if stage is None or stage == "val":
-            self.val_dataset = VSQDataset(
-                self.csv_path,
-                self.channels,
-                self.width,
-                train=False,
-                individual_max_length=self.individual_max_length,
-                stroke_width=self.stroke_width,
-                max_shapes_per_svg=self.max_shapes_per_svg,
-                use_single_paths=self.use_single_paths,
-                return_index = self.return_index,
-                return_filename = self.return_filename,
-                subset_class=self.subset,
-                use_random_stroke_widths=self.use_random_stroke_widths,
-                color_mode=self.color_mode
-            )
-
-        if stage is None or stage == "test":
-            self.test_dataset = VSQDataset(
-                self.csv_path,
-                self.channels,
-                self.width,
-                train=None,
-                individual_max_length=self.individual_max_length,
-                stroke_width=self.stroke_width,
-                max_shapes_per_svg=self.max_shapes_per_svg,
-                use_single_paths=self.use_single_paths,
-                return_index = self.return_index,
-                return_filename = self.return_filename,
-                subset_class=self.subset,
-                use_random_stroke_widths=self.use_random_stroke_widths,
-                color_mode=self.color_mode
-            )
-
-    #       ===============================================================
-
-    def collate_fn(self, batch):
-        if self.return_index:
-            imgs, labels, centers, descriptions, idxs = zip(*batch)
-        elif self.return_filename:
-            imgs, labels, centers, descriptions, filenames = zip(*batch)
-        else:
-            imgs, labels, centers, descriptions = zip(*batch)
-        imgs = torch.concat(imgs)
-        labels = torch.concat(labels)
-        centers = torch.concat(centers)
-        if self.return_index:
-            return imgs, labels, centers, descriptions, idxs
-        elif self.return_filename:
-            return imgs, labels, centers, descriptions, filenames
-        else:
-            return imgs, labels, centers, descriptions
-
-    def train_dataloader(self) -> DataLoader:
-        return DataLoader(
-            self.train_dataset,
-            batch_size=self.train_batch_size,
-            num_workers=self.num_workers,
-            shuffle=True,
-            pin_memory=False,
-            collate_fn=self.collate_fn
-        )
-
-    def val_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
-        return DataLoader(
-            self.val_dataset,
-            batch_size=self.val_batch_size,
-            num_workers=self.num_workers,
-            shuffle=False,
-            pin_memory=False,
-            collate_fn=self.collate_fn
-        )
-
-    def test_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
-        return DataLoader(
-            self.test_dataset,
-            batch_size=self.test_batch_size,
-            num_workers=self.num_workers,
-            shuffle=False,
-            pin_memory=False,
-            collate_fn=self.collate_fn
-        )
-
-
 class CenterShapeLayersFromSVGDataset(Dataset):
     """
     This dataset takes SVG files and preprocesses them into rasterized centered shape layers.
@@ -961,90 +682,6 @@ class CenterShapeLayersFromSVGDataset(Dataset):
         return len(self.split)
 
 
-class CenterShapeLayersFromSVGDataModule(LightningDataModule):
-    def __init__(
-        self,
-        csv_path: str,
-        train_batch_size: int,
-        val_batch_size: int,
-        channels: int,
-        width: int,
-        individual_max_length: float = 10.,
-        num_workers: int = 0,
-        stroke_width: float = 0.3,
-        **kwargs,
-    ):
-        super().__init__()
-
-        self.train_batch_size = train_batch_size
-        self.val_batch_size = val_batch_size
-        self.num_workers = num_workers
-        self.csv_path = csv_path
-        self.channels = channels
-        self.width = width
-        self.num_workers = num_workers
-        self.stroke_width = stroke_width
-        self.individual_max_length = individual_max_length
-
-    def setup(self, stage: Optional[str] = None) -> None:
-        self.train_dataset = CenterShapeLayersFromSVGDataset(
-            self.csv_path,
-            self.channels,
-            self.width,
-            train=True,
-            individual_max_length=self.individual_max_length,
-            stroke_width=self.stroke_width
-        )
-
-        self.val_dataset = CenterShapeLayersFromSVGDataset(
-            self.csv_path,
-            self.channels,
-            self.width,
-            train=False,
-            individual_max_length=self.individual_max_length,
-            stroke_width=self.stroke_width
-        )
-
-    #       ===============================================================
-
-    def collate_fn(self, batch):
-        imgs, labels, centers = zip(*batch)
-        imgs = torch.concat(imgs)
-        labels = torch.concat(labels)
-        centers = torch.concat(centers)
-        return imgs, labels, centers
-
-    def train_dataloader(self) -> DataLoader:
-        return DataLoader(
-            self.train_dataset,
-            batch_size=self.train_batch_size,
-            num_workers=self.num_workers,
-            shuffle=True,
-            pin_memory=False,
-            collate_fn=self.collate_fn
-        )
-
-    def val_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
-        return DataLoader(
-            self.val_dataset,
-            batch_size=self.val_batch_size,
-            num_workers=self.num_workers,
-            shuffle=False,
-            pin_memory=False,
-            collate_fn=self.collate_fn
-        )
-
-    def test_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
-        return DataLoader(
-            self.val_dataset,
-            batch_size=16,
-            num_workers=self.num_workers,
-            shuffle=False,
-            pin_memory=False,
-            collate_fn=self.collate_fn
-        )
-
-
 class NewCausalSVGDataset(Dataset):
     """
     New FIGR8 dataset from a root directory for causal svg generation.
@@ -1144,85 +781,6 @@ class NewCausalSVGDataset(Dataset):
         return len(self.split)
 
 
-class NewCausalSVGDataModule(LightningDataModule):
-    def __init__(
-        self,
-        data_path: str,
-        train_batch_size: int,
-        val_batch_size: int,
-        context_length: int,
-        channels: int,
-        width: int,
-        num_workers: int = 0,
-        subset: List = None,
-        **kwargs,
-    ):
-        super().__init__()
-
-        self.train_batch_size = train_batch_size
-        self.val_batch_size = val_batch_size
-        self.num_workers = num_workers
-        self.root_path = data_path
-        self.context_length = context_length
-        self.channels = channels
-        self.width = width
-        self.num_workers = num_workers
-        self.subset = subset
-        if subset:
-            print(f"Using subset of original dataset: {self.subset}")
-        else:
-            print("Executing on the whole dataset!")
-
-    def setup(self, stage: Optional[str] = None) -> None:
-        self.train_dataset = NewCausalSVGDataset(
-            self.root_path,
-            self.context_length,
-            self.channels,
-            self.width,
-            subset=self.subset,
-            train=True,
-        )
-
-        self.val_dataset = NewCausalSVGDataset(
-            self.root_path,
-            self.context_length,
-            self.channels,
-            self.width,
-            subset=self.subset,
-            train=False,
-        )
-
-    #       ===============================================================
-
-    def train_dataloader(self) -> DataLoader:
-        return DataLoader(
-            self.train_dataset,
-            batch_size=self.train_batch_size,
-            num_workers=self.num_workers,
-            shuffle=True,
-            pin_memory=False,
-        )
-
-    def val_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
-        return DataLoader(
-            self.val_dataset,
-            batch_size=self.val_batch_size,
-            num_workers=self.num_workers,
-            shuffle=False,
-            pin_memory=False,
-        )
-
-    def test_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
-        return DataLoader(
-            self.val_dataset,
-            batch_size=64,
-            num_workers=self.num_workers,
-            shuffle=False,
-            pin_memory=False,
-        )
-
-
-# Add your custom dataset class here
 class MyDataset(Dataset):
     def __init__(self):
         pass
@@ -1294,83 +852,6 @@ class GenericRasterizedSVGDataset(Dataset):
         return len(self.df)
 
 
-class GenericRasterizedSVGDataModule(LightningDataModule):
-    def __init__(self,
-                 csv_path:str,
-                 fill:bool,
-                 img_size:int = 128,
-                 channels:int = 3,
-                 train_batch_size:int = 16,
-                 val_batch_size: int = 16,
-                 num_workers:int = 4,
-                 **kwargs
-                 ) -> None:
-        super().__init__()
-
-        self.csv_path = csv_path
-        self.img_size = img_size
-        self.channels = channels
-        self.fill = fill
-        self.train_batch_size = train_batch_size
-        self.val_batch_size = val_batch_size
-        self.num_workers = num_workers
-        self.kwargs = kwargs
-
-    def setup(self, stage: Optional[str] = None) -> None:
-        self.train_dataset = GenericRasterizedSVGDataset(
-            self.csv_path,
-            train=True,
-            img_size=self.img_size,
-            fill=self.fill,
-            channels=self.channels,
-            **self.kwargs
-        )
-
-        self.val_dataset = GenericRasterizedSVGDataset(
-            self.csv_path,
-            train=False,
-            img_size=self.img_size,
-            fill=self.fill,
-            channels=self.channels,
-            **self.kwargs
-        )
-
-        self.test_dataset = GenericRasterizedSVGDataset(
-            self.csv_path,
-            train=None,
-            img_size=self.img_size,
-            fill=self.fill,
-            channels=self.channels,
-            **self.kwargs
-        )
-    def train_dataloader(self) -> DataLoader:
-        return DataLoader(
-            self.train_dataset,
-            batch_size=self.train_batch_size,
-            num_workers=self.num_workers,
-            shuffle=True,
-            pin_memory=False,
-        )
-
-    def val_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
-        return DataLoader(
-            self.val_dataset,
-            batch_size=self.val_batch_size,
-            num_workers=self.num_workers,
-            shuffle=False,
-            pin_memory=False,
-        )
-
-    def test_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
-        return DataLoader(
-            self.test_dataset,
-            batch_size=16,
-            num_workers=self.num_workers,
-            shuffle=False,
-            pin_memory=False,
-        )
-
-
 class GenericRasterDataset(Dataset):
     def __init__(self,
                  csv_path:str,
@@ -1432,83 +913,6 @@ class GenericRasterDataset(Dataset):
         return len(self.df)
 
 
-class GenericRasterDatamodule(LightningDataModule):
-    def __init__(self,
-                 csv_path:str,
-                 img_size:int = 128,
-                 channels:int = 3,
-                 train_batch_size:int = 32,
-                 val_batch_size:int = 32,
-                 num_workers:int = 4,
-                 invert:bool = True,
-                 subset:str|List=None,
-                 **kwargs) -> None:
-        
-        super().__init__()
-
-        self.csv_path = csv_path
-        self.img_size = img_size
-        self.invert = invert
-        self.train_batch_size = train_batch_size
-        self.val_batch_size = val_batch_size
-        self.num_workers = num_workers
-        self.channels = channels
-        self.subset = subset
-
-    def setup(self, stage: Optional[str] = None) -> None:
-        self.train_dataset = GenericRasterDataset(
-            self.csv_path,
-            train=True,
-            img_size=self.img_size,
-            invert=self.invert,
-            channels=self.channels,
-            subset=self.subset
-        )
-
-        self.val_dataset = GenericRasterDataset(
-            self.csv_path,
-            train=False,
-            img_size=self.img_size,
-            invert=self.invert,
-            channels=self.channels,
-            subset=self.subset
-        )
-        self.test_dataset = GenericRasterDataset(
-            self.csv_path,
-            train=None,
-            img_size=self.img_size,
-            invert=self.invert,
-            channels=self.channels,
-            subset=self.subset
-        )
-    def train_dataloader(self) -> DataLoader:
-        return DataLoader(
-            self.train_dataset,
-            batch_size=self.train_batch_size,
-            num_workers=self.num_workers,
-            shuffle=True,
-            pin_memory=False,
-        )
-
-    def val_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
-        return DataLoader(
-            self.val_dataset,
-            batch_size=self.val_batch_size,
-            num_workers=self.num_workers,
-            shuffle=False,
-            pin_memory=False,
-        )
-
-    def test_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
-        return DataLoader(
-            self.val_dataset,
-            batch_size=16,
-            num_workers=self.num_workers,
-            shuffle=False,
-            pin_memory=False,
-        )
-
-
 class MNIST(Dataset):
     """
     MNIST dataset from a root directory:
@@ -1553,17 +957,6 @@ class MNIST(Dataset):
     def __len__(self):
         return len(self.image_paths)
 
-
-"""
-MNIST dataset from a root directory where each image is split into tiles:
-
-mnist
-|
-|--------------|
-training    testing
-|              |
-0-9           0-9
-"""
 
 class PrecomputedTiledMNIST(Dataset):
     """
@@ -1626,6 +1019,63 @@ class PrecomputedTiledMNIST(Dataset):
                               value=1.)
                 patches.append(patch)
         return torch.stack(patches)
+
+
+class Cartoon(Dataset):
+    """
+    Cartoon dataset from a root directory where each image is already split into layers using SAM
+
+    Cartoons/preprocessed
+    |
+    |--------------|
+    color_masks    binary_masks
+    |              |
+    |----------|   |----------|
+    train     val  train     val
+    |              |
+    image.npy      |--------|
+                colors      masks
+                |           |
+                image.npy   image.npy
+    """
+
+    def __init__(self,
+                 root,
+                 train=True,
+                 layer_length: int = 25,
+                 patch_size: int = 512,
+                 transform=None,
+                 return_filename: bool = False,
+                 ):
+        super(Cartoon, self)
+        self.root = root
+        self.train = train
+        self.transform = transform
+        self.patch_size = patch_size
+        self.layer_length = layer_length
+        self.return_filename = return_filename
+        self.image_folder = os.path.join(self.root, "train" if train else "val")
+        self.filenames = [f for f in os.listdir(self.image_folder) if f.endswith('.npy')]
+
+        self.image_folder = os.path.join(root, "training" if train else "testing")
+
+    def __getitem__(self, index):
+        layers = np.load(os.path.join(self.image_folder, self.filenames[index]))
+        layers = torch.tensor(layers).permute(2, 0, 1)
+
+        num_layers, h, w, c = layers.shape
+        if num_layers < self.layer_length:
+            torch.concatenate([layers, torch.full(self.layer_length - num_layers, h, w, c), -1], dim=0)
+        elif num_layers > self.layer_length:
+            layers = layers[:self.layer_length]
+
+        if self.return_filename:
+            return layers, [""] * layers.shape[-1], "", "", self.filenames[index]
+        else:
+            return layers, [""] * layers.shape[-1], "", ""
+
+    def __len__(self):
+        return len(self.filenames)
 
 
 class TiledMNIST(Dataset):
@@ -2057,6 +1507,10 @@ class MNISTforCSVG(Dataset):
     def __len__(self):
         return len(self.image_paths)
 
+
+####################
+# BEGIN DATA MODULES
+####################
 
 class MNISTDataset(LightningDataModule):
     """
@@ -2845,4 +2299,683 @@ class MNISTDatasetCSVG(LightningDataModule):
             num_workers=self.num_workers,
             shuffle=True,
             pin_memory=self.pin_memory,
+        )
+
+
+class CartoonDataset(LightningDataModule):
+    """
+    PyTorch Lightning data module
+
+    Args:
+        data_dir: root directory of your dataset.
+        train_batch_size: the batch size to use during training.
+        val_batch_size: the batch size to use during validation.
+        patch_size: the size of the crop to take from the original images.
+        num_workers: the number of parallel workers to create to load data
+            items (see PyTorch's Dataloader documentation for more details).
+        pin_memory: whether prepared items should be loaded into pinned memory
+            or not. This can improve performance on GPUs.
+    """
+
+    def __init__(
+        self,
+        data_path: str,
+        train_batch_size: int = 8,
+        val_batch_size: int = 8,
+        layer_length: int = 25,
+        num_workers: int = 0,
+        pin_memory: bool = False,
+        return_filename: bool = False,
+        **kwargs,
+    ):
+        super().__init__()
+
+        self.data_dir = data_path
+        self.train_batch_size = train_batch_size
+        self.val_batch_size = val_batch_size
+        self.layer_length = layer_length
+        self.num_workers = num_workers
+        self.pin_memory = pin_memory
+        self.return_filename = return_filename
+
+
+    def setup(self, stage: Optional[str] = None) -> None:
+        # =========================  Cartoon Dataset  =========================
+
+
+        self.train_dataset = Cartoon(
+            self.data_dir,
+            train=True,
+            layer_length=self.layer_length,
+        )
+
+        self.val_dataset = Cartoon(
+            self.data_dir,
+            train=False,
+            layer_length=self.layer_length,
+        )
+
+    #       ===============================================================
+
+    def train_dataloader(self) -> DataLoader:
+        return DataLoader(
+            self.train_dataset,
+            batch_size=self.train_batch_size,
+            num_workers=self.num_workers,
+            shuffle=True,
+            pin_memory=self.pin_memory,
+        )
+
+    def val_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
+        return DataLoader(
+            self.val_dataset,
+            batch_size=self.val_batch_size,
+            num_workers=self.num_workers,
+            shuffle=False,
+            pin_memory=self.pin_memory,
+        )
+
+    def test_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
+        return DataLoader(
+            self.val_dataset,
+            batch_size=self.val_batch_size,
+            num_workers=self.num_workers,
+            shuffle=True,
+            pin_memory=self.pin_memory,
+        )
+
+
+class GenericRasterDatamodule(LightningDataModule):
+    def __init__(self,
+                 csv_path: str,
+                 img_size: int = 128,
+                 channels: int = 3,
+                 train_batch_size: int = 32,
+                 val_batch_size: int = 32,
+                 num_workers: int = 4,
+                 invert: bool = True,
+                 subset: str | List = None,
+                 **kwargs) -> None:
+        super().__init__()
+
+        self.csv_path = csv_path
+        self.img_size = img_size
+        self.invert = invert
+        self.train_batch_size = train_batch_size
+        self.val_batch_size = val_batch_size
+        self.num_workers = num_workers
+        self.channels = channels
+        self.subset = subset
+
+    def setup(self, stage: Optional[str] = None) -> None:
+        self.train_dataset = GenericRasterDataset(
+            self.csv_path,
+            train=True,
+            img_size=self.img_size,
+            invert=self.invert,
+            channels=self.channels,
+            subset=self.subset
+        )
+
+        self.val_dataset = GenericRasterDataset(
+            self.csv_path,
+            train=False,
+            img_size=self.img_size,
+            invert=self.invert,
+            channels=self.channels,
+            subset=self.subset
+        )
+        self.test_dataset = GenericRasterDataset(
+            self.csv_path,
+            train=None,
+            img_size=self.img_size,
+            invert=self.invert,
+            channels=self.channels,
+            subset=self.subset
+        )
+
+    def train_dataloader(self) -> DataLoader:
+        return DataLoader(
+            self.train_dataset,
+            batch_size=self.train_batch_size,
+            num_workers=self.num_workers,
+            shuffle=True,
+            pin_memory=False,
+        )
+
+    def val_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
+        return DataLoader(
+            self.val_dataset,
+            batch_size=self.val_batch_size,
+            num_workers=self.num_workers,
+            shuffle=False,
+            pin_memory=False,
+        )
+
+    def test_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
+        return DataLoader(
+            self.val_dataset,
+            batch_size=16,
+            num_workers=self.num_workers,
+            shuffle=False,
+            pin_memory=False,
+        )
+
+
+class GenericRasterizedSVGDataModule(LightningDataModule):
+    def __init__(self,
+                 csv_path:str,
+                 fill:bool,
+                 img_size:int = 128,
+                 channels:int = 3,
+                 train_batch_size:int = 16,
+                 val_batch_size: int = 16,
+                 num_workers:int = 4,
+                 **kwargs
+                 ) -> None:
+        super().__init__()
+
+        self.csv_path = csv_path
+        self.img_size = img_size
+        self.channels = channels
+        self.fill = fill
+        self.train_batch_size = train_batch_size
+        self.val_batch_size = val_batch_size
+        self.num_workers = num_workers
+        self.kwargs = kwargs
+
+    def setup(self, stage: Optional[str] = None) -> None:
+        self.train_dataset = GenericRasterizedSVGDataset(
+            self.csv_path,
+            train=True,
+            img_size=self.img_size,
+            fill=self.fill,
+            channels=self.channels,
+            **self.kwargs
+        )
+
+        self.val_dataset = GenericRasterizedSVGDataset(
+            self.csv_path,
+            train=False,
+            img_size=self.img_size,
+            fill=self.fill,
+            channels=self.channels,
+            **self.kwargs
+        )
+
+        self.test_dataset = GenericRasterizedSVGDataset(
+            self.csv_path,
+            train=None,
+            img_size=self.img_size,
+            fill=self.fill,
+            channels=self.channels,
+            **self.kwargs
+        )
+    def train_dataloader(self) -> DataLoader:
+        return DataLoader(
+            self.train_dataset,
+            batch_size=self.train_batch_size,
+            num_workers=self.num_workers,
+            shuffle=True,
+            pin_memory=False,
+        )
+
+    def val_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
+        return DataLoader(
+            self.val_dataset,
+            batch_size=self.val_batch_size,
+            num_workers=self.num_workers,
+            shuffle=False,
+            pin_memory=False,
+        )
+
+    def test_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
+        return DataLoader(
+            self.test_dataset,
+            batch_size=16,
+            num_workers=self.num_workers,
+            shuffle=False,
+            pin_memory=False,
+        )
+
+
+class NewCausalSVGDataModule(LightningDataModule):
+    def __init__(
+        self,
+        data_path: str,
+        train_batch_size: int,
+        val_batch_size: int,
+        context_length: int,
+        channels: int,
+        width: int,
+        num_workers: int = 0,
+        subset: List = None,
+        **kwargs,
+    ):
+        super().__init__()
+
+        self.train_batch_size = train_batch_size
+        self.val_batch_size = val_batch_size
+        self.num_workers = num_workers
+        self.root_path = data_path
+        self.context_length = context_length
+        self.channels = channels
+        self.width = width
+        self.num_workers = num_workers
+        self.subset = subset
+        if subset:
+            print(f"Using subset of original dataset: {self.subset}")
+        else:
+            print("Executing on the whole dataset!")
+
+    def setup(self, stage: Optional[str] = None) -> None:
+        self.train_dataset = NewCausalSVGDataset(
+            self.root_path,
+            self.context_length,
+            self.channels,
+            self.width,
+            subset=self.subset,
+            train=True,
+        )
+
+        self.val_dataset = NewCausalSVGDataset(
+            self.root_path,
+            self.context_length,
+            self.channels,
+            self.width,
+            subset=self.subset,
+            train=False,
+        )
+
+    #       ===============================================================
+
+    def train_dataloader(self) -> DataLoader:
+        return DataLoader(
+            self.train_dataset,
+            batch_size=self.train_batch_size,
+            num_workers=self.num_workers,
+            shuffle=True,
+            pin_memory=False,
+        )
+
+    def val_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
+        return DataLoader(
+            self.val_dataset,
+            batch_size=self.val_batch_size,
+            num_workers=self.num_workers,
+            shuffle=False,
+            pin_memory=False,
+        )
+
+    def test_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
+        return DataLoader(
+            self.val_dataset,
+            batch_size=64,
+            num_workers=self.num_workers,
+            shuffle=False,
+            pin_memory=False,
+        )
+
+
+class VSQDatamodule(LightningDataModule):
+    def __init__(
+        self,
+        csv_path: str,
+        train_batch_size: int,
+        val_batch_size: int,
+        channels: int,
+        width: int,
+        test_batch_size:int = 32,
+        individual_max_length: float = 10.,
+        max_shapes_per_svg:int=64,
+        num_workers: int = 0,
+        stroke_width: float = 0.3,
+        subset:str = None,
+        use_single_paths:bool = False,
+        return_index = False,
+        return_filename: bool = False,
+        color_mode:str = None,
+        use_random_stroke_widths:bool = False,
+        **kwargs,
+    ):
+        super().__init__()
+
+        self.train_batch_size = train_batch_size
+        self.val_batch_size = val_batch_size
+        self.test_batch_size = test_batch_size
+        self.num_workers = num_workers
+        self.csv_path = csv_path
+        self.channels = channels
+        self.width = width
+        self.num_workers = num_workers
+        self.stroke_width = stroke_width
+        self.individual_max_length = individual_max_length
+        self.subset = subset
+        self.max_shapes_per_svg = max_shapes_per_svg
+        self.use_single_paths = use_single_paths
+        self.return_index = return_index
+        self.return_filename = return_filename
+        self.color_mode = color_mode
+        self.use_random_stroke_widths = use_random_stroke_widths
+
+    def setup(self, stage: Optional[str] = None) -> None:
+        if stage not in ["train", "test", "val"]:
+            stage = None
+
+        if stage is None or stage == "train":
+            self.train_dataset = VSQDataset(
+                self.csv_path,
+                self.channels,
+                self.width,
+                train=True,
+                individual_max_length=self.individual_max_length,
+                stroke_width=self.stroke_width,
+                max_shapes_per_svg=self.max_shapes_per_svg,
+                use_single_paths=self.use_single_paths,
+                return_index = self.return_index,
+                return_filename = self.return_filename,
+                subset_class=self.subset,
+                use_random_stroke_widths=self.use_random_stroke_widths,
+                color_mode=self.color_mode
+            )
+
+        if stage is None or stage == "val":
+            self.val_dataset = VSQDataset(
+                self.csv_path,
+                self.channels,
+                self.width,
+                train=False,
+                individual_max_length=self.individual_max_length,
+                stroke_width=self.stroke_width,
+                max_shapes_per_svg=self.max_shapes_per_svg,
+                use_single_paths=self.use_single_paths,
+                return_index = self.return_index,
+                return_filename = self.return_filename,
+                subset_class=self.subset,
+                use_random_stroke_widths=self.use_random_stroke_widths,
+                color_mode=self.color_mode
+            )
+
+        if stage is None or stage == "test":
+            self.test_dataset = VSQDataset(
+                self.csv_path,
+                self.channels,
+                self.width,
+                train=None,
+                individual_max_length=self.individual_max_length,
+                stroke_width=self.stroke_width,
+                max_shapes_per_svg=self.max_shapes_per_svg,
+                use_single_paths=self.use_single_paths,
+                return_index = self.return_index,
+                return_filename = self.return_filename,
+                subset_class=self.subset,
+                use_random_stroke_widths=self.use_random_stroke_widths,
+                color_mode=self.color_mode
+            )
+
+    #       ===============================================================
+
+    def collate_fn(self, batch):
+        if self.return_index:
+            imgs, labels, centers, descriptions, idxs = zip(*batch)
+        elif self.return_filename:
+            imgs, labels, centers, descriptions, filenames = zip(*batch)
+        else:
+            imgs, labels, centers, descriptions = zip(*batch)
+        imgs = torch.concat(imgs)
+        labels = torch.concat(labels)
+        centers = torch.concat(centers)
+        if self.return_index:
+            return imgs, labels, centers, descriptions, idxs
+        elif self.return_filename:
+            return imgs, labels, centers, descriptions, filenames
+        else:
+            return imgs, labels, centers, descriptions
+
+    def train_dataloader(self) -> DataLoader:
+        return DataLoader(
+            self.train_dataset,
+            batch_size=self.train_batch_size,
+            num_workers=self.num_workers,
+            shuffle=True,
+            pin_memory=False,
+            collate_fn=self.collate_fn
+        )
+
+    def val_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
+        return DataLoader(
+            self.val_dataset,
+            batch_size=self.val_batch_size,
+            num_workers=self.num_workers,
+            shuffle=False,
+            pin_memory=False,
+            collate_fn=self.collate_fn
+        )
+
+    def test_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
+        return DataLoader(
+            self.test_dataset,
+            batch_size=self.test_batch_size,
+            num_workers=self.num_workers,
+            shuffle=False,
+            pin_memory=False,
+            collate_fn=self.collate_fn
+        )
+
+
+class CenterShapeLayersFromSVGDataModule(LightningDataModule):
+    def __init__(
+        self,
+        csv_path: str,
+        train_batch_size: int,
+        val_batch_size: int,
+        channels: int,
+        width: int,
+        individual_max_length: float = 10.,
+        num_workers: int = 0,
+        stroke_width: float = 0.3,
+        **kwargs,
+    ):
+        super().__init__()
+
+        self.train_batch_size = train_batch_size
+        self.val_batch_size = val_batch_size
+        self.num_workers = num_workers
+        self.csv_path = csv_path
+        self.channels = channels
+        self.width = width
+        self.num_workers = num_workers
+        self.stroke_width = stroke_width
+        self.individual_max_length = individual_max_length
+
+    def setup(self, stage: Optional[str] = None) -> None:
+        self.train_dataset = CenterShapeLayersFromSVGDataset(
+            self.csv_path,
+            self.channels,
+            self.width,
+            train=True,
+            individual_max_length=self.individual_max_length,
+            stroke_width=self.stroke_width
+        )
+
+        self.val_dataset = CenterShapeLayersFromSVGDataset(
+            self.csv_path,
+            self.channels,
+            self.width,
+            train=False,
+            individual_max_length=self.individual_max_length,
+            stroke_width=self.stroke_width
+        )
+
+    #       ===============================================================
+
+    def collate_fn(self, batch):
+        imgs, labels, centers = zip(*batch)
+        imgs = torch.concat(imgs)
+        labels = torch.concat(labels)
+        centers = torch.concat(centers)
+        return imgs, labels, centers
+
+    def train_dataloader(self) -> DataLoader:
+        return DataLoader(
+            self.train_dataset,
+            batch_size=self.train_batch_size,
+            num_workers=self.num_workers,
+            shuffle=True,
+            pin_memory=False,
+            collate_fn=self.collate_fn
+        )
+
+    def val_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
+        return DataLoader(
+            self.val_dataset,
+            batch_size=self.val_batch_size,
+            num_workers=self.num_workers,
+            shuffle=False,
+            pin_memory=False,
+            collate_fn=self.collate_fn
+        )
+
+    def test_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
+        return DataLoader(
+            self.val_dataset,
+            batch_size=16,
+            num_workers=self.num_workers,
+            shuffle=False,
+            pin_memory=False,
+            collate_fn=self.collate_fn
+        )
+
+
+class VQDataModule(LightningDataModule):
+
+    def __init__(
+        self,
+        csv_path: str,
+        dataset:str,
+        vq_token_npy_path: str,
+        tokenizer: VQTokenizer|RasterVQTokenizer,
+        context_length: int,
+        train_batch_size: int,
+        val_batch_size: int,
+        test_batch_size:int = 32,
+        num_workers: int = 0,
+        min_context_length: int = 10,
+        fraction_of_class_only_inputs: float = 0.0,
+        fraction_of_blank_inputs: float = 0.1,
+        fraction_of_iconshop_chatgpt_inputs: float = 0.3,
+        fraction_of_full_description_inputs: float = 0.6,
+        shuffle_vq_order:bool=False,
+        use_pre_computed_text_tokens_only: bool=False,
+        subset:str=None,
+        **kwargs,
+    ):
+        super().__init__()
+
+        self.csv_path = csv_path
+        self.dataset = dataset
+        self.vq_token_npy_path= vq_token_npy_path
+        self.train_batch_size = train_batch_size
+        self.val_batch_size = val_batch_size
+        self.test_batch_size = test_batch_size
+        self.num_workers = num_workers
+        self.context_length = context_length
+        self.tokenizer = tokenizer
+        self.min_context_length = min_context_length
+        self.fraction_of_class_only_inputs = fraction_of_class_only_inputs
+        self.fraction_of_blank_inputs = fraction_of_blank_inputs
+        self.fraction_of_iconshop_chatgpt_inputs = fraction_of_iconshop_chatgpt_inputs
+        self.fraction_of_full_description_inputs = fraction_of_full_description_inputs
+        self.shuffle_vq_order = shuffle_vq_order
+        self.use_pre_computed_text_tokens_only = use_pre_computed_text_tokens_only
+        self.subset = subset
+
+
+    def setup(self, stage: Optional[str] = None, return_ids:Optional[bool]=False) -> None:
+        if stage not in ["train", "test", "val"]:
+            stage = None
+
+        if stage is None or stage == "train":
+            self.train_dataset = VQDataset(
+                self.csv_path,
+                self.vq_token_npy_path,
+                tokenizer=self.tokenizer,
+                context_length=self.context_length,
+                dataset=self.dataset,
+                train=True,
+                min_context_length=self.min_context_length,
+                fraction_of_class_only_inputs = self.fraction_of_class_only_inputs,
+                fraction_of_blank_inputs = self.fraction_of_blank_inputs,
+                fraction_of_iconshop_chatgpt_inputs=self.fraction_of_iconshop_chatgpt_inputs,
+                fraction_of_full_description_inputs=self.fraction_of_full_description_inputs,
+                shuffle_vq_order = self.shuffle_vq_order,
+                use_pre_computed_text_tokens_only = self.use_pre_computed_text_tokens_only,
+                subset=self.subset,
+                return_ids=return_ids,
+            )
+
+        if stage is None or stage == "val":
+            self.val_dataset = VQDataset(
+                self.csv_path,
+                self.vq_token_npy_path,
+                tokenizer=self.tokenizer,
+                context_length=self.context_length,
+                dataset=self.dataset,
+                train=False,
+                min_context_length=self.min_context_length,
+                fraction_of_class_only_inputs = 0.0,
+                fraction_of_blank_inputs = 0.0,
+                fraction_of_iconshop_chatgpt_inputs=0.0,
+                fraction_of_full_description_inputs=1.0,
+                shuffle_vq_order = self.shuffle_vq_order,
+                use_pre_computed_text_tokens_only = self.use_pre_computed_text_tokens_only,
+                subset=self.subset,
+                return_ids=return_ids,
+            )
+        if stage is None or stage == "test":
+            self.test_dataset = VQDataset(
+                self.csv_path,
+                self.vq_token_npy_path,
+                tokenizer=self.tokenizer,
+                context_length=self.context_length,
+                dataset=self.dataset,
+                train=None,
+                min_context_length=self.min_context_length,
+                fraction_of_class_only_inputs = 0.0,
+                fraction_of_blank_inputs = 0.0,
+                fraction_of_iconshop_chatgpt_inputs=0.0,
+                fraction_of_full_description_inputs=1.0,
+                shuffle_vq_order = self.shuffle_vq_order,
+                use_pre_computed_text_tokens_only = self.use_pre_computed_text_tokens_only,
+                subset=self.subset,
+                return_ids=return_ids,
+            )
+
+    #       ===============================================================
+
+    def train_dataloader(self) -> DataLoader:
+        return DataLoader(
+            self.train_dataset,
+            batch_size=self.train_batch_size,
+            num_workers=self.num_workers,
+            shuffle=True,
+            pin_memory=False,
+        )
+
+    def val_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
+        return DataLoader(
+            self.val_dataset,
+            batch_size=self.val_batch_size,
+            num_workers=self.num_workers,
+            shuffle=False,
+            pin_memory=False,
+        )
+
+    def test_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
+        return DataLoader(
+            self.test_dataset,
+            batch_size=self.test_batch_size,
+            num_workers=self.num_workers,
+            shuffle=False,
+            pin_memory=False,
         )
