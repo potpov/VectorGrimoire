@@ -12,15 +12,15 @@ model_params:
 
 data_params:
   dataset: "mnistPrecomputed"
-  data_path: "/raid/marco.cipriano/data/SVG/Grimoire/MNIST/mnist_pretiled/P128_T6_P20_TH0.1"
-  train_batch_size: 2048
+  data_path: "/raid/marco.cipriano/data/SVG/Grimoire/MNIST/mnist_pretiled/P128_T6_P0_TH0.2"
+  train_batch_size: 1024  # 4096
   val_batch_size:  64
   patch_size: 128 # HAS TO BE 224 FOR CLIP RES50 TO WORK, otherwise take 128
-  num_workers: 16
+  num_workers: 32
   num_tiles_per_row: 6
   random_colors: false
   use_palette: false  # use a color palette of 9 colors rather than random colors
-  padding_frac: 0.1  # fraction of the image that is padded with white background
+  padding_frac: 0  # fraction of the image that is padded with white background
 
 exp_params:
   lr: 0.00002  # 0.00002
@@ -34,6 +34,7 @@ exp_params:
 trainer_params:
   devices: -1  # always keep at -1 as this takes all available GPUs specified through CUDA_VISIBLE_DEVICES
   max_epochs: 250  # dsnt matter too much, got early stopping implemented
+#  num_sanity_val_steps: -1
   # accumulate_grad_batches: 2
 
 logging_params:
@@ -41,7 +42,7 @@ logging_params:
   project: "grimoire-2"  # your wandb project name
   save_dir: "/raid/marco.cipriano/results/svg/Grimoire/VSQ"
   # name: "VSQ_MNIST_BW_P128_T14_P20_TH0.2_S64"  # name of the run in wandb
-  name: "SQ_MNIST_BW_P128_T6_P20_TH0.1"  # name of the run in wandb
+  name: "VSQ_MNIST_BW_P128_T6_P0_TH0.2_singleGPU_lowBS"  # name of the run in wandb
   version: 1
   author: "Marco"  # will be a tag in wandb
   # id: null  # id of wandb run to continue

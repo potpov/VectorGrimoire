@@ -7,7 +7,7 @@ model_params:
   vq_method: "fsq"  # "vqvae", "FSQ", "vqtorch"
   fsq_levels: [7,5,5,5,5]  # will determine codebook_size, see Table 1 of FSQ paper - [7,5,5,5,5] for 4096 (e.g. StrokeNUWA), [8,5,5,5] for 1024
   num_segments: 2
-  num_codes_per_shape: 1
+  num_codes_per_shape: 2
   pred_color: false
 
 data_params:
@@ -15,8 +15,8 @@ data_params:
   csv_path: "/raid/marco.cipriano/data/SVG/Grimoire/fonts/svgs_simplified/split_fixed.csv"
   channels: 3  # use 3
   width: 128
-  train_batch_size: 64
-  val_batch_size:  64
+  train_batch_size: 4
+  val_batch_size:  4
   num_workers: 16
   individual_max_length : 3.0  # max length of a single stroke, decides the width/height of rendered shapes
   stroke_width: 0.4  # IMPORTANT: this must scale with individiual_max_length as they together define the image

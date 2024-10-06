@@ -104,8 +104,8 @@ class Mnister:
 if __name__ == '__main__':
 
     PATCH_SIZE = 128
-    TILES_PER_ROW = 14
-    TOTAL_PADDING = 20
+    TILES_PER_ROW = 6
+    TOTAL_PADDING = 0
     TH_FILTER = 0.2
     new_dimension = (PATCH_SIZE - TOTAL_PADDING) * TILES_PER_ROW
     print(f"New dimension with this configuration is: {new_dimension}x{new_dimension}.")

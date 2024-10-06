@@ -253,8 +253,9 @@ def tokenize_MNIST():
     # setting 2 - 8x8 grid, black and white VSQ
     # MODEL_WEIGHTS_PATH = "/raid/marco.cipriano/results/svg/Grimoire/VSQ/VSQ_MNIST_BW_P128_T14_P20_TH0.2/checkpoints/last.ckpt"
     MODEL_WEIGHTS_PATH = "/raid/marco.cipriano/results/svg/Grimoire/VSQ/VSQ_MNIST_BW_P128_T6_P20_TH0.1/checkpoints/last.ckpt"
+    # MODEL_WEIGHTS_PATH = "/raid/marco.cipriano/results/svg/Grimoire/VSQ/VSQ_MNIST_BW_P128_T6_P0_TH0.2_multiGPU/checkpoints/last.ckpt"
     # OUT_PATH = "/raid/marco.cipriano/data/SVG/Grimoire/MNIST/mnist_tokenized/VSQ_MNIST_BW_P128_T14_P20_TH0.2"
-    OUT_PATH = "/raid/marco.cipriano/data/SVG/Grimoire/MNIST/mnist_tokenized/VSQ_MNIST_BW_P128_T6_P20_TH0.2"
+    OUT_PATH = "/raid/marco.cipriano/data/SVG/Grimoire/MNIST/mnist_tokenized/VSQ_MNIST_BW_P128_T6_P0_TH0.2"
     CONFIG_PATH = "/home/marco.cipriano/projects/Grimoire/configs/MNIST/MNIST_VSQ_BW.yaml"
     FILTER_TH = 0.2
 

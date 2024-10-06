@@ -291,7 +291,7 @@ if __name__ == '__main__':
             only_patch_tokens=False,  # we predict positions
             w=RENDER_WIDTH
         )
-        
+
         # saving svg
         filepath = os.path.join(curr_svg_out_dir, f"{idx}.svg")
         drawing.saveas(filepath)
