@@ -1057,15 +1057,20 @@ class Cartoon(Dataset):
         self.image_folder = os.path.join(self.root, "train" if train else "val")
         self.filenames = [f for f in os.listdir(self.image_folder) if f.endswith('.npy')]
 
-        self.image_folder = os.path.join(root, "training" if train else "testing")
-
     def __getitem__(self, index):
         layers = np.load(os.path.join(self.image_folder, self.filenames[index]))
-        layers = torch.tensor(layers).permute(2, 0, 1)
+
+        layers = torch.from_numpy(layers)
+        layers = layers.moveaxis(-1, 1)  # L, H, W, C -> L, C, H, W
+        if self.transform is not None:
+            layers = self.transform(layers)
+
 
         num_layers, h, w, c = layers.shape
         if num_layers < self.layer_length:
-            torch.concatenate([layers, torch.full(self.layer_length - num_layers, h, w, c), -1], dim=0)
+            layers = torch.concatenate(
+                [layers, torch.full((self.layer_length - num_layers, h, w, c), -1)], dim=0
+            )
         elif num_layers > self.layer_length:
             layers = layers[:self.layer_length]
 
@@ -2324,6 +2329,7 @@ class CartoonDataset(LightningDataModule):
         val_batch_size: int = 8,
         layer_length: int = 25,
         num_workers: int = 0,
+        patch_size: int = 128,
         pin_memory: bool = False,
         return_filename: bool = False,
         **kwargs,
@@ -2335,6 +2341,7 @@ class CartoonDataset(LightningDataModule):
         self.val_batch_size = val_batch_size
         self.layer_length = layer_length
         self.num_workers = num_workers
+        self.patch_size = patch_size
         self.pin_memory = pin_memory
         self.return_filename = return_filename
 
@@ -2342,16 +2349,24 @@ class CartoonDataset(LightningDataModule):
     def setup(self, stage: Optional[str] = None) -> None:
         # =========================  Cartoon Dataset  =========================
 
+        t = transforms.Compose(
+            [
+                # transforms.ToTensor(),
+                transforms.Resize((128, 128)),
+            ]
+        )
 
         self.train_dataset = Cartoon(
             self.data_dir,
             train=True,
+            transform=t,
             layer_length=self.layer_length,
         )
 
         self.val_dataset = Cartoon(
             self.data_dir,
             train=False,
+            transform=t,
             layer_length=self.layer_length,
         )
 

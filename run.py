@@ -127,7 +127,8 @@ seed_everything(config['exp_params']['manual_seed'], True)
 print("Loading model...")
 if args.wandb:
     model = MODELS[config['model_params']['name']](
-        patch_size = config['data_params'].get("patch_size", 128),
+        patch_size=config['data_params'].get("patch_size", 128),
+        layer_length=config['data_params'].get("layer_length", False),
         **config['model_params'],
     )
     # wandb_logger.watch(model, log="gradients", log_freq=500, log_graph=False)
@@ -135,6 +136,7 @@ if args.wandb:
 else:
     model = MODELS[config['model_params']['name']](
         patch_size = config['data_params'].get("patch_size", 128),
+        layer_length=config['data_params'].get("layer_length", False),
         **config['model_params']
     )
 print("Loading dataset...")
@@ -149,11 +151,14 @@ elif config['model_params']['name'] == "VectorGPTv2":
 elif config['model_params']['name'] == "VSQ":
     data = DATASETMAP[config["data_params"]["dataset"]](**config["data_params"])
     data.setup()
-    experiment = VectorVQVAE_Experiment_Stage1(model,
-                                               **config['exp_params'],
-                                               wandb=args.wandb,
-                                               datamodule=data,
-                                               max_epochs=config["trainer_params"]["max_epochs"])
+    experiment = VectorVQVAE_Experiment_Stage1(
+        model,
+        **config['exp_params'],
+        layer_length=config["data_params"].get("layer_length", False),
+        wandb=args.wandb,
+        datamodule=data,
+        max_epochs=config["trainer_params"]["max_epochs"]
+    )
 elif config['model_params']['name'] == "VQ_Transformer":
     raise ValueError("VQ_Transformer is deprecated, please use run_stage2.py instead.")
 else:
@@ -168,7 +173,7 @@ runner = Trainer(
     callbacks=[
         LearningRateMonitor(logging_interval="epoch", log_momentum=True),
         #  LearningRateFinder(early_stop_threshold=None, num_training_steps=200),
-        EarlyStopping("val_loss", 0.005, 15, verbose=True),
+        # EarlyStopping("loss", 0.005, 15, verbose=True),
         ModelCheckpoint(save_top_k=3,
                         dirpath=os.path.join(config['logging_params']['save_dir'], "checkpoints"),
                         every_n_train_steps=100,
@@ -201,7 +206,6 @@ except KeyboardInterrupt:
     # Handle the interrupt and save the profiling results
     print("Training interrupted by user.")
     profiler.describe()
-    # print(profiler.summary())
     with open("profiler_results.txt", "w") as f:
         f.write(profiler.summary())
 

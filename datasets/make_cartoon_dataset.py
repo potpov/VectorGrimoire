@@ -8,12 +8,13 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 import numpy as np
 from sklearn.metrics import pairwise_distances
+from torchvision.transforms import CenterCrop
 
 folder_path = "/raid/marco.cipriano/data/SVG/Grimoire/Cartoons/raw"
 output_path = "/raid/marco.cipriano/data/SVG/Grimoire/Cartoons/preprocessed"
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
-DEBUG = True
+DEBUG = False
 sam_checkpoint = "/raid/marco.cipriano/weights/sam_vit_h_4b8939.pth"
 model_type = "default"
 palette_size = 4096
@@ -122,7 +123,7 @@ def process_folder(folder_path):
 
     mask_generator = SamAutomaticMaskGenerator(
         sam,
-        points_per_side=64,
+        points_per_side=32,
         # min_mask_region_area=int(0.0005 * h * w)
     )
 
@@ -131,6 +132,11 @@ def process_folder(folder_path):
 
         image = cv2.imread(image_path)
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+        # pre- processing
+        crop = CenterCrop((400, 400))
+        image = crop(torch.from_numpy(image).moveaxis(-1, 0))
+        image = image.moveaxis(0, -1).numpy()
 
         masks = mask_generator.generate(image)
         # move everything within [0, N] values
@@ -145,14 +151,19 @@ def process_folder(folder_path):
 
         h, w, _ = image.shape
         tot_area = h * w
-        masks = [masks[i] for i in hierarcy if (100 * masks[i]["area"] / tot_area) > min_threshold]  # reorder mask according to their area
+        # masks = [masks[i] for i in hierarcy if (100 * masks[i]["area"] / tot_area) > min_threshold]  # reorder mask according to their area
+        masks = [masks[i] for i in hierarcy]  # reorder mask according to their area
 
         color_masks = []
         colors = []
         for mask in masks:
 
             mask_values = q_image[mask["segmentation"]]
-            color_idx = int(np.median(mask_values).item())
+            # color_idx = int(np.median(mask_values).item())
+            bins = np.bincount(mask_values).argsort()
+            # small rule to reward wait if it's the second most common value
+            color_idx = int(bins[-2]) if bins[-2] == (len(palette) - 1) else int(bins[-1])
+            # color_idx = int(np.bincount(mask_values).argmax())
             assert len(palette) > color_idx
             target_color = palette[color_idx] / 255
             colors.append(target_color)

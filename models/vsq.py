@@ -85,6 +85,7 @@ class VSQ(nn.Module):
         self.quantized_dim = quantized_dim
         self.image_loss = image_loss
         self.vq_method = vq_method.lower()
+
         assert self.vq_method == "fsq", "Please use FSQ."
         self.fsq_levels = fsq_levels
         self.num_segments = num_segments
@@ -122,7 +123,7 @@ class VSQ(nn.Module):
         self.latent_dim = self.quantized_dim
 
         if self.vector_decoder_model == "mlp":
-            self.decoder = MLPVectorHead(latent_dim=self.quantized_dim * self.num_codes_per_shape,
+             self.decoder = MLPVectorHead(latent_dim=self.quantized_dim * self.num_codes_per_shape,
                                          segments=self.num_segments,
                                          imsize=self.patch_size,
                                          max_stroke_width=20.,
@@ -133,7 +134,8 @@ class VSQ(nn.Module):
                                          segments=self.num_segments,
                                          imsize=self.patch_size,
                                          max_stroke_width=20.,
-                                         pred_color=self.pred_color, )
+                                         pred_color=self.pred_color,
+                                         )
         elif self.vector_decoder_model == "raster_conv":
             self.decoder = DeconvResNet()
 
@@ -155,17 +157,16 @@ class VSQ(nn.Module):
             result = self.quantize_layer.forward(result)  # this might change the result return type to list
         return result
 
-    def decode(self, z: Tensor) -> Tensor:
+    def decode(
+            self,
+            z: Tensor
+    ) -> Tensor:
         """
         Maps the given latent codes onto the image space.
         :param z: (Tensor) [B x D x H x W]
         :return: (Tensor) [B x C x H x W]
         """
-
-        result, logging_dict = self.decoder.forward(z)
-        # if self.vector_decoder_model == "mlp":
-        #     result = result[0]  # extract only the raster image for now
-        return result, logging_dict
+        return self.decoder.forward(z)
 
     def decode_from_indices(self, idxs: Tensor) -> Union[Tensor, dict]:
         """
@@ -198,8 +199,8 @@ class VSQ(nn.Module):
         }
         """
         logging_dict = {}
+        bs = input.shape[0]
         encoding = self.encode(input, quantize=False)
-        bs = encoding.shape[0]
         vq_logging_dict = {}
         if self.vector_decoder_model in ["mlp", "cnn"]:
             # quantize the encoding
@@ -210,8 +211,11 @@ class VSQ(nn.Module):
                 vq_loss = torch.tensor(0.)
                 if logging:
                     vq_logging_dict = {
-                        "codebook_histogram": wandb.Image(tensor_to_histogram_image(indices.detach().flatten().cpu()),
-                                                          caption="histogram of codebook indices")}
+                        "codebook_histogram": wandb.Image(
+                            tensor_to_histogram_image(indices.detach().flatten().cpu()),
+                            caption="histogram of codebook indices"
+                        )
+                    }
 
             # flatten it for MLP digestion
             # quantized_inputs = quantized_inputs.permute(0,2,1,3)
@@ -223,18 +227,17 @@ class VSQ(nn.Module):
 
         # re-merge the quantized codes
         # quantized_inputs = rearrange(quantized_inputs, 'b d (c h) w -> b (d c) h w', c=self.num_codes_per_shape)
-        out, decode_logging_dict = self.decode(
-            quantized_inputs)  # for mlp out is [output, scenes, all_points, all_widths]
-        reconstructions = out[0]
-        all_points = out[2]
-        visual_attribute_dict = out[3]
+        # for mlp out is [output, scenes, all_points, all_widths]
+        out, decode_logging_dict = self.decode(quantized_inputs)
+
+        reconstructions, scenes, all_points, visual_attribute_dict = out
         logging_dict = {**logging_dict, **decode_logging_dict, **vq_logging_dict}
         if only_return_recons:
             return reconstructions
         if return_visual_attributes:
-            return [reconstructions, input, all_points, vq_loss, visual_attribute_dict], logging_dict
+            return [reconstructions, input, all_points, vq_loss, visual_attribute_dict, scenes], logging_dict
         else:
-            return [reconstructions, input, all_points, vq_loss], logging_dict
+            return [reconstructions, input, all_points, vq_loss, scenes], logging_dict
 
     def gaussian_pyramid_loss(self, recons_images: Tensor, gt_images: Tensor, down_sample_steps: int = 3,
                               log_loss: bool = False, pyramid_weights: Tensor = None):

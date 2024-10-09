@@ -16,8 +16,8 @@ from torch.optim.lr_scheduler import StepLR
 import pandas as pd
 from torchmetrics.functional.multimodal import clip_score
 from tokenizer import VQTokenizer, RasterVQTokenizer
-# import torch_optimizer as optim_
-from dataset import VSQDatamodule, MNISTDataset, PrecomputedMNISTDataset
+from utils import render_multiple_layers
+from dataset import VSQDatamodule, MNISTDataset, PrecomputedMNISTDataset, CartoonDataset
 from transformers import get_cosine_schedule_with_warmup, get_linear_schedule_with_warmup
 
 
@@ -201,11 +201,6 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
         self.log("train_loss", loss_dict["loss"].detach().item(), rank_zero_only=True)
         return loss_dict["loss"]
 
-    def on_train_epoch_end(self):
-        # gc.collect()
-        # torch.cuda.empty_cache()
-        return {}
-
     def validation_step(self, batch, batch_idx):
 
         text_tokens, text_attention_mask, vq_tokens, vq_targets, pad_token = batch
@@ -300,7 +295,8 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
             pred_logits=pred_logits,
         )
 
-        self.log("val_loss", loss_dict["loss"], sync_dist=True)
+        self.log("val_loss", loss_dict["loss"], prog_bar=True, on_step=False, on_epoch=True)
+
         return loss_dict["loss"]
 
     def on_validation_end(self) -> None:
@@ -369,6 +365,7 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
                  min_lr: float = 1.e-6,
                  step_lr_epoch_step_size: int = 30,
                  scheduler_type: str = "cosine",
+                 layer_length: int | bool = False,
                  wandb: bool = True,
                  datamodule = None,
                  max_epochs:int=300,
@@ -381,13 +378,18 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
         self.num_batches_train = len(datamodule.train_dataloader())
         self.num_batches_val = len(datamodule.val_dataloader())
 
+        self.layer_length = layer_length
+        self.use_layers = True
+        if not torch.is_tensor(layer_length) and not self.layer_length:
+            self.use_layers = False
+
         self.model = model
         self.lr = lr
         self.total_steps = max_epochs * self.num_batches_train
         self.min_lr = min_lr
         self.weight_decay = weight_decay
         self.scheduler_gamma = scheduler_gamma
-        self.train_log_interval =  max(1, int(train_log_interval * self.num_batches_train))
+        self.train_log_interval = max(1, int(train_log_interval * self.num_batches_train))
         self.val_log_interval = max(1, int(val_log_interval * self.num_batches_val))
         self.manual_seed = manual_seed
         self.curr_device = None
@@ -413,18 +415,39 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
         return out, logging_dict
     
     def training_step(self, batch, batch_idx):
-        all_center_shapes, labels, centers, descriptions = batch
-        self.curr_device = all_center_shapes.device
-        bs = all_center_shapes.shape[0]
-        channels = all_center_shapes.shape[1]
-        if batch_idx % self.train_log_interval == 0 and self.wandb:
-            out, logging_dict = self.forward(all_center_shapes, logging=True)
+        patches, labels, centers, descriptions = batch
+        self.curr_device = patches.device
+
+        if self.use_layers:
+            bs, cl, c, w, h = patches.shape
+            assert w == h, "only square images are supported for now"
+            layer_att_mask = ~ torch.any(patches == -1, dim=(-1, -2, -3))  # (B, CL)
+            layer_att_mask = layer_att_mask.reshape((bs * cl))  # (B * CL)
+            patches = patches.reshape((bs * cl, c, w, h))
         else:
-            out, logging_dict = self.forward(all_center_shapes, logging=False)  # out is [reconstructions, input, all_points, vq_loss]
-        reconstructions=out[0]
-        inputs = all_center_shapes
-        all_points = out[2]
-        vq_loss=out[3]
+            bs = patches.shape[0]
+            c = patches.shape[1]
+
+        (reconstructions, _, all_points, vq_loss, (all_paths, pred_colors)), logging_dict = self.forward(
+            patches,
+            logging=(batch_idx % self.train_log_interval == 0 and self.wandb)
+        )
+
+        if self.use_layers:
+            if batch_idx % self.val_log_interval == 0 and self.wandb:
+                # first, create a global view of each image in the layers
+                for i in range(0, len(all_paths), cl):
+                    unmask_idx = torch.arange(cl)[layer_att_mask.cpu()[i: i + cl]]
+                    composited_ims = render_multiple_layers(
+                        [all_paths[i: i + cl][j] for j in unmask_idx],
+                        [pred_colors[i: i + cl][j] for j in unmask_idx],
+                        render_size=w
+                    )
+                    self.trainer.logger.experiment.log(
+                        {"train/layer_composed": [
+                            wandb.Image(composited_ims, caption="all layers rendered together from validation sample")
+                        ]},
+                    )
 
         if self.schedule_pyramid_method is not None:
             if self.current_epoch < len(self.pyramid_weight_schedule):
@@ -435,8 +458,8 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
             pyramid_weights = self.start_weights
 
         loss_dict = self.model.loss_function(
-            reconstructions=reconstructions[:,:channels,:,:],
-            gt_images=inputs,
+            reconstructions=reconstructions[:, :c, :, :],
+            gt_images=patches,
             vq_loss=vq_loss,
             points=all_points,
             pyramid_weights=pyramid_weights
@@ -452,7 +475,7 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
                     self.log(f"train/{key}", value)
 
                 # SIDE BY SIDE RECON
-                if not isinstance(self.datamodule, PrecomputedMNISTDataset):  # not possible for MNIST with custom patches
+                if not isinstance(self.datamodule, PrecomputedMNISTDataset) and not isinstance(self.datamodule, CartoonDataset):
                     random_idx = random.randint(0, len(self.datamodule.train_dataset))
                     if isinstance(self.datamodule, VSQDatamodule):
                         dataset_name = "glyphazzn"
@@ -468,7 +491,6 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
                             # step=current_trainer_global_step,
                         )
 
-
                # OTHER RECON
                 if reconstructions.shape[0] > 25:
                     log_amount = 25
@@ -477,46 +499,68 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
 
                 if isinstance(self.datamodule, VSQDatamodule):
                     log_reconstructions = add_points_to_image(all_points, reconstructions[:,:3,:,:], image_scale=reconstructions.shape[-1])
-                elif isinstance(self.datamodule, (MNISTDataset, PrecomputedMNISTDataset)):
+                elif isinstance(self.datamodule, (MNISTDataset, PrecomputedMNISTDataset)) or isinstance(self.datamodule, CartoonDataset):
                     log_reconstructions = reconstructions[:,:3,:,:]
 
                 # Log input against prediction
                 k, i = log_images(
                     log_reconstructions[:log_amount],
-                    inputs[:log_amount],
+                    patches[:log_amount],
                     log_key="train/reconstruction",
                     captions="input (left) vs. reconstruction (right)"
                 )
-                current_trainer_global_step = self.trainer.global_step
                 self.trainer.logger.experiment.log(
                     {"samples": [i]},
-                    # step=current_trainer_global_step,
                 )
 
         self.log_dict(loss_dict, logger=True, prog_bar=True)
         return loss_dict["loss"]
 
-
     def validation_step(self, batch, batch_idx):
         with torch.no_grad():
-            all_center_shapes, label, centers, descriptions = batch
-            self.curr_device = all_center_shapes.device
-            bs = all_center_shapes.shape[0]
-            channels = all_center_shapes.shape[1]
+            patches, label, centers, descriptions = batch
+            self.curr_device = patches.device
 
-            out, logging_dict = self.forward(all_center_shapes)
-            reconstructions=out[0]
-            inputs = all_center_shapes
-            all_points = out[2]
-            vq_loss=out[3]
+            if self.use_layers:
+                bs, cl, c, w, h = patches.shape
+                assert w == h, "only square images are supported for now"
+                layer_att_mask = ~ torch.any(patches == -1, dim=(-1, -2, -3))  # (B, CL)
+                layer_att_mask = layer_att_mask.reshape((bs * cl))  # (B * CL)
+                patches = patches.reshape((bs * cl, c, w, h))
+            else:
+                c = patches.shape[1]
+
+            (reconstructions, _, all_points, vq_loss, (all_paths, all_groups)), logging_dict = self.forward(patches)
             assert vq_loss.dim() <= 1, f"vq_loss should be a 1D tensor, but got {vq_loss.dim()}"
+
+            if self.use_layers:
+                if batch_idx % self.val_log_interval == 0 and self.wandb:
+                    # first, create a global view of each image in the layers
+                    for i in range(0, len(all_paths), cl):
+                        unmask_idx = torch.arange(cl)[layer_att_mask.cpu()[i: i + cl]]
+                        composited_ims = render_multiple_layers(
+                                [all_paths[i: i + cl][j] for j in unmask_idx],
+                                [all_groups[i: i + cl][j] for j in unmask_idx],
+                                render_size=w
+                            )
+                        self.trainer.logger.experiment.log(
+                            {"val/layer_composed": [
+                                wandb.Image(composited_ims, caption="all layers rendered together from validation sample")
+                            ]},
+                        )
+
+                # second, filter layers using layer attention mask and collapse the batch dimension
+                reconstructions = reconstructions[layer_att_mask]
+                patches = patches[layer_att_mask]
+                all_points = all_points[layer_att_mask]
+
 
             # for validation we only track MSE
             pyramid_weights = torch.tensor([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
 
             loss_dict = self.model.loss_function(
-                reconstructions=reconstructions[:,:channels,:,:],
-                gt_images=inputs,
+                reconstructions=reconstructions[:, :c, :, :],
+                gt_images=patches,
                 vq_loss=vq_loss,
                 points=all_points,
                 pyramid_weights=pyramid_weights
@@ -530,7 +574,9 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
                     self.log(f"val/{key}", value)
 
                 # SIDE BY SIDE RECON
-                if not isinstance(self.datamodule, PrecomputedMNISTDataset):
+                # not possible for MNIST with custom patches
+                # also temporary disabled for Cartoon
+                if not isinstance(self.datamodule, PrecomputedMNISTDataset) and not isinstance(self.datamodule, CartoonDataset):
                     random_idx = random.randint(0, len(self.datamodule.val_dataset))
                     if isinstance(self.datamodule, VSQDatamodule):
                         dataset_name = "glyphazzn"
@@ -553,23 +599,23 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
 
                 if isinstance(self.datamodule, VSQDatamodule):
                     log_reconstructions = add_points_to_image(all_points[:log_amount], reconstructions[:log_amount,:3,:,:], image_scale=reconstructions.shape[-1])
-                elif isinstance(self.datamodule, (MNISTDataset, PrecomputedMNISTDataset)):
+                elif isinstance(self.datamodule, (MNISTDataset, PrecomputedMNISTDataset)) or isinstance(self.datamodule, CartoonDataset):
                     log_reconstructions = reconstructions[:log_amount,:3,:,:]
 
                 # Log input against prediction
                 k, i = log_images(
                     log_reconstructions[:log_amount],
-                    inputs[:log_amount],
+                    patches[:log_amount],
                     log_key="val/reconstruction",
                     captions="input (left) vs. reconstruction (right)"
                 )
                 current_trainer_global_step = self.trainer.global_step
                 self.trainer.logger.experiment.log(
                     {"samples": [i]},
-                    # step=current_trainer_global_step,
                 )
 
-        self.log("val_loss", loss_dict["loss"], prog_bar=True)
+        self.log("val_loss", loss_dict["loss"])
+        self.trainer.logger.experiment.log({"val_loss": [loss_dict["loss"]]})
         return loss_dict["loss"]
 
     

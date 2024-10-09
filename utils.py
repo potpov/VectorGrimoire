@@ -16,6 +16,16 @@ from io import BytesIO
 from torchvision.transforms import ToTensor
 import re
 import matplotlib.colors as mcolors
+import pydiffvg
+from svgpathtools import svg2paths, svg2paths2, disvg, Path  # this is used to READ and breakdown SVG
+import math
+from svgwrite import Drawing
+from cairosvg import svg2png
+import io
+from matplotlib import pyplot as plt
+import copy
+from torchvision import transforms
+
 
 def interpolate_rows(a, b, n, method='linear'):
     """
@@ -100,6 +110,7 @@ def get_rendered_svg_with_gradient(svg_path):
     # Use the attributes list when calling disvg
     return img
 
+
 def svg_file_path_to_tensor(path, permuted = False, plot=False, stroke_width=0.5, filling:bool=False,image_size:int=224):
     paths, attributes, svg_attributes = svg2paths2(path)
     for i, attr in enumerate(attributes):
@@ -117,6 +128,7 @@ def svg_file_path_to_tensor(path, permuted = False, plot=False, stroke_width=0.5
     if plot:
         plt.imshow(return_tensor)
     return return_tensor
+
 
 def add_points_to_image(all_points:Tensor, image:Tensor, image_scale:int):
     """
@@ -153,6 +165,7 @@ def add_points_to_image(all_points:Tensor, image:Tensor, image_scale:int):
             # except Exception as e:
             #     print("[INFO] couldnt add points to logging image", e)
     return image
+
 
 def svg_string_to_tensor(svg_string):
     # Convert SVG string to PNG bytes
@@ -257,8 +270,10 @@ def get_side_by_side_reconstruction(model, dataset, idx, device, w=480, dataset_
 
     return img
 
+
 def drawing_to_tensor(drawing: Drawing):
     return svg_string_to_tensor(drawing.tostring())
+
 
 def svg_to_tensor(file_path, new_stroke_width:float = None):
     if new_stroke_width is None:
@@ -297,14 +312,17 @@ def calculate_global_positions(local_positions: Tensor, local_viewbox_width: flo
     global_positions = global_center_positions + scaled_local_points_delta_to_middle
     return global_positions
 
+
 def tensor_to_complex(my_tensor):
     return complex(my_tensor[0].item(), my_tensor[1].item())
+
 
 def stroke_points_to_bezier(my_tensor:Tensor):
     """
     expects my_tensor to be in shape (4, 2)
     """
     return CubicBezier(tensor_to_complex(my_tensor[0]), tensor_to_complex(my_tensor[1]), tensor_to_complex(my_tensor[2]), tensor_to_complex(my_tensor[3]))
+
 
 def stroke_to_path(my_tensor: Tensor):
     """
@@ -317,6 +335,7 @@ def stroke_to_path(my_tensor: Tensor):
         end_idx = (seg_idx+1) * 3 + 1
         all_paths.append(stroke_points_to_bezier(my_tensor[start_idx:end_idx]))
     return Path(*all_paths)
+
 
 def rgb_to_hex(r, g, b):
     """
@@ -337,6 +356,7 @@ def rgb_to_hex(r, g, b):
 
     # Format as a hex string
     return f"#{r:02X}{g:02X}{b:02X}"
+
 
 def shapes_to_drawing(shapes:Tensor, 
                       stroke_width:float|List, 
@@ -534,17 +554,36 @@ def tensor_to_histogram_image(tensor, bins=100):
 
     return image
 
+
+def render_multiple_layers(paths, colors, render_size):
+    render = pydiffvg.RenderFunction.apply
+
+    groups = []
+    for i in range(len(paths)):
+        groups.append(pydiffvg.ShapeGroup(
+            shape_ids=torch.tensor([i]),
+            fill_color=colors[i],
+            stroke_color=colors[i])
+        )
+    scene_args = pydiffvg.RenderFunction.serialize_scene(render_size, render_size, paths, groups)
+    out = render(render_size,  # width
+                 render_size,  # height
+                 3,  # num_samples_x
+                 3,  # num_samples_y
+                 102,  # seed
+                 None,
+                 *scene_args)
+    out = out.permute(2, 0, 1).view(4, render_size, render_size)  # [:3]#.mean(0, keepdim=True)
+    # white background
+    alpha = out[3:4, :, :]
+    output_white_bg = out[:3, :, :] * alpha + (1 - alpha)
+    out = torch.cat([output_white_bg, alpha], dim=0)
+    return out
+
 ##############################################################################################################
 # SVG splitting utils
 ##############################################################################################################
-from svgpathtools import svg2paths, svg2paths2, disvg, Path  # this is used to READ and breakdown SVG
-import math
-from svgwrite import Drawing
-from cairosvg import svg2png
-import io
-from matplotlib import pyplot as plt
-import copy
-from torchvision import transforms
+
 def raster(svg_file: Drawing, out_h: int = 128, out_w: int = 128):
     """
     This function simply resizes and rasters a series of Paths

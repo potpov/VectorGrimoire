@@ -89,7 +89,8 @@ class CNNVectorHead(nn.Module):
         bs = all_points.shape[0]
 
         outputs = []
-        scenes = []
+        all_paths = []
+        pred_colors = []
         all_points = all_points * render_size
         num_ctrl_pts = torch.zeros(self.segments, dtype=torch.int32).to(all_points.device) + 2
         for k in range(bs):
@@ -99,22 +100,22 @@ class CNNVectorHead(nn.Module):
                 color = colors[k].to(all_points.device)
             # Get point parameters from network
             render = pydiffvg.RenderFunction.apply
-            shapes = []
-            shape_groups = []
             points = all_points[k].contiguous()  # [self.sort_idx[k]] # .cpu()
             # print("points.shape: ", points.shape)
             path = pydiffvg.Path(
                 num_control_points=num_ctrl_pts, points=points,
                 is_closed=True)
+            all_paths.append(path)
 
-            shapes.append(path)
             path_group = pydiffvg.ShapeGroup(
-                shape_ids=torch.tensor([len(shapes) - 1]),
+                shape_ids=torch.tensor([0]),
                 fill_color=color,
                 stroke_color=color)
-            shape_groups.append(path_group)
-            scene_args = pydiffvg.RenderFunction.serialize_scene(render_size, render_size, shapes, shape_groups)
-            scenes.append(scene_args)
+
+            # this for compositing
+            pred_colors.append(color)
+
+            scene_args = pydiffvg.RenderFunction.serialize_scene(render_size, render_size, [path], [path_group])
             out = render(render_size,  # width
                          render_size,  # height
                          3,  # num_samples_x
@@ -132,7 +133,7 @@ class CNNVectorHead(nn.Module):
             output_white_bg = output[:, :3, :, :] * alpha + (1 - alpha)
             output = torch.cat([output_white_bg, alpha], dim=1)
         del num_ctrl_pts, color
-        return output, scenes
+        return output, (all_paths, pred_colors)
 
     def forward(self, z, **kwargs):
         logging_dict = {}
@@ -164,21 +165,17 @@ class CNNVectorHead(nn.Module):
         all_widths = torch.ones(bs, self.segments, 1)
         all_alphas = torch.ones(bs, self.segments, 1)
 
-        output, scenes = self.raster(
+        output, (all_paths, all_groups) = self.raster(
             all_points,
             colors=all_colors
         )
-
         visual_attribute_dict = {
             "stroke_widths": all_widths,
             "alphas": all_alphas,
             "colors": all_colors
         }
 
-        # map to [-1, 1]
-        # output = output*2.0 - 1.0
-
-        return [output, scenes, all_points, visual_attribute_dict], logging_dict
+        return [output, (all_paths, all_groups), all_points, visual_attribute_dict], logging_dict
 
 
 class MLPVectorHead(nn.Module):
@@ -307,7 +304,6 @@ class MLPVectorHead(nn.Module):
 
         # map to [-1, 1]
         # output = output*2.0 - 1.0
-
         return [output, scenes, all_points, visual_attribute_dict], logging_dict
 
     def render(self,
