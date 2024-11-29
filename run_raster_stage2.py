@@ -131,7 +131,7 @@ runner = Trainer(
     logger=wandb_logger,
     callbacks=[
         LearningRateMonitor(logging_interval="epoch", log_momentum=True),
-        EarlyStopping("val_loss", 0.005, 5, verbose=True),
+        # EarlyStopping("val_loss", 0.005, 5, verbose=True),
         ModelCheckpoint(save_top_k=3,
                         dirpath=os.path.join(config['logging_params']['save_dir'], "checkpoints"),
                         monitor="val_loss",
@@ -164,6 +164,5 @@ except KeyboardInterrupt:
     # Handle the interrupt and save the profiling results
     print("Training interrupted by user.")
     profiler.describe()
-    print(profiler.summary())
     with open("profiler_results_stage2.txt", "w+") as f:
         f.write(profiler.summary())

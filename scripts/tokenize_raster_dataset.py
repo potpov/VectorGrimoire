@@ -252,10 +252,10 @@ def tokenize_MNIST():
     ######
     # setting 2 - 8x8 grid, black and white VSQ
     # MODEL_WEIGHTS_PATH = "/raid/marco.cipriano/results/svg/Grimoire/VSQ/VSQ_MNIST_BW_P128_T14_P20_TH0.2/checkpoints/last.ckpt"
-    MODEL_WEIGHTS_PATH = "/raid/marco.cipriano/results/svg/Grimoire/VSQ/VSQ_MNIST_BW_P128_T6_P20_TH0.1/checkpoints/last.ckpt"
+    MODEL_WEIGHTS_PATH = "/raid/marco.cipriano/results/svg/Grimoire/VSQ/VSQ_MNIST_BW_P128_T6_P0_TH0.2_singleGPU_lowBS/checkpoints/last.ckpt"
     # MODEL_WEIGHTS_PATH = "/raid/marco.cipriano/results/svg/Grimoire/VSQ/VSQ_MNIST_BW_P128_T6_P0_TH0.2_multiGPU/checkpoints/last.ckpt"
     # OUT_PATH = "/raid/marco.cipriano/data/SVG/Grimoire/MNIST/mnist_tokenized/VSQ_MNIST_BW_P128_T14_P20_TH0.2"
-    OUT_PATH = "/raid/marco.cipriano/data/SVG/Grimoire/MNIST/mnist_tokenized/VSQ_MNIST_BW_P128_T6_P0_TH0.2"
+    OUT_PATH = "/raid/marco.cipriano/data/SVG/Grimoire/MNIST/mnist_tokenized/VSQ_MNIST_BW_P128_T6_P0_TH0.2"  # no padding
     CONFIG_PATH = "/home/marco.cipriano/projects/Grimoire/configs/MNIST/MNIST_VSQ_BW.yaml"
     FILTER_TH = 0.2
 
@@ -269,7 +269,7 @@ def tokenize_MNIST():
         "pin_memory": False,
         "random_colors": False,
         "use_palette": False,
-        "padding_frac": 0.1,
+        "padding_frac": 0.,
         "return_filename": True,
     }
 
@@ -354,7 +354,7 @@ def tokenize_MNIST():
             imgs, labels, _, descriptions, filenames = batch
             # print(imgs, labels, centers, descriptions, filenames)
             imgs = imgs.to(device)
-            # imgs = torch.where(imgs > 0.6, 1., 0.)  # makes binary
+            imgs = torch.where(imgs > 0.6, 1., 0.)  # makes binary
             # print(imgs.shape, descriptions, filenames)
             start_token, text_tokens, vq_tokens, end_token = tokenizer.tokenize(
                 imgs,
@@ -363,11 +363,14 @@ def tokenize_MNIST():
                 return_np_uint16=True
             )
             # debug
+            # import matplotlib.pyplot as plt
             # rasterized_gt = tokenizer._tokens_to_image_tensor(
             #     torch.asarray(np.concatenate([vq_tokens, end_token])).int().cuda(),
             #     ignore_special_tokens=True,
             #     only_patch_tokens=False
             # )
+            # plt.imshow(rasterized_gt.moveaxis(0, -1))
+            # plt.show()
             assert vq_tokens.max() <= tokenizer.num_tokens, f"out of boundary tokens in iteration {i}. Max token: {vq_tokens.max()}"
             save_csv["index_in_numpy_array"].append(numpy_counter)
             save_csv["filename"].append(filenames[0])

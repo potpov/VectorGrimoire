@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from torch import Tensor
 import wandb
 from utils import log_all_images, tensor_to_histogram_image, calculate_global_positions, shapes_to_drawing, svg_string_to_tensor, width_pred_to_local_stroke_width
-from models.vsq_heads import MLPVectorHead, CNNVectorHead
+from models.vsq_heads import MLPVectorHead, CNNVectorHead, VectorHydra
 from models.vq_vae import VectorQuantizer
 from torchvision.models import ResNet, resnet18
 from vector_quantize_pytorch import FSQ
@@ -15,6 +15,7 @@ from x_transformers import TransformerWrapper, Decoder
 from transformers import BertModel
 from svgwrite import Drawing
 from einops import rearrange
+from kornia.color import rgb_to_lab, rgba_to_rgb, rgb_to_grayscale
 
 
 class DeconvResNet(nn.Module):
@@ -65,7 +66,7 @@ class VSQ(nn.Module):
                  quantized_dim: int = 256,
                  codebook_size: int = 512,
                  patch_size: int = 128,
-                 image_loss: str = "pyramid",
+                 image_loss: str | list = "pyramid",
                  num_codes_per_shape: int = 1,
                  vq_method: str = "fsq",
                  fsq_levels: list = [8, 5, 5, 5],
@@ -77,8 +78,9 @@ class VSQ(nn.Module):
                  **kwargs) -> None:
         super(VSQ, self).__init__()
 
-        assert vector_decoder_model in ["mlp", "raster_conv",
-                                        "cnn"], "vector_decoder_model must be one of ['mlp', 'raster_conv', 'cnn']"
+        assert vector_decoder_model in [
+            "mlp", "raster_conv","cnn", "hydra"], \
+            "vector_decoder_model must be one of ['mlp', 'raster_conv', 'cnn', 'hydra']"
         # assert geometric_constraint in ["inner_distance", None], f"geometric_constraint must be one of ['inner_distance'], but was {geometric_constraint}"
 
         self.vector_decoder_model = vector_decoder_model
@@ -136,6 +138,13 @@ class VSQ(nn.Module):
                                          max_stroke_width=20.,
                                          pred_color=self.pred_color,
                                          )
+        elif self.vector_decoder_model == "hydra":
+            self.decoder = VectorHydra(
+                     latent_dim=self.quantized_dim * self.num_codes_per_shape,
+                     segments=self.num_segments,
+                     imsize=self.patch_size,
+                     max_stroke_width=20.,
+            )
         elif self.vector_decoder_model == "raster_conv":
             self.decoder = DeconvResNet()
 
@@ -202,7 +211,7 @@ class VSQ(nn.Module):
         bs = input.shape[0]
         encoding = self.encode(input, quantize=False)
         vq_logging_dict = {}
-        if self.vector_decoder_model in ["mlp", "cnn"]:
+        if self.vector_decoder_model in ["mlp", "cnn", "hydra"]:
             # quantize the encoding
             if self.vq_method == "vqvae":
                 quantized_inputs, vq_loss, vq_logging_dict = self.quantize_layer.forward(encoding, logging=logging)
@@ -229,18 +238,32 @@ class VSQ(nn.Module):
         # quantized_inputs = rearrange(quantized_inputs, 'b d (c h) w -> b (d c) h w', c=self.num_codes_per_shape)
         # for mlp out is [output, scenes, all_points, all_widths]
         out, decode_logging_dict = self.decode(quantized_inputs)
-
-        reconstructions, scenes, all_points, visual_attribute_dict = out
         logging_dict = {**logging_dict, **decode_logging_dict, **vq_logging_dict}
-        if only_return_recons:
-            return reconstructions
-        if return_visual_attributes:
-            return [reconstructions, input, all_points, vq_loss, visual_attribute_dict, scenes], logging_dict
-        else:
-            return [reconstructions, input, all_points, vq_loss, scenes], logging_dict
 
-    def gaussian_pyramid_loss(self, recons_images: Tensor, gt_images: Tensor, down_sample_steps: int = 3,
-                              log_loss: bool = False, pyramid_weights: Tensor = None):
+        if len(out) == 4:
+            reconstructions, scenes, all_points, visual_attribute_dict = out
+            if only_return_recons:
+                return reconstructions
+            if return_visual_attributes:
+                return [reconstructions, input, all_points, vq_loss, visual_attribute_dict, scenes], logging_dict
+            else:
+                return [reconstructions, input, all_points, vq_loss, scenes], logging_dict
+
+        reconstructions, (all_paths, all_groups), all_points, visual_attribute_dict, outline, bnw = out
+        return [reconstructions, input, all_points, vq_loss, (all_paths, all_groups), outline,
+                bnw], logging_dict
+
+
+    def gaussian_pyramid_loss(
+            self,
+            recons_images: Tensor,
+            gt_images: Tensor,
+            down_sample_steps: int = 3,
+            log_loss: bool = False,
+            pyramid_weights: Tensor = None,
+            color_weights: Tensor = None,
+            color_masks: Tensor = None
+    ):
         """
         Calculates the gaussian pyramid loss between reconstructed images and ground truth images.
 
@@ -248,41 +271,62 @@ class VSQ(nn.Module):
             - recons_images (Tensor): Reconstructed images in format (-1, c, w, h)
             - gt_images (Tensor): Ground truth images in format (-1, c, w, h)
             - down_sample_steps (int): Number of downsample steps to calculate the loss for. Default: 3
-
+            - filter_mask (Tensor): Keep loss contribution on those pixels. Default: None
+            - color_weights (Tensor): Weights for each layer according to color. Default: None
         Returns:
             - recon_loss (Tensor): The gaussian pyramid loss between reconstructed images and ground truth images.
         """
         dsample = kornia.geometry.transform.pyramid.PyrDown()
         timesteps_to_log = 4
         recon_loss = F.mse_loss(recons_images, gt_images, reduction='none')
+        L, AB = torch.split(recon_loss, [1, 2], dim=1)
+
+        if not torch.is_tensor(color_weights):  # deactivate color weights if not provided
+            color_weights = torch.ones(L.shape[0]).to(L.device)
+
         if log_loss:
             all_loss_images = []
             all_loss_images.append(self.transform_loss_tensor_to_image(recon_loss[:timesteps_to_log]))
-        recon_loss = recon_loss.mean() * pyramid_weights[0]
-        recons_loss_contributions = {
-            "pyramid_loss_step_0": recon_loss.detach().cpu().item()
-        }
-        for j in range(1, 1 + down_sample_steps):
-            if j < len(pyramid_weights):
-                weight = pyramid_weights[j]
-            else:
-                weight = 0.0
 
+        lab_scale_factor = 50
+        ab_loss = sum([AB[i][color_masks[i]].mean() * lab_scale_factor * color_weights[i] for i in range(len(color_masks))]) * pyramid_weights[0]
+        l_loss = sum(L.mean((1,2,3))) * pyramid_weights[0]
+
+        recons_loss_contributions = {
+            f"AB_pyramid_loss_step_0": ab_loss.detach().cpu().item(),
+            f"L_pyramid_loss_step_0": l_loss.detach().cpu().item()
+        }
+
+        for j in range(1, 1 + down_sample_steps):
+            if j < len(pyramid_weights) and pyramid_weights[j] == 0:
+                pyramid_weight = pyramid_weights[j]
+            else:
+                continue
             recons_images = dsample(recons_images)
             gt_images = dsample(gt_images)
+
             loss_images = F.mse_loss(recons_images, gt_images, reduction='none')
+            L, AB = torch.split(recon_loss, [1, 2], dim=1)
+            curr_pyramid_loss_AB = sum(
+                [AB[i][color_masks[i]].mean() * lab_scale_factor * color_weights[i] for i in range(len(color_masks))]
+            ) * pyramid_weight
+            curr_pyramid_loss_L = sum(L.mean((1, 2, 3))) * pyramid_weight
+
             if log_loss:
                 all_loss_images.append(self.transform_loss_tensor_to_image(loss_images[:timesteps_to_log]))
 
-            curr_pyramid_loss = loss_images.mean() * weight
-            recons_loss_contributions[f"pyramid_loss_step_{j}"] = curr_pyramid_loss.detach().cpu().item()
-            recon_loss = recon_loss + curr_pyramid_loss
+            recons_loss_contributions[f"AB_pyramid_loss_step_{j}"] = curr_pyramid_loss_AB.detach().cpu().item()
+            recons_loss_contributions[f"L_pyramid_loss_step_{j}"] = curr_pyramid_loss_L.detach().cpu().item()
+            ab_loss = ab_loss + curr_pyramid_loss_AB
+            l_loss = l_loss + curr_pyramid_loss_L
 
         if log_loss:
-            log_all_images(all_loss_images, log_key="pyramid loss",
-                           caption=f"Gaussian Pyramid Loss, {down_sample_steps + 1} steps")
+            log_all_images(
+                all_loss_images, log_key="pyramid loss",
+                caption=f"Gaussian Pyramid Loss, {down_sample_steps + 1} steps"
+            )
             wandb.log(recons_loss_contributions)
-        return recon_loss, recons_loss_contributions
+        return ab_loss, l_loss, recons_loss_contributions
 
     def _get_mean_inner_distance(self,
                                  points: Tensor,
@@ -335,47 +379,88 @@ class VSQ(nn.Module):
                       vq_loss: Tensor,
                       points: Tensor,
                       log_loss: bool = False,
+                      raw_images: Tensor = None,
+                      composite: list = None,
+                      gt_outline: Tensor = None,
+                      pred_outline: Tensor = None,
+                      gt_bnw: Tensor = None,
+                      pred_bnw: Tensor = None,
+                      color_weights: Tensor = None,
+                      recon_weight: float = 1.0,  # weight for the reconstruction loss
+                      recon_bw_weight: float = 1.0,  # weight for the bw reconstruction loss
+                      outline_weight: float = 1.0,  # weight for the bw reconstruction loss
                       **kwargs) -> dict:
-        if self.image_loss == "mse":
-            recons_loss = F.mse_loss(reconstructions, gt_images)
-            recons_loss_contributions = {}
-        elif self.image_loss == "pyramid":
-            recons_loss, recons_loss_contributions = self.gaussian_pyramid_loss(reconstructions, gt_images,
-                                                                                down_sample_steps=3, log_loss=log_loss,
-                                                                                pyramid_weights=kwargs[
-                                                                                    "pyramid_weights"])
+
+        loss_dict = {}
+        final_loss = 0
+
+        if self.vq_method != "fsq":  # FSQ does not train the codebook
+            loss_dict['VQ_Loss'] = vq_loss
+            final_loss += vq_loss  # UPDATE LOSS HERE
+
+        # white_filter_mask = (gt_images == 1.0000).all(dim=1).unsqueeze(1).expand(-1, 2, -1, -1)
+        white_filter_mask = ~gt_bnw[:, 0].bool().unsqueeze(1).expand(-1, 2, -1, -1)
+
+        # convert to LAB and normalise
+        recon_lab = rgb_to_lab(reconstructions)
+        gt_lab = rgb_to_lab(gt_images)
+        recon_lab[:, 0] = recon_lab[:, 0] / 100
+        recon_lab[:, 1:3] = (recon_lab[:, 1:3] + 128) / 255
+        gt_lab[:, 0] = gt_lab[:, 0] / 100
+        gt_lab[:, 1:3] = (gt_lab[:, 1:3] + 128) / 255
+
+        # PYRAMID does MSE anyway, so either one or the other
+        if "mse" in self.image_loss:
+            raise NotImplementedError("MSE loss disabled because already included in the pyramid.")
+            # recons_loss = F.mse_loss(reconstructions, gt_images)
+        elif "pyramid" in self.image_loss:
+            ab_loss, l_loss, pyramic_contributions = self.gaussian_pyramid_loss(
+                recon_lab, gt_lab,
+                down_sample_steps=3, log_loss=log_loss,
+                pyramid_weights=kwargs["pyramid_weights"],
+                color_weights=color_weights,
+                color_masks=white_filter_mask,
+            )
+            loss_dict.update(pyramic_contributions)
         else:
-            raise NotImplementedError("Only mse and pyramid loss implemented for now.")
+            raise Exception("One of the following image loss functions must be used: ['mse', 'pyramid']")
+        loss_dict['AB_Loss'] = ab_loss
+        loss_dict['L_Loss'] = l_loss
+        final_loss += (ab_loss * recon_weight) + (l_loss * recon_bw_weight)  # UPDATE LOSS HERE
+
+        if "outline" in self.image_loss:
+            outline_loss = F.l1_loss(
+                rgb_to_grayscale(rgba_to_rgb(pred_outline)).squeeze(),
+                gt_outline
+            ) * 10
+            loss_dict['Outline_loss'] = outline_loss
+            final_loss += (outline_loss * outline_weight)
+
+        if "composite" in self.image_loss and composite is not None:
+            composite = torch.stack(composite, dim=0)
+            composite_loss = F.mse_loss(raw_images, composite)
+            final_loss += composite_loss  # UPDATE LOSS HERE
+            loss_dict['Composite_Loss'] = composite_loss
+
         if self.geometric_constraint == "inner_distance":
-            if False:
-                max_dist = torch.cdist(torch.tensor([[0.0, 0.0]]), torch.tensor([[1.0, 1.0]]), p=2).item()
-                mean_inner_distance_batched = self._get_mean_inner_distance(points)
-                # loss is weighted by the mean of black pixels, so that short strokes are not penalized as much
-                # ä FIXME removed the scaling FOR NOW
-                mean_black_pixels_batched = (1 - gt_images).mean(dim=(1, 2, 3))
-                geometric_loss = (1 - (mean_inner_distance_batched / max_dist))
-                scaled_geometric_loss = (geometric_loss * mean_black_pixels_batched).mean()
-                geometric_loss = geometric_loss.mean()
-            else:
-                inner_distance_penalty = self._get_inner_distance_penalty(points)
-                scaled_geometric_loss = inner_distance_penalty
-                geometric_loss = inner_distance_penalty
-        else:
-            geometric_loss = 0.0
-            scaled_geometric_loss = 0.0
+            # if False:
+            #     max_dist = torch.cdist(torch.tensor([[0.0, 0.0]]), torch.tensor([[1.0, 1.0]]), p=2).item()
+            #     mean_inner_distance_batched = self._get_mean_inner_distance(points)
+            #     # loss is weighted by the mean of black pixels, so that short strokes are not penalized as much
+            #     # ä FIXME removed the scaling FOR NOW
+            #     mean_black_pixels_batched = (1 - gt_images).mean(dim=(1, 2, 3))
+            #     geometric_loss = (1 - (mean_inner_distance_batched / max_dist))
+            #     scaled_geometric_loss = (geometric_loss * mean_black_pixels_batched).mean()
+            #     geometric_loss = geometric_loss.mean()
+            # else:
+            inner_distance_penalty = self._get_inner_distance_penalty(points)
+            scaled_geometric_loss = inner_distance_penalty
+            final_loss += self.alpha * scaled_geometric_loss  # UPDATE LOSS HERE
+            loss_dict["geometric_Loss"] = inner_distance_penalty
+            loss_dict[self.geometric_constraint + "_loss"] = self.alpha * scaled_geometric_loss
 
-        loss = recons_loss + vq_loss + self.alpha * scaled_geometric_loss
-        # FIXME this is for experimentation ONLY
-        # loss = self.alpha * geometric_loss
-
-        return {'loss': loss,
-                'Reconstruction_Loss': recons_loss,
-                "geometric_loss": geometric_loss,
-                "frac_black_scaled_geometric_loss": scaled_geometric_loss,
-                self.geometric_constraint + "_loss": self.alpha * scaled_geometric_loss,
-                # "frac_black": (1-gt_images).mean(),
-                'VQ_Loss': vq_loss,
-                **recons_loss_contributions}
+        loss_dict["loss"] = final_loss  # this is the one processed by the model
+        return loss_dict
 
     def generate(self, x: Tensor, **kwargs) -> Tensor:
         """

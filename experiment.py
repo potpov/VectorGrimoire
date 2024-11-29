@@ -10,13 +10,13 @@ import pytorch_lightning as pl
 from utils import log_images, log_all_images, get_side_by_side_reconstruction, add_points_to_image, get_merged_image_for_logging, interpolate_rows
 from torchmetrics.image.fid import FrechetInceptionDistance
 from torchmetrics.multimodal.clip_score import CLIPScore
-import torch.nn.functional as F
+import cv2
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.optim.lr_scheduler import StepLR
 import pandas as pd
 from torchmetrics.functional.multimodal import clip_score
 from tokenizer import VQTokenizer, RasterVQTokenizer
-from utils import render_multiple_layers
+from utils import render_multiple_layers, layer_recon
 from dataset import VSQDatamodule, MNISTDataset, PrecomputedMNISTDataset, CartoonDataset
 from transformers import get_cosine_schedule_with_warmup, get_linear_schedule_with_warmup
 
@@ -346,7 +346,7 @@ class SVG_VQVAE_Stage2_Experiment(pl.LightningModule):
         return optims
 
 
-class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
+class VectorVQVAE_Experiment_Layer_Stage1(pl.LightningModule):
     """
     Vector quantized pre-training of an autoencoder for SVG primitives.
     
@@ -357,6 +357,7 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
                  model: VSQ,
                  lr: float = 0.0003,
                  schedule_pyramid_method: str = None,
+                 pyrapid_interpolation_epochs: int = 10,
                  weight_decay: float = 0.0,
                  scheduler_gamma: float = 0.99,
                  train_log_interval: float = 0.05,
@@ -366,11 +367,13 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
                  step_lr_epoch_step_size: int = 30,
                  scheduler_type: str = "cosine",
                  layer_length: int | bool = False,
+                 fixed_recon_weights: bool = False,
+                 use_color_weights: bool = True,
                  wandb: bool = True,
                  datamodule = None,
                  max_epochs:int=300,
                  **kwargs) -> None:
-        super(VectorVQVAE_Experiment_Stage1, self).__init__()
+        super(VectorVQVAE_Experiment_Layer_Stage1, self).__init__()
 
         assert train_log_interval < 1 and train_log_interval >= 0, f"train log interval should be a fraction of the total number of batches in [0, 1), got {train_log_interval}"
         # assert metric_log_interval < 1 and metric_log_interval >= 0, f"metric log interval should be a fraction of the total number of batches in [0, 1), got {metric_log_interval}"
@@ -397,57 +400,82 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
         self.datamodule = datamodule
         self.scheduler_type = scheduler_type
         self.step_size = step_lr_epoch_step_size
+
+        # Pyrapid schduler schduler config
         self.schedule_pyramid_method = schedule_pyramid_method
-        
         self.start_weights = torch.tensor([1/2, 1/2, 1/2, 1/4, 1/4, 1/8, 1/8])
         self.end_weights = torch.tensor([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-        interpolation_epochs = 10
+        self.pyrapid_interpolation_epochs = pyrapid_interpolation_epochs
 
         if self.schedule_pyramid_method is not None and self.schedule_pyramid_method.lower() == "linear":
-            self.pyramid_weight_schedule = interpolate_rows(self.start_weights, self.end_weights, interpolation_epochs, method="linear")
+            self.pyramid_weight_schedule = interpolate_rows(self.start_weights, self.end_weights, pyrapid_interpolation_epochs, method="linear")
         elif self.schedule_pyramid_method is not None and self.schedule_pyramid_method.lower() == "exponential":
-            self.pyramid_weight_schedule = interpolate_rows(self.start_weights, self.end_weights, interpolation_epochs, method="exponential")
+            self.pyramid_weight_schedule = interpolate_rows(self.start_weights, self.end_weights, pyrapid_interpolation_epochs, method="exponential")
         else:
             self.pyramid_weight_schedule = self.start_weights.unsqueeze(0)
+
+        self.use_color_weights = use_color_weights
+        self.outline_weights = torch.linspace(0.1, 1, 20).tolist()
+        if fixed_recon_weights:
+            self.recon_weights = [1.]
+            self.recon_bw_weights = [1.]
+        else:
+            self.recon_weights = torch.linspace(0.1, 1, 10).tolist()  ## color
+            self.recon_bw_weights = torch.linspace(1, 0.2, 10).tolist()
 
     def forward(self, input_images: Tensor, logging=False,**kwargs) -> list:
         out, logging_dict = self.model.forward(input_images, logging=logging, **kwargs)
         return out, logging_dict
     
     def training_step(self, batch, batch_idx):
-        patches, labels, centers, descriptions = batch
+
+        patches, labels, centers, descriptions, color_weights, gt_outlines, gt_bnw, raw_imgs = batch
         self.curr_device = patches.device
 
-        if self.use_layers:
-            bs, cl, c, w, h = patches.shape
-            assert w == h, "only square images are supported for now"
-            layer_att_mask = ~ torch.any(patches == -1, dim=(-1, -2, -3))  # (B, CL)
-            layer_att_mask = layer_att_mask.reshape((bs * cl))  # (B * CL)
-            patches = patches.reshape((bs * cl, c, w, h))
-        else:
-            bs = patches.shape[0]
-            c = patches.shape[1]
+        bs, cl, c, w, h = patches.shape
+        assert w == h, "only square images are supported for now"
+        # creating layer attention mask
+        layer_att_mask = ~ torch.any(patches == -1, dim=(-1, -2, -3))  # (B, CL)
+        layer_att_mask = layer_att_mask.reshape((bs * cl))  # (B * CL)
 
-        (reconstructions, _, all_points, vq_loss, (all_paths, pred_colors)), logging_dict = self.forward(
+        # flattening bs and cl
+        layer_att_mask = layer_att_mask.reshape((bs * cl))  # (B * CL)
+        patches = patches.reshape((bs * cl, c, w, h))
+        gt_outlines = gt_outlines.reshape((bs * cl, w, h))
+        color_weights = color_weights.reshape((bs * cl))  # (B * CL)
+        gt_bnw = gt_bnw.reshape((bs * cl, c, w, h))
+
+        (reconstructions, _, all_points, vq_loss, (all_paths, pred_colors), pred_outline, pred_bnw), logging_dict = self.forward(
             patches,
             logging=(batch_idx % self.train_log_interval == 0 and self.wandb)
         )
 
-        if self.use_layers:
-            if batch_idx % self.val_log_interval == 0 and self.wandb:
-                # first, create a global view of each image in the layers
-                for i in range(0, len(all_paths), cl):
-                    unmask_idx = torch.arange(cl)[layer_att_mask.cpu()[i: i + cl]]
-                    composited_ims = render_multiple_layers(
-                        [all_paths[i: i + cl][j] for j in unmask_idx],
-                        [pred_colors[i: i + cl][j] for j in unmask_idx],
-                        render_size=w
-                    )
+        composite_imgs = []
+        if "composite" in self.model.image_loss or (batch_idx % self.val_log_interval == 0 and self.wandb):
+            # first, create a global view of each image in the layers
+            for i in range(0, len(all_paths), cl):
+                real_paths, colors = layer_recon(layer_att_mask, cl, all_paths, pred_colors, centers, i, patch_size=w)
+                composite_img = render_multiple_layers(real_paths, colors, render_size=400)
+
+                composite_imgs.append(composite_img)  # save this before concatenating with raw image for loss computation
+                composite_img = torch.concatenate((raw_imgs[i // cl], composite_img), dim=2)
+
+                if batch_idx % self.val_log_interval == 0 and self.wandb:
                     self.trainer.logger.experiment.log(
                         {"train/layer_composed": [
-                            wandb.Image(composited_ims, caption="all layers rendered together from validation sample")
+                            wandb.Image(composite_img, caption="all layers rendered together (merged png left, composited predictions right)")
                         ]},
                     )
+
+        # second, filter layers using layer attention mask and collapse the batch dimension
+        reconstructions = reconstructions[layer_att_mask]
+        patches = patches[layer_att_mask]
+        all_points = all_points[layer_att_mask]
+        pred_bnw = pred_bnw[layer_att_mask]
+        pred_outline = pred_outline[layer_att_mask]
+        gt_bnw = gt_bnw[layer_att_mask]
+        gt_outlines = gt_outlines[layer_att_mask]
+        color_weights = color_weights[layer_att_mask]
 
         if self.schedule_pyramid_method is not None:
             if self.current_epoch < len(self.pyramid_weight_schedule):
@@ -456,13 +484,26 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
                 pyramid_weights = self.pyramid_weight_schedule[-1]
         else:
             pyramid_weights = self.start_weights
+        recon_bw_weights = self.recon_bw_weights[self.current_epoch if self.current_epoch < len(self.recon_bw_weights) else -1]
+        recon_weights = self.recon_weights[self.current_epoch if self.current_epoch < len(self.recon_weights) else -1]
+        outline_weights = self.outline_weights[self.current_epoch if self.current_epoch < len(self.outline_weights) else -1]
 
         loss_dict = self.model.loss_function(
             reconstructions=reconstructions[:, :c, :, :],
             gt_images=patches,
             vq_loss=vq_loss,
             points=all_points,
-            pyramid_weights=pyramid_weights
+            pyramid_weights=pyramid_weights,
+            raw_images=raw_imgs,
+            composite=composite_imgs,
+            gt_outline=gt_outlines,
+            pred_outline=pred_outline,
+            gt_bnw=gt_bnw,
+            pred_bnw=pred_bnw,
+            color_weights=color_weights if self.use_color_weights else None,
+            recon_weight=recon_weights,
+            recon_bw_weight=recon_bw_weights,
+            outline_weight=outline_weights
         )
     
         # always log the first batch and variable amount of timesteps up to 10
@@ -474,34 +515,26 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
                         continue
                     self.log(f"train/{key}", value)
 
-                # SIDE BY SIDE RECON
-                if not isinstance(self.datamodule, PrecomputedMNISTDataset) and not isinstance(self.datamodule, CartoonDataset):
-                    random_idx = random.randint(0, len(self.datamodule.train_dataset))
-                    if isinstance(self.datamodule, VSQDatamodule):
-                        dataset_name = "glyphazzn"
-                    elif isinstance(self.datamodule, MNISTDataset):
-                        dataset_name = "mnist"
-                    side_by_side_recons = get_side_by_side_reconstruction(self.model, self.datamodule.train_dataset, idx = random_idx, device = self.curr_device, dataset_name=dataset_name)
-                    if side_by_side_recons is not None:
-                        current_trainer_global_step = self.trainer.global_step
-                        self.trainer.logger.experiment.log(
-                            {"train/side_by_side_recons": [
-                                wandb.Image(side_by_side_recons, caption="side by side reconstructions of training sample")
-                            ]},
-                            # step=current_trainer_global_step,
-                        )
-
-               # OTHER RECON
-                if reconstructions.shape[0] > 25:
-                    log_amount = 25
-                else:
-                    log_amount = reconstructions.shape[0]
+                log_amount = 25 if reconstructions.shape[0] > 25 else reconstructions.shape[0]
 
                 if isinstance(self.datamodule, VSQDatamodule):
                     log_reconstructions = add_points_to_image(all_points, reconstructions[:,:3,:,:], image_scale=reconstructions.shape[-1])
                 elif isinstance(self.datamodule, (MNISTDataset, PrecomputedMNISTDataset)) or isinstance(self.datamodule, CartoonDataset):
                     log_reconstructions = reconstructions[:,:3,:,:]
 
+                # Log control points
+                ctrl_point_imgs = add_points_to_image(
+                    all_points[:log_amount],
+                    reconstructions[:log_amount, :-1],
+                    image_scale=reconstructions.shape[-1]
+                )
+                k, i = log_images(
+                    ctrl_point_imgs[:log_amount], patches[:log_amount], log_key="train/control_points",
+                    captions="input (left) vs. reconstruction with control points (right)"
+                )
+                self.trainer.logger.experiment.log({"control_points": [i]})
+
+                ###
                 # Log input against prediction
                 k, i = log_images(
                     log_reconstructions[:log_amount],
@@ -509,61 +542,94 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
                     log_key="train/reconstruction",
                     captions="input (left) vs. reconstruction (right)"
                 )
-                self.trainer.logger.experiment.log(
-                    {"samples": [i]},
+                self.trainer.logger.experiment.log({"reconstructions (color)": [i]})
+
+                k, i = log_images(
+                    torch.cat([
+                        torch.ones_like(gt_outlines[:log_amount].unsqueeze(1)),  # Add alpha channel
+                        gt_outlines[:log_amount].unsqueeze(1).repeat(1, 3, 1, 1)  # Replicate for RGB
+                    ], dim=1).float(),
+                    pred_outline[:log_amount],
+                    log_key="train/outline_reconstruction",
+                    captions="input (left) vs. reconstruction (right)"
                 )
+                self.trainer.logger.experiment.log({"reconstructions (outline)": [i]})
 
         self.log_dict(loss_dict, logger=True, prog_bar=True)
         return loss_dict["loss"]
 
     def validation_step(self, batch, batch_idx):
         with torch.no_grad():
-            patches, label, centers, descriptions = batch
+            patches, labels, centers, descriptions, color_weights, gt_outlines, gt_bnw, raw_imgs = batch
             self.curr_device = patches.device
 
-            if self.use_layers:
-                bs, cl, c, w, h = patches.shape
-                assert w == h, "only square images are supported for now"
-                layer_att_mask = ~ torch.any(patches == -1, dim=(-1, -2, -3))  # (B, CL)
-                layer_att_mask = layer_att_mask.reshape((bs * cl))  # (B * CL)
-                patches = patches.reshape((bs * cl, c, w, h))
-            else:
-                c = patches.shape[1]
+            bs, cl, c, w, h = patches.shape
+            assert w == h, "only square images are supported for now"
+            layer_att_mask = ~ torch.any(patches == -1, dim=(-1, -2, -3))  # (B, CL)
+            # collapse BS and CL dimensions for everything
+            layer_att_mask = layer_att_mask.reshape((bs * cl))  # (B * CL)
+            patches = patches.reshape((bs * cl, c, w, h))
+            gt_outlines = gt_outlines.reshape((bs * cl, w, h))
+            color_weights = color_weights.reshape((bs * cl))  # (B * CL)
+            gt_bnw = gt_bnw.reshape((bs * cl, c, w, h))
 
-            (reconstructions, _, all_points, vq_loss, (all_paths, all_groups)), logging_dict = self.forward(patches)
+            (reconstructions, _, all_points, vq_loss, (all_paths, pred_colors), pred_outline, pred_bnw), logging_dict = self.forward(patches)
             assert vq_loss.dim() <= 1, f"vq_loss should be a 1D tensor, but got {vq_loss.dim()}"
 
-            if self.use_layers:
-                if batch_idx % self.val_log_interval == 0 and self.wandb:
-                    # first, create a global view of each image in the layers
-                    for i in range(0, len(all_paths), cl):
-                        unmask_idx = torch.arange(cl)[layer_att_mask.cpu()[i: i + cl]]
-                        composited_ims = render_multiple_layers(
-                                [all_paths[i: i + cl][j] for j in unmask_idx],
-                                [all_groups[i: i + cl][j] for j in unmask_idx],
-                                render_size=w
-                            )
-                        self.trainer.logger.experiment.log(
-                            {"val/layer_composed": [
-                                wandb.Image(composited_ims, caption="all layers rendered together from validation sample")
-                            ]},
-                        )
 
-                # second, filter layers using layer attention mask and collapse the batch dimension
-                reconstructions = reconstructions[layer_att_mask]
-                patches = patches[layer_att_mask]
-                all_points = all_points[layer_att_mask]
+            # temporary saving svg 
+            from utils import calculate_global_positions, shapes_to_drawing, drawing_to_tensor
+            for i in range(0, len(all_paths), cl):
+                real_paths, colors = layer_recon(layer_att_mask, cl, all_paths, pred_colors, centers, i, patch_size=w)
+                import pydiffvg
+                groups = []
+                for j in range(len(colors)):
+                    groups.append(pydiffvg.ShapeGroup(
+                        shape_ids=torch.tensor([j]),
+                        fill_color=colors[j],
+                        stroke_color=colors[j])
+                    )
+                pydiffvg.save_svg(
+                    f'/home/marco.cipriano/test/showcase/{batch_idx}_{i}.svg',
+                    400, 400, real_paths, groups)
 
+            if batch_idx % self.val_log_interval == 0 and self.wandb:
+                for i in range(0, len(all_paths), cl):
+                    real_paths, colors = layer_recon(layer_att_mask, cl, all_paths, pred_colors, centers, i, patch_size=w)
+                    composite_img = render_multiple_layers(real_paths, colors, render_size=400)
+                    composite_img = torch.concatenate((raw_imgs[i // cl], composite_img), dim=2)
+                    self.trainer.logger.experiment.log(
+                        {"val/layer_composed": [
+                            wandb.Image(composite_img, caption="all layers rendered together from validation sample")
+                        ]},
+                    )
 
-            # for validation we only track MSE
+            # second, filter layers using layer attention mask and collapse the batch dimension
+            reconstructions = reconstructions[layer_att_mask]
+            patches = patches[layer_att_mask]
+            all_points = all_points[layer_att_mask]
+            pred_bnw = pred_bnw[layer_att_mask]
+            pred_outline = pred_outline[layer_att_mask]
+            gt_bnw = gt_bnw[layer_att_mask]
+            gt_outlines = gt_outlines[layer_att_mask]
+            color_weights = color_weights[layer_att_mask]
+
+            ##### LOSS FUNCTION #####
+            # for validation we only track MSE (first of the pyramid losses
             pyramid_weights = torch.tensor([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-
+            # composite is not provided (None), we do not compute the loss on composite
             loss_dict = self.model.loss_function(
                 reconstructions=reconstructions[:, :c, :, :],
                 gt_images=patches,
                 vq_loss=vq_loss,
                 points=all_points,
-                pyramid_weights=pyramid_weights
+                pyramid_weights=pyramid_weights,
+                raw_images=raw_imgs,
+                gt_outline=gt_outlines,
+                pred_outline=pred_outline,
+                gt_bnw=gt_bnw,
+                pred_bnw=pred_bnw,
+                color_weights=color_weights
             )
             # log_reconstructions = add_points_to_image(all_points, reconstructions[:,:3,:,:], image_scale=reconstructions.shape[-1])
             if batch_idx % self.val_log_interval == 0 and self.wandb:
@@ -573,29 +639,8 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
                         continue
                     self.log(f"val/{key}", value)
 
-                # SIDE BY SIDE RECON
-                # not possible for MNIST with custom patches
-                # also temporary disabled for Cartoon
-                if not isinstance(self.datamodule, PrecomputedMNISTDataset) and not isinstance(self.datamodule, CartoonDataset):
-                    random_idx = random.randint(0, len(self.datamodule.val_dataset))
-                    if isinstance(self.datamodule, VSQDatamodule):
-                        dataset_name = "glyphazzn"
-                    elif isinstance(self.datamodule, MNISTDataset):
-                        dataset_name = "mnist"
-                    side_by_side_recons = get_side_by_side_reconstruction(self.model, self.datamodule.val_dataset, idx = random_idx, device = self.curr_device, dataset_name=dataset_name)
-                    current_trainer_global_step = self.trainer.global_step
-                    self.trainer.logger.experiment.log(
-                        {"val/side_by_side_recons": [
-                            wandb.Image(side_by_side_recons, caption="side by side reconstructions of validation sample")
-                        ]},
-                        # step=current_trainer_global_step,
-                    )
-
                 # OTHER RECON
-                if reconstructions.shape[0] > 25:
-                    log_amount = 25
-                else:
-                    log_amount = reconstructions.shape[0]
+                log_amount = 25 if reconstructions.shape[0] > 25 else reconstructions.shape[0]
 
                 if isinstance(self.datamodule, VSQDatamodule):
                     log_reconstructions = add_points_to_image(all_points[:log_amount], reconstructions[:log_amount,:3,:,:], image_scale=reconstructions.shape[-1])
@@ -615,7 +660,8 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
                 )
 
         self.log("val_loss", loss_dict["loss"])
-        self.trainer.logger.experiment.log({"val_loss": [loss_dict["loss"]]})
+        if self.wandb:
+            self.trainer.logger.experiment.log({"val_loss": [loss_dict["loss"]]})
         return loss_dict["loss"]
 
     
@@ -663,7 +709,303 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
     #         self.trainer.fit_loop.epoch_loop.val_loop.run()
 
 
+class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
+    """
+    Vector quantized pre-training of an autoencoder for SVG primitives.
 
+    Input/Output are shape layers and positions.
+    """
+
+    def __init__(self,
+                 model: VSQ,
+                 lr: float = 0.0003,
+                 schedule_pyramid_method: str = None,
+                 pyrapid_interpolation_epochs: int = 10,
+                 weight_decay: float = 0.0,
+                 scheduler_gamma: float = 0.99,
+                 train_log_interval: float = 0.05,
+                 val_log_interval: float = 0.1,
+                 manual_seed: int = 42,
+                 min_lr: float = 1.e-6,
+                 step_lr_epoch_step_size: int = 30,
+                 scheduler_type: str = "cosine",
+                 layer_length: int | bool = False,
+                 wandb: bool = True,
+                 datamodule=None,
+                 max_epochs: int = 300,
+                 **kwargs) -> None:
+        super(VectorVQVAE_Experiment_Stage1, self).__init__()
+
+        assert train_log_interval < 1 and train_log_interval >= 0, f"train log interval should be a fraction of the total number of batches in [0, 1), got {train_log_interval}"
+        # assert metric_log_interval < 1 and metric_log_interval >= 0, f"metric log interval should be a fraction of the total number of batches in [0, 1), got {metric_log_interval}"
+        # self.train_log_interval = max(1, int(train_log_interval * num_batches_train))
+        self.num_batches_train = len(datamodule.train_dataloader())
+        self.num_batches_val = len(datamodule.val_dataloader())
+
+        self.layer_length = layer_length
+        self.use_layers = True
+        if not torch.is_tensor(layer_length) and not self.layer_length:
+            self.use_layers = False
+
+        self.model = model
+        self.lr = lr
+        self.total_steps = max_epochs * self.num_batches_train
+        self.min_lr = min_lr
+        self.weight_decay = weight_decay
+        self.scheduler_gamma = scheduler_gamma
+        self.train_log_interval = max(1, int(train_log_interval * self.num_batches_train))
+        self.val_log_interval = max(1, int(val_log_interval * self.num_batches_val))
+        self.manual_seed = manual_seed
+        self.curr_device = None
+        self.wandb = wandb
+        self.datamodule = datamodule
+        self.scheduler_type = scheduler_type
+        self.step_size = step_lr_epoch_step_size
+
+        # Pyrapid schduler schduler config
+        self.schedule_pyramid_method = schedule_pyramid_method
+        self.start_weights = torch.tensor([1 / 2, 1 / 2, 1 / 2, 1 / 4, 1 / 4, 1 / 8, 1 / 8])
+        self.end_weights = torch.tensor([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+        self.pyrapid_interpolation_epochs = pyrapid_interpolation_epochs
+
+        if self.schedule_pyramid_method is not None and self.schedule_pyramid_method.lower() == "linear":
+            self.pyramid_weight_schedule = interpolate_rows(self.start_weights, self.end_weights,
+                                                            pyrapid_interpolation_epochs, method="linear")
+        elif self.schedule_pyramid_method is not None and self.schedule_pyramid_method.lower() == "exponential":
+            self.pyramid_weight_schedule = interpolate_rows(self.start_weights, self.end_weights,
+                                                            pyrapid_interpolation_epochs, method="exponential")
+        else:
+            self.pyramid_weight_schedule = self.start_weights.unsqueeze(0)
+
+    def forward(self, input_images: Tensor, logging=False, **kwargs) -> list:
+        out, logging_dict = self.model.forward(input_images, logging=logging, **kwargs)
+        return out, logging_dict
+
+    def training_step(self, batch, batch_idx):
+
+        patches, labels, centers, descriptions, filename = batch
+        self.curr_device = patches.device
+
+        if self.use_layers:
+            bs, cl, c, w, h = patches.shape
+            assert w == h, "only square images are supported for now"
+            layer_att_mask = ~ torch.any(patches == -1, dim=(-1, -2, -3))  # (B, CL)
+            layer_att_mask = layer_att_mask.reshape((bs * cl))  # (B * CL)
+            patches = patches.reshape((bs * cl, c, w, h))
+        else:
+            bs = patches.shape[0]
+            c = patches.shape[1]
+
+        (reconstructions, _, all_points, vq_loss, (all_paths, pred_colors)), logging_dict = self.forward(
+            patches,
+            logging=(batch_idx % self.train_log_interval == 0 and self.wandb)
+        )
+
+        if self.schedule_pyramid_method is not None:
+            if self.current_epoch < len(self.pyramid_weight_schedule):
+                pyramid_weights = self.pyramid_weight_schedule[self.current_epoch]
+            else:
+                pyramid_weights = self.pyramid_weight_schedule[-1]
+        else:
+            pyramid_weights = self.start_weights
+
+        loss_dict = self.model.loss_function(
+            reconstructions=reconstructions[:, :c, :, :],
+            gt_images=patches,
+            vq_loss=vq_loss,
+            points=all_points,
+            pyramid_weights=pyramid_weights,
+        )
+
+        # always log the first batch and variable amount of timesteps up to 10
+        if batch_idx % self.train_log_interval == 0 and self.wandb:
+            with torch.no_grad():
+                logging_dict = {f"train/{key}": value for key, value in logging_dict.items()}
+                for key, value in logging_dict.items():
+                    if "codebook_histogram" in key:
+                        continue
+                    self.log(f"train/{key}", value)
+
+                # SIDE BY SIDE RECON
+                if not isinstance(self.datamodule, PrecomputedMNISTDataset) and not isinstance(self.datamodule,
+                                                                                               CartoonDataset):
+                    random_idx = random.randint(0, len(self.datamodule.train_dataset))
+                    if isinstance(self.datamodule, VSQDatamodule):
+                        dataset_name = "glyphazzn"
+                    elif isinstance(self.datamodule, MNISTDataset):
+                        dataset_name = "mnist"
+                    side_by_side_recons = get_side_by_side_reconstruction(self.model, self.datamodule.train_dataset,
+                                                                          idx=random_idx, device=self.curr_device,
+                                                                          dataset_name=dataset_name)
+                    if side_by_side_recons is not None:
+                        self.trainer.logger.experiment.log(
+                            {"train/side_by_side_recons": [
+                                wandb.Image(side_by_side_recons,
+                                            caption="side by side reconstructions of training sample")
+                            ]},
+                        )
+
+                # OTHER RECON
+                if reconstructions.shape[0] > 25:
+                    log_amount = 25
+                else:
+                    log_amount = reconstructions.shape[0]
+
+                if isinstance(self.datamodule, VSQDatamodule):
+                    log_reconstructions = add_points_to_image(all_points, reconstructions[:, :3, :, :],
+                                                              image_scale=reconstructions.shape[-1])
+                elif isinstance(self.datamodule, (MNISTDataset, PrecomputedMNISTDataset)) or isinstance(self.datamodule,
+                                                                                                        CartoonDataset):
+                    log_reconstructions = reconstructions[:, :3, :, :]
+
+                # Log control points
+                ctrl_point_imgs = add_points_to_image(
+                    all_points[:log_amount],
+                    reconstructions[:log_amount, :-1],
+                    image_scale=reconstructions.shape[-1]
+                )
+                k, i = log_images(
+                    ctrl_point_imgs[:log_amount], patches[:log_amount], log_key="train/control_points",
+                    captions="input (left) vs. reconstruction with control points (right)"
+                )
+                self.trainer.logger.experiment.log({"samples_ctrl": [i]})
+
+                ###
+                # Log input against prediction
+                k, i = log_images(
+                    log_reconstructions[:log_amount],
+                    patches[:log_amount],
+                    log_key="train/reconstruction",
+                    captions="input (left) vs. reconstruction (right)"
+                )
+                self.trainer.logger.experiment.log({"samples": [i]})
+
+        self.log_dict(loss_dict, logger=True, prog_bar=True)
+        return loss_dict["loss"]
+
+    def validation_step(self, batch, batch_idx):
+        with torch.no_grad():
+            patches, label, centers, descriptions, filename = batch
+            self.curr_device = patches.device
+
+            c = patches.shape[1]
+
+            (reconstructions, _, all_points, vq_loss, (all_paths, pred_colors)), logging_dict = self.forward(patches)
+            assert vq_loss.dim() <= 1, f"vq_loss should be a 1D tensor, but got {vq_loss.dim()}"
+
+            ##### LOSS FUNCTION #####
+            # for validation we only track MSE (first of the pyramid losses
+            pyramid_weights = torch.tensor([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+            # composite is not provided (None), we do not compute the loss on composite
+            loss_dict = self.model.loss_function(
+                reconstructions=reconstructions[:, :c, :, :],
+                gt_images=patches,
+                vq_loss=vq_loss,
+                points=all_points,
+                pyramid_weights=pyramid_weights
+            )
+            # log_reconstructions = add_points_to_image(all_points, reconstructions[:,:3,:,:], image_scale=reconstructions.shape[-1])
+            if batch_idx % self.val_log_interval == 0 and self.wandb:
+                logging_dict = {f"val/{key}": value for key, value in logging_dict.items()}
+                for key, value in logging_dict.items():
+                    if "codebook_histogram" in key:
+                        continue
+                    self.log(f"val/{key}", value)
+
+                # SIDE BY SIDE RECON
+                # not possible for MNIST with custom patches
+                # also temporary disabled for Cartoon
+                if not isinstance(self.datamodule, PrecomputedMNISTDataset) and not isinstance(self.datamodule,
+                                                                                               CartoonDataset):
+                    random_idx = random.randint(0, len(self.datamodule.val_dataset))
+                    if isinstance(self.datamodule, VSQDatamodule):
+                        dataset_name = "glyphazzn"
+                    elif isinstance(self.datamodule, MNISTDataset):
+                        dataset_name = "mnist"
+                    side_by_side_recons = get_side_by_side_reconstruction(self.model, self.datamodule.val_dataset,
+                                                                          idx=random_idx, device=self.curr_device,
+                                                                          dataset_name=dataset_name)
+                    self.trainer.logger.experiment.log(
+                        {"val/side_by_side_recons": [
+                            wandb.Image(side_by_side_recons,
+                                        caption="side by side reconstructions of validation sample")
+                        ]},
+                        # step=current_trainer_global_step,
+                    )
+
+                # OTHER RECON
+                if reconstructions.shape[0] > 25:
+                    log_amount = 25
+                else:
+                    log_amount = reconstructions.shape[0]
+
+                if isinstance(self.datamodule, VSQDatamodule):
+                    log_reconstructions = add_points_to_image(all_points[:log_amount],
+                                                              reconstructions[:log_amount, :3, :, :],
+                                                              image_scale=reconstructions.shape[-1])
+                elif isinstance(self.datamodule, (MNISTDataset, PrecomputedMNISTDataset)) or isinstance(self.datamodule,
+                                                                                                        CartoonDataset):
+                    log_reconstructions = reconstructions[:log_amount, :3, :, :]
+
+                # Log input against prediction
+                k, i = log_images(
+                    log_reconstructions[:log_amount],
+                    patches[:log_amount],
+                    log_key="val/reconstruction",
+                    captions="input (left) vs. reconstruction (right)"
+                )
+                current_trainer_global_step = self.trainer.global_step
+                self.trainer.logger.experiment.log(
+                    {"samples": [i]},
+                )
+
+        self.log("val_loss", loss_dict["loss"])
+        if self.wandb:
+            self.trainer.logger.experiment.log({"val_loss": [loss_dict["loss"]]})
+        return loss_dict["loss"]
+
+    def configure_optimizers(self):
+
+        optims = []
+        scheds = []
+
+        param_group_1 = {'params': self.model.parameters(), 'lr': self.lr}
+        param_groups = [param_group_1]
+
+        if self.weight_decay is not None:
+            optimizer = optim.AdamW(
+                param_groups,
+                lr=self.lr,
+                weight_decay=self.weight_decay
+            )
+        else:
+            # learning rates should be explicitly specified in the param_groups
+            optimizer = optim.Adam(param_groups)
+        optims.append(optimizer)
+
+        if self.scheduler_type == "cosine":
+            scheds.append(CosineAnnealingLR(optimizer, T_max=self.total_steps, eta_min=self.min_lr))
+            return optims, scheds
+        elif self.scheduler_type == "step":
+            scheds.append(StepLR(optimizer, step_size=self.step_size, gamma=self.scheduler_gamma))
+            return optims, scheds
+        elif self.scheduler_type == "exponential":
+            try:
+                if self.scheduler_gamma is not None:
+                    scheduler = optim.lr_scheduler.ExponentialLR(optims[0], gamma=self.scheduler_gamma)
+                    scheds.append(scheduler)
+                    return optims, scheds
+            except:
+                return optims
+        elif self.scheduler_type == "none":
+            return optims
+        else:
+            raise Exception(f"Unknown scheduler for this training: {self.scheduler_type}")
+
+    # def on_train_batch_end(self, output, batch, batch_index):
+    #     # Perform evaluation after every eval_steps steps
+    #     if batch_index % self.eval_steps == 0:
+    #         self.trainer.fit_loop.epoch_loop.val_loop.run()
 class VectorGPTExperimentv2(pl.LightningModule):
     def __init__(self,
                  vector_gpt_model: VectorGPTv2,

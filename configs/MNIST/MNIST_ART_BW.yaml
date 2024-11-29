@@ -11,7 +11,7 @@ stage1_params:
   pred_color: false
   # Update this path to the checkpoint of the model you used to encode
 #  checkpoint_path: "/raid/marco.cipriano/results/svg/Grimoire/VSQ/VSQ_MNIST_BW_P128_T14_P20_TH0.2/checkpoints/last.ckpt"
-  checkpoint_path: "/raid/marco.cipriano/results/svg/Grimoire/VSQ/VSQ_MNIST_BW_P128_T6_P20_TH0.1/checkpoints/last.ckpt"
+  checkpoint_path: "/raid/marco.cipriano/results/svg/Grimoire/VSQ/VSQ_MNIST_BW_P128_T6_P0_TH0.2_singleGPU_lowBS/checkpoints/last.ckpt"
 
 
 model_params:
@@ -27,8 +27,8 @@ data_params:
   dataset: "mnist"
 #  csv_path: "/raid/marco.cipriano/data/SVG/Grimoire/MNIST/mnist_tokenized/VSQ_MNIST_BW_P128_T14_P20_TH0.2/split.csv"  # root path for CausalSVGDataModule in dataset.py
 #  vq_token_npy_path: "/raid/marco.cipriano/data/SVG/Grimoire/MNIST/mnist_tokenized/VSQ_MNIST_BW_P128_T14_P20_TH0.2/vsq_tokenized.npy"
-  csv_path: "/raid/marco.cipriano/data/SVG/Grimoire/MNIST/mnist_tokenized/VSQ_MNIST_BW_P128_T6_P20_TH0.2/split.csv"  # root path for CausalSVGDataModule in dataset.py
-  vq_token_npy_path: "/raid/marco.cipriano/data/SVG/Grimoire/MNIST/mnist_tokenized/VSQ_MNIST_BW_P128_T6_P20_TH0.2/vsq_tokenized.npy"
+  csv_path: "/raid/marco.cipriano/data/SVG/Grimoire/MNIST/mnist_tokenized/VSQ_MNIST_BW_P128_T6_P0_TH0.2/split.csv"  # root path for CausalSVGDataModule in dataset.py
+  vq_token_npy_path: "/raid/marco.cipriano/data/SVG/Grimoire/MNIST/mnist_tokenized/VSQ_MNIST_BW_P128_T6_P0_TH0.2/vsq_tokenized.npy"
   train_batch_size: 256  #32
   val_batch_size:  32  # 32
   num_workers: 8
@@ -45,7 +45,7 @@ exp_params:
   weight_decay: 1.e-4  # specify positive float to enable, start experimenting with 1.e-4/1.e-3
   scheduler_gamma: 0.96  # 0.95 is a good starting value
   train_log_interval: 0.05  # decides how often full generations are made and logged
-  val_log_interval: 0.1
+  val_log_interval: 0.3
   metric_log_interval: 0.4
   manual_seed: 1265
   post_process: False  # whether to log with svg fixing
@@ -59,7 +59,7 @@ logging_params:
   entity: "aiis-chair"  # comment to use default wandb entity "mfeuer"
   project: "grimoire-2"  # your wandb project name
   save_dir: "/raid/marco.cipriano/results/svg/Grimoire/ART"
-  name: "ART_MNIST_BW_P6T0.2"  # name of the run in wandb
+  name: "ART_MNIST_BW_P128_T6_P0_TH0.2"  # name of the run in wandb
   version: 0
   author: "Marco"  # will be a tag in wandb
   id: null  # id of wandb run to continue

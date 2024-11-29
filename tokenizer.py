@@ -362,6 +362,7 @@ class VQTokenizer(nn.Module):
                                             num_strokes_to_paint=num_strokes_to_paint, max_position_value=72,
                                             visual_attribute_dict=visual_attribute_dict, **kwargs)
         else:
+            positions = positions[:bezier_points.shape[0]]  # todo remove me
             drawing = self.assemble_svg(bezier_points, positions, global_stroke_width, w=w, padded_lseg=padded_lseg,
                                         num_strokes_to_paint=num_strokes_to_paint,
                                         visual_attribute_dict=visual_attribute_dict)

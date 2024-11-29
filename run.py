@@ -3,14 +3,13 @@ import yaml
 import argparse
 import numpy as np
 from pathlib import Path
-import torch.backends.cudnn as cudnn
 from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import WandbLogger, TensorBoardLogger
 from pytorch_lightning import seed_everything
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor, LearningRateFinder, EarlyStopping
 from dataset import GenericRasterizedSVGDataModule,GenericRasterDatamodule, CartoonDataset, PrecomputedMNISTDataset, MNISTDataset, MNISTppDataset, NounProjectDataset, EmojiDataset, MNISTDatasetCSVG, CausalSVGDataModule, NewCausalSVGDataModule, CenterShapeLayersFromSVGDataModule, VQDataModule, VSQDatamodule
 from models import VAEctorGen, VectorGPT, VanillaVAE, VectorVAEnLayers, VectorGPTv2, VSQ
-from experiment import VAEXperiment, VectorGPTExperiment, VectorGPTExperimentv2, VectorVQVAE_Experiment_Stage1, SVG_VQVAE_Stage2_Experiment
+from experiment import VAEXperiment, VectorGPTExperiment, VectorGPTExperimentv2, VectorVQVAE_Experiment_Stage1, SVG_VQVAE_Stage2_Experiment, VectorVQVAE_Experiment_Layer_Stage1
 import json
 from utils import get_rank
 import torch
@@ -45,6 +44,7 @@ MODELS = {
     "VectorGPT": VectorGPT,
     "VectorGPTv2": VectorGPTv2,
     "VSQ": VSQ,
+    "VSQ_layers": VSQ,
   }
 
 
@@ -88,7 +88,7 @@ if "continue_checkpoint" in config["exp_params"] and config["exp_params"]["conti
     print(f"Found checkpoint to continue training from: {config['exp_params']['continue_checkpoint']}")
     if "id" not in config["logging_params"]:
         print(f"wandb id must be set in logging_params to continue the logging in wandb")
-        input("Press Enter to continue without continuing in wandb or CTRL+C to cancel")
+        # input("Press Enter to continue without continuing in wandb or CTRL+C to cancel")
 else:
     assert "id" not in config["logging_params"], f"wandb id must not be set if not continuing from a checkpoint"
 
@@ -152,6 +152,17 @@ elif config['model_params']['name'] == "VSQ":
     data = DATASETMAP[config["data_params"]["dataset"]](**config["data_params"])
     data.setup()
     experiment = VectorVQVAE_Experiment_Stage1(
+        model,
+        **config['exp_params'],
+        layer_length=config["data_params"].get("layer_length", False),
+        wandb=args.wandb,
+        datamodule=data,
+        max_epochs=config["trainer_params"]["max_epochs"]
+    )
+elif config['model_params']['name'] == "VSQ_layers":
+    data = DATASETMAP[config["data_params"]["dataset"]](**config["data_params"])
+    data.setup()
+    experiment = VectorVQVAE_Experiment_Layer_Stage1(
         model,
         **config['exp_params'],
         layer_length=config["data_params"].get("layer_length", False),

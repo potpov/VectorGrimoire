@@ -179,9 +179,16 @@ def load_stage2_model_from_basepath(vsq_model, basepath, device="cpu"):
     state_dict = torch.load(latest_ckpt_path, map_location=device)["state_dict"]
     try:
         model.load_state_dict(state_dict)
-    except:
-        model.load_state_dict(
-            {k.replace("model.", "", 1) if k.startswith("model.") else k: v for k, v in state_dict.items()})
+    except RuntimeError:
+        # Adjust keys and filter out unexpected ones
+        model_state_keys = set(model.state_dict().keys())
+        adjusted_state_dict = {
+            (k.replace("model.", "", 1) if k.startswith("model.") else k).replace(".ff.3", ".ff.2"): v
+            for k, v in state_dict.items()
+            if
+            (k.replace("model.", "", 1) if k.startswith("model.") else k).replace(".ff.3", ".ff.2") in model_state_keys
+        }
+        model.load_state_dict(adjusted_state_dict)
     model = model.eval()
     return model, dm, config
 
@@ -263,8 +270,7 @@ if __name__ == '__main__':
         vsq_model = load_model_from_basepath(vsq_base_path, device=device)[0]
 
         # get model and data module
-        stage_2_model, stage2_dm, stage2_config = load_stage2_model_from_basepath(vsq_model, STAGE2_BASE_PATH,
-                                                                                  device=device)
+        stage_2_model, stage2_dm, stage2_config = load_stage2_model_from_basepath(vsq_model, STAGE2_BASE_PATH, device=device)
         stage2_dm.test_batch_size = BATCH_SIZE
 
         # generation pipeline

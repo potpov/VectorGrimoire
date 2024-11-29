@@ -1,6 +1,6 @@
 from typing import List
 from torchvision import transforms
-from PIL import Image
+from pydiffvg import save_svg
 import wandb
 import numpy as np
 import torch
@@ -143,7 +143,7 @@ def add_points_to_image(all_points:Tensor, image:Tensor, image_scale:int):
     all_points = all_points.detach().clone()
     image = image.detach().clone()
     for batch in range(all_points.shape[0]):
-        for i, point in enumerate(all_points[batch][0]):
+        for i, point in enumerate(all_points[batch]):
             point = point * image_scale
             point = point.long()
             # this could crash if the point is outside the image or on the border
@@ -555,6 +555,23 @@ def tensor_to_histogram_image(tensor, bins=100):
     return image
 
 
+def save_predictions_as_svg(paths, colors, render_size, filename):
+    groups = []
+    for i in range(len(paths)):
+        groups.append(pydiffvg.ShapeGroup(
+            shape_ids=torch.tensor([i]),
+            fill_color=colors[i],
+            stroke_color=colors[i])
+        )
+    save_svg(
+        filename,
+        render_size,
+        render_size,
+        paths,
+        groups
+    )
+
+
 def render_multiple_layers(paths, colors, render_size):
     render = pydiffvg.RenderFunction.apply
 
@@ -857,3 +874,17 @@ def rgb_tensor_to_svg_color(rgb_tensor):
 
     # Prepend '#' to form a valid SVG color string
     return f'#{hex_color}'
+
+def layer_recon(layer_att_mask, cl, all_paths, group_colors, centers, i, patch_size=128):
+    unmask_idx = torch.arange(cl)[layer_att_mask.cpu()[i: i + cl]]
+    real_paths = [all_paths[i: i + cl][j] for j in unmask_idx]
+    colors = [group_colors[i: i + cl][j] for j in unmask_idx]
+    real_positions = centers[i // cl][unmask_idx]
+    x, y, w, h = real_positions.unbind(1)
+    x_axis, y_axis = 0, 1
+    for layer_id in range(len(real_paths)):
+        real_paths[layer_id].points[:, x_axis] = (real_paths[layer_id].points[:, x_axis] ) * (
+                w[layer_id] / patch_size) + x[layer_id]
+        real_paths[layer_id].points[:, y_axis] = (real_paths[layer_id].points[:, y_axis] ) * (
+                h[layer_id] / patch_size) + y[layer_id]
+    return real_paths, colors

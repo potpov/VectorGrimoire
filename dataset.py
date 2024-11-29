@@ -18,6 +18,9 @@ import math
 from tokenizer import VQTokenizer, RasterVQTokenizer
 import pathlib
 from tqdm import tqdm
+import cv2
+from torchvision.transforms import CenterCrop, Resize
+
 
 class Legacy_VQDataset(Dataset):
     """
@@ -1046,6 +1049,8 @@ class Cartoon(Dataset):
                  patch_size: int = 512,
                  transform=None,
                  return_filename: bool = False,
+                 return_raw: bool = False,
+                 is_im2vec: bool = False,
                  ):
         super(Cartoon, self)
         self.root = root
@@ -1053,34 +1058,106 @@ class Cartoon(Dataset):
         self.transform = transform
         self.patch_size = patch_size
         self.layer_length = layer_length
+
+        self.is_im2vec = is_im2vec
         self.return_filename = return_filename
-        self.image_folder = os.path.join(self.root, "train" if train else "val")
+        self.return_raw = return_raw
+        assert not (return_filename and return_raw), "Can't return both filename and raw image."
+
+        version = "preprocessed_v2"  # preprocessed, preprocessed_v2
+        self.color_stats = np.load(os.path.join(self.root, version, "color_count.npy"))
+
+        weights = self.color_stats.sum() / self.color_stats[self.color_stats != 0]
+        weights = weights / weights.sum()
+        self.weights = self.color_stats.copy()
+        self.weights[self.weights != 0] = weights ## save the class weights, leave to 0 color classes that never occurred
+        self.weights = torch.from_numpy(self.weights)
+
+        self.merged_folder = os.path.join(self.root, version, "merged", "train" if train else "val")
+        self.image_folder = os.path.join(self.root, version, "color_masks", "train" if train else "val")
+        self.bw_folder = os.path.join(self.root, version, "bw_masks", "train" if train else "val")
+        self.outline_folder = os.path.join(self.root, version, "contour_masks", "train" if train else "val")
+        self.color_folder = os.path.join(self.root, version, "color_info", "train" if train else "val")
+        self.metadata_folder = os.path.join(self.root, version, "coords", "train" if train else "val")
         self.filenames = [f for f in os.listdir(self.image_folder) if f.endswith('.npy')]
 
+        ############################
+        # preload all the images todo: move this back to getitem for bigger datasets
+        self.layers = []
+        self.bounding_boxes = []
+        self.orig_files = []
+        self.layers_weights = []
+        self.bnw_layers = []
+        self.outlines = []
+
+        raw_img_format = cv2.COLOR_BGR2RGB if self.is_im2vec else cv2.COLOR_BGR2RGBA
+        raw_img_size = (128, 128) if self.is_im2vec else (400, 400)
+
+        for index in range(len(self.filenames)):
+            layers = np.load(os.path.join(self.image_folder, self.filenames[index]))
+            layers = torch.from_numpy(layers)
+            # layers = layers.moveaxis(-1, 1)  # L, H, W, C -> L, C, H, W
+
+            bounding_boxes = np.load(os.path.join(self.metadata_folder, self.filenames[index]))
+            bounding_boxes = torch.from_numpy(bounding_boxes)
+
+            outline = np.load(os.path.join(self.outline_folder, self.filenames[index]))
+            outline = torch.from_numpy(outline)
+
+            bnw_layers = np.load(os.path.join(self.bw_folder, self.filenames[index]))
+            bnw_layers = torch.from_numpy(bnw_layers)
+
+            if self.transform is not None:
+                layers = self.transform(layers)
+                outline = self.transform(outline[:, None]).squeeze()
+                bnw_layers = self.transform(bnw_layers)
+
+            color_idxs = np.load(os.path.join(self.color_folder, self.filenames[index]))
+            layer_weights = self.weights[color_idxs]
+
+            num_layers, c, h, w = layers.shape
+            if num_layers < self.layer_length:
+                layers = torch.concatenate( [layers, torch.full((self.layer_length - num_layers, c, h, w), -1)], dim=0)
+                outline = torch.concatenate( [outline, torch.full((self.layer_length - num_layers, h, w), -1)], dim=0)
+                bounding_boxes = torch.concatenate([bounding_boxes, torch.full((self.layer_length - num_layers, 4), -1)], dim=0)
+                bnw_layers = torch.concatenate([bnw_layers, torch.full((self.layer_length - num_layers, c, h, w), -1)], dim=0)
+                layer_weights = torch.concatenate([layer_weights, torch.full((self.layer_length - num_layers,), -1)], dim=0)
+            elif num_layers > self.layer_length:
+                layers = layers[:self.layer_length]
+                bounding_boxes = bounding_boxes[:self.layer_length]
+                bnw_layers = bnw_layers[:self.layer_length]
+                layer_weights = layer_weights[:self.layer_length]
+                outline = outline[:self.layer_length]
+
+            orig_filepath = os.path.join(self.merged_folder, self.filenames[index].replace(".npy", ".png"))
+            orig_file = cv2.imread(orig_filepath)
+            orig_file = cv2.cvtColor(orig_file, raw_img_format)
+            orig_file = Resize(raw_img_size)(torch.from_numpy(orig_file).moveaxis(-1, 0)) / 255
+
+            self.layers.append(layers)
+            self.bounding_boxes.append(bounding_boxes)
+            self.orig_files.append(orig_file)
+            self.layers_weights.append(layer_weights)
+            self.bnw_layers.append(bnw_layers)
+            self.outlines.append(outline.float())
+
     def __getitem__(self, index):
-        layers = np.load(os.path.join(self.image_folder, self.filenames[index]))
-
-        layers = torch.from_numpy(layers)
-        layers = layers.moveaxis(-1, 1)  # L, H, W, C -> L, C, H, W
-        if self.transform is not None:
-            layers = self.transform(layers)
-
-
-        num_layers, h, w, c = layers.shape
-        if num_layers < self.layer_length:
-            layers = torch.concatenate(
-                [layers, torch.full((self.layer_length - num_layers, h, w, c), -1)], dim=0
-            )
-        elif num_layers > self.layer_length:
-            layers = layers[:self.layer_length]
-
-        if self.return_filename:
-            return layers, [""] * layers.shape[-1], "", "", self.filenames[index]
-        else:
-            return layers, [""] * layers.shape[-1], "", ""
+        if self.is_im2vec:
+            return self.orig_files[index], index, "", "emoji"
+        return (
+            self.layers[index],
+            [""] * self.layers[index].shape[-1],
+            self.bounding_boxes[index],
+            "",
+            self.layers_weights[index],
+            self.outlines[index],
+            self.bnw_layers[index],
+            self.orig_files[index]
+        )
 
     def __len__(self):
-        return len(self.filenames)
+        return len(self.filenames)  # raw images for im2vec, layers for Grim
+
 
 
 class TiledMNIST(Dataset):
@@ -2332,6 +2409,8 @@ class CartoonDataset(LightningDataModule):
         patch_size: int = 128,
         pin_memory: bool = False,
         return_filename: bool = False,
+        return_raw: bool = False,
+        is_im2vec: bool = False,
         **kwargs,
     ):
         super().__init__()
@@ -2344,7 +2423,8 @@ class CartoonDataset(LightningDataModule):
         self.patch_size = patch_size
         self.pin_memory = pin_memory
         self.return_filename = return_filename
-
+        self.return_raw = return_raw
+        self.is_im2vec = is_im2vec
 
     def setup(self, stage: Optional[str] = None) -> None:
         # =========================  Cartoon Dataset  =========================
@@ -2352,7 +2432,8 @@ class CartoonDataset(LightningDataModule):
         t = transforms.Compose(
             [
                 # transforms.ToTensor(),
-                transforms.Resize((128, 128)),
+                transforms.Resize((self.patch_size, self.patch_size)),
+                # transforms.Pad(20, fill=1.),
             ]
         )
 
@@ -2361,6 +2442,9 @@ class CartoonDataset(LightningDataModule):
             train=True,
             transform=t,
             layer_length=self.layer_length,
+            return_filename=self.return_filename,
+            return_raw=self.return_raw,
+            is_im2vec=self.is_im2vec
         )
 
         self.val_dataset = Cartoon(
@@ -2368,6 +2452,9 @@ class CartoonDataset(LightningDataModule):
             train=False,
             transform=t,
             layer_length=self.layer_length,
+            return_filename=self.return_filename,
+            return_raw=self.return_raw,
+            is_im2vec=self.is_im2vec
         )
 
     #       ===============================================================

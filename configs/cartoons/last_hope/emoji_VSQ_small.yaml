@@ -1,0 +1,49 @@
+model_params:
+  name: "VSQ_layers"  # always keep this "VectorGPT"
+  vector_decoder_model: "hydra" # "mlp" or "raster_conv", "hydra
+  quantized_dim: 512
+  codebook_size: 4096  # will be ignored for FSQ
+  image_loss: ["pyramid", "outline"]  # "pyramid" or "mse" or "composite"
+  single_code_representation: true
+  vq_method: "fsq"  # "vqvae", "FSQ", "vqtorch"
+  fsq_levels: [7,7,7,5,5] # will determine codebook_size, see Table 1 of FSQ paper - [7,5,5,5,5] for 4096 (e.g. StrokeNUWA), [8,5,5,5] for 1024
+  num_segments: 16
+  pred_color: true
+  num_colors: 4096
+
+data_params:
+  dataset: "cartoons"
+  data_path: "/raid/marco.cipriano/data/SVG/Grimoire/emoji_selection"
+  layer_length: 16
+  train_batch_size: 4  # note: the actual batch size becomes train_batch_size * layer_length
+  val_batch_size:  4
+  num_workers: 8
+  patch_size: 128
+  return_raw: true
+
+exp_params:
+  lr: 0.00002  # 0.00002
+  weight_decay: 1.e-4  # specify positive float to enable, start experimenting with 1.e-4/1.e-3
+  scheduler_gamma: 0.98  # 0.95 is a good starting value
+  train_log_interval: 0.9 # len(dataset) / train_batch_size / desired_logging_frequency
+  manual_seed: 1265
+  schedule_pyramid_method: "linear"  # "linear" or "exponential" or null to disable scheduling, default disabled
+  pyrapid_interpolation_epochs: 15  # epochs after which we switch to MSE only
+#  continue_checkpoint: "/raid/marco.cipriano/results/svg/Grimoire/VSQ/VSQ_EMOJI_COLOR/checkpoints/last-v1.ckpt"
+
+trainer_params:
+  devices: -1  # always keep at -1 as this takes all available GPUs specified through CUDA_VISIBLE_DEVICES
+  max_epochs: 200  # dsnt matter too much, got early stopping implemented
+  # accumulate_grad_batches: 2
+
+logging_params:
+  entity: "aiis-chair"
+  project: "grimoire-2"  # your wandb project name
+  save_dir: "/raid/marco.cipriano/results/svg/Grimoire/VSQ"
+  name: "emoji_VSQ_hydra_small"  # name of the run in wandb
+  version: 1
+  author: "Marco"  # will be a tag in wandb
+#  id: "fsgt0smr"  # id of wandb run to continue
+  allow_val_change: true
+#  id: null  # id of wandb run to continue
+  # allow_val_change: False  # allow changing values in this config w.r.t. the run that you're continuing (good for changing loss weightings mid-run)

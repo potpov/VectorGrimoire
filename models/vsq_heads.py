@@ -402,3 +402,173 @@ class MLPVectorHead(nn.Module):
             output = torch.cat([output_white_bg, alpha], dim=1)
 
         return output, scenes
+
+
+class VectorHydra(nn.Module):
+    """
+    The CNNVectorHead is similar to Im2Vec. It uses a unit cirlce as a filled shape as a basis and iteratively deforms that shape using a CNN.
+    """
+
+    def __init__(self,
+                 latent_dim: int = 128,
+                 segments: int = 4,
+                 imsize: int = 64,
+                 max_stroke_width: float = 10.0,
+                 radius: float = 3., ):
+        super(VectorHydra, self).__init__()
+
+        self.latent_dim = latent_dim
+        self.segments = segments
+        self.imsize = imsize
+        self.max_stroke_width = max_stroke_width
+        self.radius = radius
+
+        fused_latent_dim = latent_dim + 2 + 2  # 2 for point type (e.g. control point) and 2 for initial x-y-position on the circle
+        self.num_points = self.segments * 3
+        self.angles = torch.arange(0, self.num_points, dtype=torch.float32) * 6.28319 / self.num_points
+        self.circle_point_positions = self.sample_circle(self.radius, self.angles)
+        self.point_types = torch.tensor([[1, 0], [0, 1], [0, 1]], dtype=torch.float32)
+
+        # TODO this was 2 in the original Im2Vec code, but that would have doubled the number of points instead of keeping them the same
+        padding = 1
+        kernel_size = 3
+        stride = 1
+        dilation = 1
+
+        self.point_predictor = nn.Sequential(
+            nn.Conv1d(fused_latent_dim, fused_latent_dim * 2, kernel_size=kernel_size, padding=padding,
+                      padding_mode='circular', stride=stride, dilation=dilation),
+            nn.ReLU(),
+            nn.Conv1d(fused_latent_dim * 2, fused_latent_dim * 2, kernel_size=kernel_size, padding=padding,
+                      padding_mode='circular', stride=stride, dilation=dilation),
+            nn.ReLU(),
+            nn.Conv1d(fused_latent_dim * 2, fused_latent_dim * 2, kernel_size=kernel_size, padding=padding,
+                      padding_mode='circular', stride=stride, dilation=dilation),
+            nn.ReLU(),
+            nn.Conv1d(fused_latent_dim * 2, fused_latent_dim * 2, kernel_size=kernel_size, padding=padding,
+                      padding_mode='circular', stride=stride, dilation=dilation),
+            nn.ReLU(),
+            nn.Conv1d(fused_latent_dim * 2, fused_latent_dim * 2, kernel_size=kernel_size, padding=padding,
+                      padding_mode='circular', stride=stride, dilation=dilation),
+            nn.ReLU(),
+            nn.Conv1d(fused_latent_dim * 2, 2, kernel_size=kernel_size, padding=padding, padding_mode='circular',
+                      stride=stride, dilation=dilation),
+            nn.Sigmoid()
+        )
+
+        self.color_predictor = nn.Sequential(
+            nn.Linear(self.latent_dim, 3, bias=False),
+            nn.Sigmoid()
+        )
+
+    def sample_circle(self, r, angles):
+        """
+        samples position on a circle of radius r, distances of positions are given by the angles, which are in [0, 2*pi]
+        """
+        pos = [(torch.cos(angles) * r), (torch.sin(angles) * r)]
+        return torch.stack(pos, dim=-1)
+
+
+    def raster(self, all_points, colors, mode: str = "color", white_background=True):
+        assert mode in ["color", "bnw", "outline"]
+        render_size = self.imsize
+        bs = all_points.shape[0]
+
+        outputs = []
+        all_paths = []
+        pred_colors = []
+        all_points = all_points * render_size
+        num_ctrl_pts = torch.zeros(self.segments, dtype=torch.int32).to(all_points.device) + 2
+        for k in range(bs):
+            # Get point parameters from network
+            render = pydiffvg.RenderFunction.apply
+            points = all_points[k].contiguous()  # [self.sort_idx[k]] # .cpu()
+            # print("points.shape: ", points.shape)
+            path = pydiffvg.Path(
+                num_control_points=num_ctrl_pts,
+                points=points,
+                is_closed=True,
+                stroke_width=torch.tensor(1.0 if mode != "outline" else 3.0)
+            )
+            all_paths.append(path)
+
+            if mode == "color":
+                path_group = pydiffvg.ShapeGroup(
+                    shape_ids=torch.tensor([0]),
+                    fill_color=colors[k].to(all_points.device),
+                    stroke_color=colors[k].to(all_points.device)
+                )
+            elif mode == "bnw":
+                path_group = pydiffvg.ShapeGroup(
+                    shape_ids=torch.tensor([0]),
+                    fill_color=torch.tensor([0, 0, 0, 1]).to(all_points.device),
+                )
+            elif mode == "outline":
+                path_group = pydiffvg.ShapeGroup(
+                    shape_ids=torch.tensor([0]),
+                    fill_color=torch.tensor([1, 1, 1, 0]).to(all_points.device),
+                    stroke_color=torch.tensor([0, 0, 0, 1]).to(all_points.device)
+                )
+
+            # this for compositing
+            pred_colors.append(colors[k])
+
+            scene_args = pydiffvg.RenderFunction.serialize_scene(render_size, render_size, [path], [path_group])
+            out = render(render_size,  # width
+                         render_size,  # height
+                         3,  # num_samples_x
+                         3,  # num_samples_y
+                         102,  # seed
+                         None,
+                         *scene_args)
+            out = out.permute(2, 0, 1).view(4, render_size, render_size)  # [:3]#.mean(0, keepdim=True)
+            outputs.append(out)
+        output = torch.stack(outputs).to(all_points.device)
+
+        # map to [-1, 1]
+        if white_background:
+            alpha = output[:, 3:4, :, :]
+            output_white_bg = output[:, :3, :, :] * alpha + (1 - alpha)
+            output = torch.cat([output_white_bg, alpha], dim=1)
+        del num_ctrl_pts,
+        return output, (all_paths, pred_colors)
+
+    def forward(self, z, **kwargs):
+        logging_dict = {}
+        device = z.device
+        bs = z.shape[0]
+
+        all_colors = self.color_predictor(z)
+        all_colors = all_colors.view(bs, 3)
+        # FIXME for now we add a new channel and set alpha to 1 manually
+        all_colors = torch.cat([all_colors, torch.ones(bs, 1).to(device)], dim=-1)
+
+
+        z = z[:, None, :].repeat(1, self.segments * 3, 1)
+
+        # add point type information
+        batched_point_types = self.point_types[None, :, :].repeat(bs, self.segments, 1).to(device)
+        feats = torch.cat([z, batched_point_types], dim=-1)
+
+        # add position on circle information
+        positions = self.circle_point_positions[None, :, :].repeat(bs, 1, 1).to(device)
+        feats = torch.cat([feats, positions], dim=-1)  # (bs, segments*3, latent_dim + 4)
+        feats = feats.permute(0, 2, 1)  # (bs, latent_dim + 4, segments*3)
+
+        all_points = self.point_predictor.forward(feats)  # (bs, 2, segments*3)
+        all_points = all_points.permute(0, 2, 1)  # (bs, segments*3, 2)
+        all_points = all_points.view(bs, self.num_points, 2)  # (bs, segments*3, 2)
+        all_widths = torch.ones(bs, self.segments, 1)
+        all_alphas = torch.ones(bs, self.segments, 1)
+
+        output, (all_paths, all_groups) = self.raster(all_points, colors=all_colors, mode="color")
+        outline, _ = self.raster(all_points, colors=all_colors, mode="outline")
+        bnw, _ = self.raster(all_points, colors=all_colors, mode="bnw")
+
+        visual_attribute_dict = {
+            "stroke_widths": all_widths,
+            "alphas": all_alphas,
+            "colors": all_colors
+        }
+        return [output, (all_paths, all_groups), all_points, visual_attribute_dict, outline, bnw], logging_dict
+
