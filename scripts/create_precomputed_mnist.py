@@ -101,13 +101,14 @@ class Mnister:
         fig.show()
 
 
-if __name__ == '__main__':
-
-    PATCH_SIZE = 128
-    TILES_PER_ROW = 6
-    TOTAL_PADDING = 0
-    TH_FILTER = 0.2
-    new_dimension = (PATCH_SIZE - TOTAL_PADDING) * TILES_PER_ROW
+def exec(patch_size=128, tiles_per_row=6, total_padding=4, th_filter=0.2,
+         source_dir=None, output_dir=None):
+    # Paths are configurable (dead /raid defaults removed). Pass them explicitly,
+    # or set MNIST_PNG_DIR / MNIST_PRETILED_DIR env vars. `output_dir` is the ROOT;
+    # the P{...}_T{...}_P{...}_TH{...} subdir is appended automatically.
+    source_dir = source_dir or os.environ.get("MNIST_PNG_DIR", "mnist_png")
+    out_root = output_dir or os.environ.get("MNIST_PRETILED_DIR", "mnist_pretiled")
+    new_dimension = (patch_size - total_padding) * tiles_per_row
     print(f"New dimension with this configuration is: {new_dimension}x{new_dimension}.")
 
     my_transforms = transforms.Compose(
@@ -121,12 +122,61 @@ if __name__ == '__main__':
 
 
     config = {
-        "patch_size": PATCH_SIZE,
+        "patch_size": patch_size,
         "transform": my_transforms,
-        "num_tiles_per_row": TILES_PER_ROW,
-        "total_padding": TOTAL_PADDING,
-        "filter_th": TH_FILTER,
-        "source_dir": "/raid/marco.cipriano/data/SVG/Grimoire/MNIST/mnist_png",
-        "output_dir": f"/raid/marco.cipriano/data/SVG/Grimoire/MNIST/mnist_pretiled/P{PATCH_SIZE}_T{TILES_PER_ROW}_P{TOTAL_PADDING}_TH{TH_FILTER}",
+        "num_tiles_per_row": tiles_per_row,
+        "total_padding": total_padding,
+        "filter_th": th_filter,
+        "source_dir": source_dir,
+        "output_dir": os.path.join(out_root, f"P{patch_size}_T{tiles_per_row}_P{total_padding}_TH{th_filter}"),
     }
     Mnister(**config)
+
+
+def create_yaml():
+    """ make sure you are in the config file because this spanws the yaml files in the current directory"""
+    import yaml
+    import os
+    import copy
+
+    # Load the base YAML file
+    with open("base.yaml", "r") as file:
+        base_config = yaml.safe_load(file)
+
+    # Define parameter ranges
+    patch_sizes = [32, 64, 128, 256]
+    n_tiles_list = [3, 5, 8]
+
+    data_root = os.environ.get("MNIST_PRETILED_DIR", "mnist_pretiled")
+
+    iteration = 0
+    for patch_size in patch_sizes:
+        for n_tiles in n_tiles_list:
+            iteration += 1
+            
+            # Modify the configuration
+            config = copy.deepcopy(base_config)
+            config["data_params"]["patch_size"] = patch_size
+            config["data_params"]["num_tiles_per_row"] = n_tiles
+            config["data_params"]["data_path"] = os.path.join(data_root, f"P{patch_size}_T{n_tiles}_P4_TH0.2")
+            
+            config["logging_params"]["name"] = f"{iteration}_P{patch_size}_T{n_tiles}_P4_TH0.2"
+            
+            # Save the modified YAML
+            output_filename = f"{iteration}.yaml"
+            with open(output_filename, "w") as output_file:
+                yaml.safe_dump(config, output_file, default_flow_style=False)
+            
+            print(f"Saved: {output_filename}")
+
+
+if __name__ == '__main__':
+    
+    for patch_size in [32, 64, 128, 256]:
+        for n_tiles in [3, 5, 8]:
+            print(f"Executing with patch_size={patch_size} and tiles_per_row={n_tiles}")
+            exec(patch_size=patch_size, tiles_per_row=n_tiles, total_padding=4, th_filter=0.2)
+
+
+
+

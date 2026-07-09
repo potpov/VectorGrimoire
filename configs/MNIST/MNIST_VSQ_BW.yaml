@@ -12,7 +12,7 @@ model_params:
 
 data_params:
   dataset: "mnistPrecomputed"
-  data_path: "/raid/marco.cipriano/data/SVG/Grimoire/MNIST/mnist_pretiled/P128_T6_P0_TH0.2"
+  data_path: "/sc/projects/sci-aisc/marco.cipriano/data/SVG/Grimoire/MNIST/mnist_pretiled/P128_T6_P0_TH0.2"
   train_batch_size: 1024  # 4096
   val_batch_size:  64
   patch_size: 128 # HAS TO BE 224 FOR CLIP RES50 TO WORK, otherwise take 128
@@ -40,7 +40,7 @@ trainer_params:
 logging_params:
   entity: "aiis-chair"  # comment to use default wandb entity "aiis-chair"
   project: "grimoire-2"  # your wandb project name
-  save_dir: "/raid/marco.cipriano/results/svg/Grimoire/VSQ"
+  save_dir: "/sc/projects/sci-aisc/marco.cipriano/results/svg/Grimoire/VSQ"
   # name: "VSQ_MNIST_BW_P128_T14_P20_TH0.2_S64"  # name of the run in wandb
   name: "VSQ_MNIST_BW_P128_T6_P0_TH0.2_singleGPU_lowBS"  # name of the run in wandb
   version: 1

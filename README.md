@@ -1,158 +1,105 @@
-# paper notes
+# 🧙 Vector Grimoire: Codebook-based Shape Generation under Raster Image Supervision
 
-## VSQ MODULE CONFIGURATIONS
+This is the official repository of Vector Grimoire, published at ICML 2025. Vector Grimoire is a two-stage, text-conditional SVG generative model.
 
-save directory: `/raid/marco.cipriano/results/svg/Grimoire/VSQ`
+- **VSQ** (stage 1) — a vector-quantized SVG tokenizer/autoencoder: ResNet encoder → FSQ codebook → differentiable vector decoder rendered with [diffvg](https://github.com/BachiLi/diffvg).
+- **ART** (stage 2) — an autoregressive transformer over VSQ tokens, conditioned on a frozen BERT text embedding (class `VQ_SVG_Stage2`). Turns a text prompt into an SVG.
 
-### experiments
+Pretrained checkpoints and datasets are on the Hugging Face Hub under [`Potpov`](https://huggingface.co/Potpov).
 
-| Name                                | Notes                     |
-|-------------------------------------|---------------------------|
-| VSQ_MNIST_BW_P128_T6_P20_TH0.1      |                           |
-| VSQ_MNIST_BW_P128_T14_P20_TH0.2     | larger sequence for ART   |
-| VSQ_MNIST_COLOR_P128_T3_P20         |                           |
-| VSQ_MNIST_BW_P128_T14_P20_TH0.2_S64 | more segmentens per shape |
+---
 
-final experiments path
+## 1. Installation
 
+Verified with **Python 3.10 · PyTorch 2.0.1 (CUDA 11.8) · diffvg built from source** on NVIDIA Tesla T4 (sm_75).
 
-
-| Name           | Notes                                                                                         |
-|----------------|-----------------------------------------------------------------------------------------------|
-| FIGR8 - ART    | /raid/marco.cipriano/results/svg/Grimoire/ART/figr8/nseg=4_ncode=2_lseg=5_alpha01_256grid     |
-| FIGR8 - VSQ    | /raid/marco.cipriano/results/svg/Grimoire/VSQ/figr8/VSQ_nseg=4_ncode=2_lseg=5.0_alpha=0.1None |
-| FONTS - ART    |                                                                                               |
-| FONTS - VSQ    | /raid/marco.cipriano/results/svg/Grimoire/VSQ/VSQ_FONTS                                       |
-| MNIST - ART    | /raid/marco.cipriano/results/svg/Grimoire/ART/ART_MNIST_BW_P6T0.2                             |
-| MNIST - VSQ    | /raid/marco.cipriano/results/svg/Grimoire/VSQ/VSQ_MNIST_BW_P128_T6_P20_TH0.1                  |
-| MNIST - im2vec |                                                                                               |
-
-
-## Datasets
-
-### MNIST
-```
-/raid/marco.cipriano/data/SVG/Grimoire/MNIST/
-├─ mnist_png/
-│  ├─ testing/
-│  ├─ training/
-├─ mnist_tokenized/
-│  ├─ P128_T14_P20_TH0.2
-├─ mnist_pretiled/
-│  ├─ P128_T14_P20_TH0.2
-│  ├─ ...
-```
-
-# Install
-Master's thesis on conditional SVG generative models.
-## Setup
-First of all, make a new python env and install requirements.txt:
 ```bash
-$ conda create --name SVG python=3.10
-$ conda activate SVG
-```
-Clone and Install [diffsvg](https://github.com/BachiLi/diffvg) as explained in the repo:
-```bash
-git clone git@github.com:BachiLi/diffvg.git
-git submodule update --init --recursive
-conda install -y pytorch torchvision -c pytorch
-conda install -y numpy
-conda install -y scikit-image
-conda install -y -c anaconda cmake
-conda install -y -c conda-forge ffmpeg
-pip install svgwrite
-pip install svgpathtools
-pip install cssutils
-pip install numba
-pip install torch-tools
-pip install visdom
-python setup.py install
-```
-Install our requirements:
-```bash
-$ conda env update -n SVG --file requirements.yaml
+conda create -n SVG python=3.10 && conda activate SVG
+bash install.sh                 # torch cu118 + CUDA toolkit + diffvg-from-source + pip deps
+export LD_LIBRARY_PATH=$CONDA_PREFIX/lib   # needed at runtime so torch finds libnvrtc
 ```
 
-## process font datasets
-NOTE: all scripts must be modified, paths are hard-coded
+Two components are **not** on PyPI and are installed (in this order) by `install.sh` before `pip install -r requirements.txt`:
 
+1. **PyTorch 2.0.1 / cu118** — `pip install torch==2.0.1 torchvision==0.15.2 torchaudio==2.0.2 --index-url https://download.pytorch.org/whl/cu118` (keep `numpy<2`; torch 2.0.1's ABI breaks on numpy 2.x).
+2. **diffvg (pydiffvg)** — built from source against this env's Python + CUDA (`TORCH_CUDA_ARCH_LIST=7.5`, `DIFFVG_CUDA=1`).
 
-- fonts are initally in .ttf format
-- convert them to svgs in `thesis/datasets/ttf_to_svg.py`
+Full step-by-step (troubleshooting, exact pins, non-T4 GPUs) → [`docs/REPRODUCTION.md`](docs/REPRODUCTION.md).
 
-### process for causal auto-regressive prediction
-- then we need to normalize and split them, which is done in the deepsvg, namely with `deepsvg/dataset/preprocess.py`
-- after that we need to generate the rasterized time-split version with `thesis/datasets/make_causal_positional_dataset.py`
+---
 
-### process for VQ-VAE pipeline
-For the first step we would actually just need SVGs, not even normalized as the dataloader `CenterShapeLayersFromSVGDataset` automatically splits paths. However, for the second stage (transformer training) we need normalized versions of the SVG data anyway (for the positions), so just generate the normalized versions first and you're good.
+## 2. Checkpoints, training & inference
 
-- normalize with deepsvg in `deepsvg/dataset/preprocess.py` (must be run with `python -m dataset.preprocess` in the deepsvg directory)
+All checkpoints live in one HF model repo — **[`Potpov/grimoire-checkpoints`](https://huggingface.co/Potpov/grimoire-checkpoints)** — laid out as `<dataset>/<stage>/{last.ckpt,config.yaml}`.
 
-## DATA
-### Fonts
-#### SVG-VAE - Glyphazzn
-This dataset is often referenced in the following related work as the "SVG-Fonts" dataset. It contains 14M examples across 62 characters (a-z, A-Z, 0-9). That is on average 225k examples for each glyph. At the time of this writing (11/2023) downloading the fonts from this dataset results in many 404 errors and no responses. The download of the remaining fonts can be found in `thesis/datasets/download_glyphazzn_dataset.py`.
+| Dataset       | VSQ (stage 1) | ART (stage 2) | Train config |
+|---------------|:-:|:-:|:--|
+| **figr8**     | [figr8/vsq](https://huggingface.co/Potpov/grimoire-checkpoints/tree/main/figr8/vsq) | [figr8/art](https://huggingface.co/Potpov/grimoire-checkpoints/tree/main/figr8/art) | `configs/figr8/figr8_ART.yaml` |
+| **mnist (b/w)** | [mnist_bw/vsq](https://huggingface.co/Potpov/grimoire-checkpoints/tree/main/mnist_bw/vsq) | [mnist_bw/art](https://huggingface.co/Potpov/grimoire-checkpoints/tree/main/mnist_bw/art) | `configs/MNIST/MNIST_{VSQ,ART}_BW.yaml` |
+| **mnist (color)** | [mnist_color/vsq](https://huggingface.co/Potpov/grimoire-checkpoints/tree/main/mnist_color/vsq) | [mnist_color/art](https://huggingface.co/Potpov/grimoire-checkpoints/tree/main/mnist_color/art) | `configs/MNIST/MNIST_{VSQ,ART}.yaml` |
+| **fonts**     | [fonts/vsq](https://huggingface.co/Potpov/grimoire-checkpoints/tree/main/fonts/vsq) | — | `configs/fonts/` |
+| **emoji**     | [emoji/vsq](https://huggingface.co/Potpov/grimoire-checkpoints/tree/main/emoji/vsq) | — | `configs/cartoons/emoji_VSQ.yaml` (layered/colored VSQ) |
 
-After downloading only the ttf files, we get:
-- 28136 fonts
+> ART was only deployed on **figr8** and **mnist**. Fonts/emoji ship the VSQ stage only.
 
-Note: on the conversion to svg, some fonts failed for only a subset of glyphs. E.g. many fonts just could not generate numbers, but all letters without issues.
+### Train
 
-#### Google Fonts
-[GoogleFonts](https://github.com/google/fonts)
-
-#### Deepvecfont - subset of Glyphazzn
-This work from 2021 has a download available for a subset from SVG-VAE. Can be found [here](https://github.com/yizhiwang96/deepvecfont#customize-your-own-dataset).
-- 27383 train fonts, only ~14500 .ttf files
-- 3045 test fonts
-
-They are all in .ttf, .otf, or .pfb format. I have continued with downloading the still available fonts in .ttf format myself as this yielded more fonts in total and the conversion script was already in place.
-
-
-# DEPRECATION ALERT
-### MNIST
-To download the dataset, please run the following scripts:
 ```bash
-$ PATH_TO_REPO=YOUR_PATH/thesis bash ./datasets/download.sh
+# Stage 1 — VSQ  (all datasets)
+python run.py -c configs/MNIST/MNIST_VSQ_BW.yaml
+
+# Stage 2 — ART  (svg-tokenized datasets: figr8, fonts)
+python run_stage2.py -c configs/figr8/figr8_ART.yaml
+
+# Stage 2 — ART  (raster-tokenized datasets: mnist)
+python run_raster_stage2.py -c configs/MNIST/MNIST_ART_BW.yaml
 ```
 
-### MNIST++
-After downloading MNIST, run `datasets/setup.py`:
+Point one GPU at a run with `CUDA_VISIBLE_DEVICES=<id>` and `devices: 1` in the config. Set `wandb: false` (or override the `entity`) to skip Weights & Biases.
+
+### Inference (loads checkpoints straight from HF)
+
 ```bash
-$ python datasets/setup.py
+# VSQ reconstruction  (figr8 / fonts — single-layer)
+python scripts/hf_inference_demo.py --subdir figr8/vsq \
+    --dataset_csv_path <csv with a file_path column> --outpath out/
+
+# ART text -> SVG  (loads VSQ + ART, samples an SVG)
+python scripts/hf_generate_demo.py --art_subdir figr8/art --vsq_subdir figr8/vsq \
+    --prompt "a star" --outfile out/gen.svg
+
+# VSQ reconstruction  (emoji — layered, colored)
+python scripts/hf_inference_emoji_demo.py --subdir emoji/vsq \
+    --emoji_dir <dir with preprocessed_v2/> --outfile out/emoji.svg
 ```
 
-### Icons8 - COMING SOON
-It is currently not clear, how we want to use this dataset. It is not suited for filled shapes, and using only outlines results in overly complex compositions as the original datasource was colored and shaded.
+All three default to `--hf_repo Potpov/grimoire-checkpoints`. See the [checkpoints repo README](https://huggingface.co/Potpov/grimoire-checkpoints) for the state-dict loading notes (leading-`model.`-prefix strip; ART also needs a `.ff.3`→`.ff.2` key remap, handled by `hf_generate_demo.py`).
 
-TODO:
-- [ ] agree on a format and make the dataset
-### TheNounProject
-TheNounProject is a custom scraped dataset. It was generated with the following procedure:
-1. Register an account at [The Noun Project](https://thenounproject.com/)
-2. Get your API keys at the [developer portal](https://thenounproject.com/developers/apps)
-3. Write your API key and secret inside an .env file in the root directory as
-```bash
-NOUN_PROJECT_API_KEY="key"
-NOUN_PROJECT_API_SECRET="private"
-```
-4. Modify the global variables in `datasets/make_nounproject_dataset.py` accordingly
+---
 
-Then, run the script:
-```bash
-$ python datasets/make_nounproject_dataset.py
-```
+## 3. Datasets
 
-TODO:
-- [ ] Provide a download link for reproducibility
+| Dataset  | Hugging Face | Notes |
+|----------|--------------|-------|
+| **figr8** | [Potpov/grimoire-figr8](https://huggingface.co/datasets/Potpov/grimoire-figr8) | Simplified SVGs + tokenized versions. Our split differs from the original FIGR-8 paper — see the dataset card. |
+| **mnist** | [Potpov/grimoire-mnist](https://huggingface.co/datasets/Potpov/grimoire-mnist) | Rasterized MNIST + pre-tiled/pre-tokenized VSQ variants (b/w and color). |
+| **emoji** | [Potpov/grimoire-emoji](https://huggingface.co/datasets/Potpov/grimoire-emoji) | Preprocessed open-source Twitter emojis (`preprocessed_v2/`). |
+| **fonts** (Glyphazzn) | — | Not redistributable (source-font licensing). Rebuild locally; a VSQ checkpoint is provided. |
 
-### Emoji
-We're using the open-source Twitter emojis. To reproduce:
-1. Clone the [twemoji repository](https://github.com/twitter/twemoji)
-2. Modify global variables in `datasets/make_emoji_dataset.py`
+Each tokenized variant is keyed by its VSQ hyperparameters (patch size, tokens/patch, positions, threshold). Use the tokenized version whose key matches the checkpoint you load.
 
-Then, run:
-```bash
-$ python datasets/make_emoji_dataset.py
+---
+
+## Citation
+
+If you use our work, please cite us:
+
+```bibtex
+@inproceedings{cipriano2025vectorgrimoire,
+  title     = {Vector Grimoire: Codebook-based Shape Generation under Raster Image Supervision},
+  author    = {Cipriano, Marco and Feuerpfeil, Moritz and De Melo, Gerard},
+  booktitle = {Forty-second International Conference on Machine Learning},
+  year      = {2025},
+  month     = {October},
+}
 ```

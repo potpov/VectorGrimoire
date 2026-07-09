@@ -1,3 +1,11 @@
+# ============================================================================
+# DEPRECATED / limited — builds VSQ with only (codebook_size, vq_method), so it
+# cannot correctly load real checkpoints (which need vector_decoder_model,
+# num_segments, num_codes_per_shape, ...), and its default paths are dead.
+# For stage-1 (VSQ) reconstruction from a real/HF checkpoint use
+# scripts/hf_inference_demo.py (figr8/fonts) or scripts/hf_inference_emoji_demo.py
+# (emoji, layered+colored). Kept for historical reference.
+# ============================================================================
 import os
 import torch
 from models import VSQ

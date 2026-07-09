@@ -58,7 +58,7 @@ current_process_rank = get_rank()
 
 if args.wandb:
     if "entity" not in config['logging_params']:
-        entity = "aiis-chair"
+        entity = None  # falls back to your own default W&B entity; set logging_params.entity to override
     else:
         entity = config['logging_params']['entity']
     wandb_logger = WandbLogger(

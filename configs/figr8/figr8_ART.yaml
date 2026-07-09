@@ -11,7 +11,7 @@ stage1_params:
   alpha: 0.1
   pred_color: false
   lseg: 5.0
-  checkpoint_path: "/raid/marco.cipriano/results/svg/Grimoire/VSQ/figr8/VSQ_nseg=4_ncode=2_lseg=5.0_alpha=0.1None/checkpoints/last.ckpt"
+  checkpoint_path: "/sc/projects/sci-aisc/marco.cipriano/results/svg/Grimoire/VSQ/figr8/VSQ_nseg=4_ncode=2_lseg=5.0_alpha=0.1None/checkpoints/last.ckpt"
 
 model_params:
   name: "VQ_SVG_Stage2"
@@ -25,8 +25,8 @@ model_params:
 
 data_params:
   dataset: "figr8"
-  csv_path: "/raid/marco.cipriano/data/SVG/Grimoire/figr8/tokenized/VSQ_nseg=4_ncode=2_lseg=5.0_alpha=0.1None/split.csv"  # root path for CausalSVGDataModule in dataset.py
-  vq_token_npy_path: "/raid/marco.cipriano/data/SVG/Grimoire/figr8/tokenized/VSQ_nseg=4_ncode=2_lseg=5.0_alpha=0.1None/tokenized.npy"
+  csv_path: "/sc/projects/sci-aisc/marco.cipriano/data/SVG/Grimoire/figr8/tokenized/VSQ_nseg=4_ncode=2_lseg=5.0_alpha=0.1None/split.csv"  # root path for CausalSVGDataModule in dataset.py
+  vq_token_npy_path: "/sc/projects/sci-aisc/marco.cipriano/data/SVG/Grimoire/figr8/tokenized/VSQ_nseg=4_ncode=2_lseg=5.0_alpha=0.1None/tokenized.npy"
   train_batch_size: 16  #32
   val_batch_size:  16  # 32
   num_workers: 32
@@ -60,8 +60,8 @@ trainer_params:
 logging_params:
   entity: "aiis-chair"
   project: "grimoire-2"  # your wandb project name
-#  save_dir: "/raid/marco.cipriano/results/svg/Grimoire/ART/figr8/nseg=4_ncode=2_lseg=5_alpha01_256grid"
-  save_dir: "/raid/marco.cipriano/results/svg/Grimoire/ART/figr8/"
+#  save_dir: "/sc/projects/sci-aisc/marco.cipriano/results/svg/Grimoire/ART/figr8/nseg=4_ncode=2_lseg=5_alpha01_256grid"
+  save_dir: "/sc/projects/sci-aisc/marco.cipriano/results/svg/Grimoire/ART/figr8/"
   name: "ART_S4C2G256"  # name of the run in wandb
   version: 0
   author: "Marco"  # will be a tag in wandb

@@ -1,4 +1,5 @@
 import gc
+import os
 import random
 from typing import List, Tuple, Union
 import torch
@@ -435,7 +436,7 @@ class VectorVQVAE_Experiment_Layer_Stage1(pl.LightningModule):
         bs, cl, c, w, h = patches.shape
         assert w == h, "only square images are supported for now"
         # creating layer attention mask
-        layer_att_mask = ~ torch.any(patches == -1, dim=(-1, -2, -3))  # (B, CL)
+        layer_att_mask = ~ (patches == -1).flatten(start_dim=2).any(dim=-1)  # (B, CL)
         layer_att_mask = layer_att_mask.reshape((bs * cl))  # (B * CL)
 
         # flattening bs and cl
@@ -565,7 +566,7 @@ class VectorVQVAE_Experiment_Layer_Stage1(pl.LightningModule):
 
             bs, cl, c, w, h = patches.shape
             assert w == h, "only square images are supported for now"
-            layer_att_mask = ~ torch.any(patches == -1, dim=(-1, -2, -3))  # (B, CL)
+            layer_att_mask = ~ (patches == -1).flatten(start_dim=2).any(dim=-1)  # (B, CL)
             # collapse BS and CL dimensions for everything
             layer_att_mask = layer_att_mask.reshape((bs * cl))  # (B * CL)
             patches = patches.reshape((bs * cl, c, w, h))
@@ -589,8 +590,10 @@ class VectorVQVAE_Experiment_Layer_Stage1(pl.LightningModule):
                         fill_color=colors[j],
                         stroke_color=colors[j])
                     )
+                _showcase_dir = os.path.join(os.getcwd(), "showcase")
+                os.makedirs(_showcase_dir, exist_ok=True)
                 pydiffvg.save_svg(
-                    f'/home/marco.cipriano/test/showcase/{batch_idx}_{i}.svg',
+                    os.path.join(_showcase_dir, f'{batch_idx}_{i}.svg'),
                     400, 400, real_paths, groups)
 
             if batch_idx % self.val_log_interval == 0 and self.wandb:
@@ -783,20 +786,23 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
 
-        patches, labels, centers, descriptions, filename = batch
+        if len(batch) == 5:
+            patches, labels, centers, descriptions, filename = batch
+        else:
+            patches, labels, centers, descriptions = batch
         self.curr_device = patches.device
 
         if self.use_layers:
             bs, cl, c, w, h = patches.shape
             assert w == h, "only square images are supported for now"
-            layer_att_mask = ~ torch.any(patches == -1, dim=(-1, -2, -3))  # (B, CL)
+            layer_att_mask = ~ (patches == -1).flatten(start_dim=2).any(dim=-1)  # (B, CL)
             layer_att_mask = layer_att_mask.reshape((bs * cl))  # (B * CL)
             patches = patches.reshape((bs * cl, c, w, h))
         else:
             bs = patches.shape[0]
             c = patches.shape[1]
 
-        (reconstructions, _, all_points, vq_loss, (all_paths, pred_colors)), logging_dict = self.forward(
+        (reconstructions, _, all_points, vq_loss, _scenes), logging_dict = self.forward(
             patches,
             logging=(batch_idx % self.train_log_interval == 0 and self.wandb)
         )
@@ -885,12 +891,15 @@ class VectorVQVAE_Experiment_Stage1(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         with torch.no_grad():
-            patches, label, centers, descriptions, filename = batch
+            if len(batch) == 5:
+                patches, labels, centers, descriptions, filename = batch
+            else:
+                patches, labels, centers, descriptions = batch
             self.curr_device = patches.device
 
             c = patches.shape[1]
 
-            (reconstructions, _, all_points, vq_loss, (all_paths, pred_colors)), logging_dict = self.forward(patches)
+            (reconstructions, _, all_points, vq_loss, _scenes), logging_dict = self.forward(patches)
             assert vq_loss.dim() <= 1, f"vq_loss should be a 1D tensor, but got {vq_loss.dim()}"
 
             ##### LOSS FUNCTION #####

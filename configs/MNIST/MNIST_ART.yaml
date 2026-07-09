@@ -9,7 +9,7 @@ stage1_params:
   fsq_levels: [7,5,5,5,5]  # will determine codebook_size, see Table 1 of FSQ paper - [7,5,5,5,5] for 4096 (e.g. StrokeNUWA), [8,5,5,5] for 1024
   num_segments: 15
   pred_color: true
-  checkpoint_path: "/raid/marco.cipriano/results/svg/Grimoire/VSQ/TiledMNIST/checkpoints/last.ckpt"
+  checkpoint_path: "/sc/projects/sci-aisc/marco.cipriano/results/svg/Grimoire/VSQ/TiledMNIST/checkpoints/last.ckpt"
 
 
 model_params:
@@ -23,8 +23,8 @@ model_params:
 
 data_params:
   dataset: "mnist"
-  csv_path: "/home/marco.cipriano/data/SVG/Grimoire/MNIST/8x8_randomcolor/split.csv"  # root path for CausalSVGDataModule in dataset.py
-  vq_token_npy_path: "/home/marco.cipriano/data/SVG/Grimoire/MNIST/8x8_randomcolor/vsq_tokenized.npy"
+  csv_path: "/sc/projects/sci-aisc/marco.cipriano/data/SVG/Grimoire/MNIST/8x8_randomcolor/split.csv"  # root path for CausalSVGDataModule in dataset.py
+  vq_token_npy_path: "/sc/projects/sci-aisc/marco.cipriano/data/SVG/Grimoire/MNIST/8x8_randomcolor/vsq_tokenized.npy"
   train_batch_size: 16  #32
   val_batch_size:  16  # 32
   num_workers: 8
@@ -57,7 +57,7 @@ trainer_params:
 logging_params:
   entity: "aiis-chair"  # comment to use default wandb entity "mfeuer"
   project: "grimoire-2"  # your wandb project name
-  save_dir: "/raid/marco.cipriano/results/svg/Grimoire/ART"
+  save_dir: "/sc/projects/sci-aisc/marco.cipriano/results/svg/Grimoire/ART"
   name: "Stage 2 - MNIST color"  # name of the run in wandb
   version: 0
   author: "Marco"  # will be a tag in wandb

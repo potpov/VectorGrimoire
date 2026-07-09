@@ -59,7 +59,7 @@ with open(os.path.join(config['logging_params']['save_dir'], 'config.yaml'), 'w'
 
 if args.wandb:
     if "entity" not in config['logging_params']:
-        entity = "aiis-chair"
+        entity = None  # falls back to your own default W&B entity; set logging_params.entity to override
     else:
         entity = config['logging_params']['entity']
     wandb_logger = WandbLogger(

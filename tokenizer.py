@@ -299,12 +299,26 @@ class VQTokenizer(nn.Module):
         while self._is_patch(tokens[-1]):
             # print("[INFO] Last token is a patch token, removing it.")
             tokens = tokens[:-1]
-        if self.tokens_per_patch == 1:
-            assert tokens.size(0) % 2 == 0, f"Number of tokens should be even, got {tokens.size(0)}"
 
-        patch_idx = self._generate_indices(len(tokens), self.tokens_per_patch, start=0)
-        patch_tokens = tokens[patch_idx]
-        pos_tokens = tokens[self.tokens_per_patch::self.tokens_per_patch + 1]
+        # Type-based split (robust). A shape = the run of patch tokens terminated by a
+        # position token. This tolerates the off-by-one in the tokenizer's encode loop
+        # (the first shape can carry fewer than `tokens_per_patch` patch codes), which a
+        # rigid stride assumption mis-parses into scattered output. Shapes with fewer
+        # than `tokens_per_patch` codes are padded by repeating their last code.
+        patch_rows, pos_list, cur = [], [], []
+        for t in tokens.tolist():
+            if t >= self.start_of_pos_token_idx:          # position token -> end current shape
+                if len(cur) == 0:
+                    continue                              # stray position with no patch, skip
+                if len(cur) < self.tokens_per_patch:
+                    cur = cur + [cur[-1]] * (self.tokens_per_patch - len(cur))
+                patch_rows.append(cur[:self.tokens_per_patch])
+                pos_list.append(t)
+                cur = []
+            else:
+                cur.append(t)
+        patch_tokens = torch.tensor(patch_rows, device=tokens.device, dtype=tokens.dtype).reshape(-1)
+        pos_tokens = torch.tensor(pos_list, device=tokens.device, dtype=tokens.dtype)
         positions = self.decode_positions(pos_tokens)
         if return_visual_attribute_dict:
             bezier_points, visual_attribute_dict = self.decode_patches(patch_tokens, return_visual_attribute_dict=True)

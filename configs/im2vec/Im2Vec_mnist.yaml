@@ -20,7 +20,7 @@ model_params:
 
 data_params:
   dataset: "mnist"
-  data_path: "/raid/marco.cipriano/data/SVG/Grimoire/MNIST/mnist_png"
+  data_path: "/sc/projects/sci-aisc/marco.cipriano/data/SVG/Grimoire/MNIST/mnist_png"
   train_batch_size: 32
   val_batch_size:  32
   patch_size: 128 # HAS TO BE 224 FOR CLIP RES50 TO WORK, otherwise take 128
@@ -47,7 +47,7 @@ trainer_params:
 logging_params:
   entity: "aiis-chair"
   project: "grimoire-2"  # your wandb project name
-  save_dir: "/raid/marco.cipriano/results/svg/im2vec/"
+  save_dir: "/sc/projects/sci-aisc/marco.cipriano/results/svg/im2vec/"
   other_interpolations: True
 #  name: "im2vec_mnist_full"
   name: "im2vec_mnist_full_T10"

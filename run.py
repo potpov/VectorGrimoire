@@ -78,8 +78,8 @@ config['logging_params']['save_dir'] = os.path.join(
 print(f"Updated configuration to log in: {config['logging_params']['save_dir']}")
 Path(config['logging_params']['save_dir']).mkdir(exist_ok=True, parents=True)
 
-with open(os.path.join(config['logging_params']['save_dir'], 'config.yaml'), 'w') as f:
-    yaml.dump(config, f, default_flow_style=False)
+# with open(os.path.join(config['logging_params']['save_dir'], 'config.yaml'), 'w') as f:
+#     yaml.dump(config, f, default_flow_style=False)
 
 current_process_rank = get_rank()
 
@@ -99,7 +99,7 @@ current_process_rank = get_rank()
 
 if args.wandb:
     if "entity" not in config['logging_params']:
-        entity = "aiis-chair"
+        entity = None  # falls back to your own default W&B entity; set logging_params.entity to override
     else:
         entity = config['logging_params']['entity']
     wandb_logger = WandbLogger(

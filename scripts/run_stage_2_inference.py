@@ -1,3 +1,9 @@
+# ============================================================================
+# DEPRECATED — does not run. Imports the removed `VQ_Transformer` class and uses
+# hardcoded /scratch2 paths. For stage-2 (ART) text->SVG generation use
+# scripts/hf_generate_demo.py (loads VSQ + ART from HuggingFace, generates an SVG).
+# Kept only for historical reference.
+# ============================================================================
 from models import VQ_Transformer, VSQ
 from tokenizer import VQTokenizer
 from dataset import VQDataset

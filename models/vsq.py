@@ -254,6 +254,49 @@ class VSQ(nn.Module):
                 bnw], logging_dict
 
 
+    def legacy_gaussian_pyramid_loss(self, recons_images: Tensor, gt_images: Tensor, down_sample_steps: int = 3, log_loss: bool = False, pyramid_weights:Tensor = None):
+        """
+        Calculates the gaussian pyramid loss between reconstructed images and ground truth images.
+
+        Args:
+            - recons_images (Tensor): Reconstructed images in format (-1, c, w, h)
+            - gt_images (Tensor): Ground truth images in format (-1, c, w, h)
+            - down_sample_steps (int): Number of downsample steps to calculate the loss for. Default: 3
+
+        Returns:
+            - recon_loss (Tensor): The gaussian pyramid loss between reconstructed images and ground truth images.
+        """
+        dsample = kornia.geometry.transform.pyramid.PyrDown()
+        timesteps_to_log = 4
+        recon_loss = F.mse_loss(recons_images, gt_images, reduction='none')
+        if log_loss:
+            all_loss_images = []
+            all_loss_images.append(self.transform_loss_tensor_to_image(recon_loss[:timesteps_to_log]))
+        recon_loss = recon_loss.mean() * pyramid_weights[0]
+        recons_loss_contributions = {
+            "pyramid_loss_step_0" : recon_loss.detach().cpu().item()
+        }
+        for j in range(1, 1 + down_sample_steps):
+            if j < len(pyramid_weights):
+                weight = pyramid_weights[j]
+            else:
+                weight = 0.0
+
+            recons_images = dsample(recons_images)
+            gt_images = dsample(gt_images)
+            loss_images = F.mse_loss(recons_images, gt_images, reduction='none')
+            if log_loss:
+                all_loss_images.append(self.transform_loss_tensor_to_image(loss_images[:timesteps_to_log]))
+
+            curr_pyramid_loss = loss_images.mean() * weight
+            recons_loss_contributions[f"pyramid_loss_step_{j}"] = curr_pyramid_loss.detach().cpu().item()
+            recon_loss = recon_loss + curr_pyramid_loss
+
+        if log_loss:
+            log_all_images(all_loss_images, log_key="pyramid loss", caption=f"Gaussian Pyramid Loss, {down_sample_steps+1} steps")
+            wandb.log(recons_loss_contributions)
+        return recon_loss, recons_loss_contributions
+
     def gaussian_pyramid_loss(
             self,
             recons_images: Tensor,
@@ -398,50 +441,56 @@ class VSQ(nn.Module):
             loss_dict['VQ_Loss'] = vq_loss
             final_loss += vq_loss  # UPDATE LOSS HERE
 
-        # white_filter_mask = (gt_images == 1.0000).all(dim=1).unsqueeze(1).expand(-1, 2, -1, -1)
-        white_filter_mask = ~gt_bnw[:, 0].bool().unsqueeze(1).expand(-1, 2, -1, -1)
+        if torch.is_tensor(gt_bnw):
+            # white_filter_mask = (gt_images == 1.0000).all(dim=1).unsqueeze(1).expand(-1, 2, -1, -1)
+            white_filter_mask = ~gt_bnw[:, 0].bool().unsqueeze(1).expand(-1, 2, -1, -1)
 
-        # convert to LAB and normalise
-        recon_lab = rgb_to_lab(reconstructions)
-        gt_lab = rgb_to_lab(gt_images)
-        recon_lab[:, 0] = recon_lab[:, 0] / 100
-        recon_lab[:, 1:3] = (recon_lab[:, 1:3] + 128) / 255
-        gt_lab[:, 0] = gt_lab[:, 0] / 100
-        gt_lab[:, 1:3] = (gt_lab[:, 1:3] + 128) / 255
+            # convert to LAB and normalise
+            recon_lab = rgb_to_lab(reconstructions)
+            gt_lab = rgb_to_lab(gt_images)
+            recon_lab[:, 0] = recon_lab[:, 0] / 100
+            recon_lab[:, 1:3] = (recon_lab[:, 1:3] + 128) / 255
+            gt_lab[:, 0] = gt_lab[:, 0] / 100
+            gt_lab[:, 1:3] = (gt_lab[:, 1:3] + 128) / 255
 
-        # PYRAMID does MSE anyway, so either one or the other
-        if "mse" in self.image_loss:
-            raise NotImplementedError("MSE loss disabled because already included in the pyramid.")
-            # recons_loss = F.mse_loss(reconstructions, gt_images)
-        elif "pyramid" in self.image_loss:
-            ab_loss, l_loss, pyramic_contributions = self.gaussian_pyramid_loss(
-                recon_lab, gt_lab,
-                down_sample_steps=3, log_loss=log_loss,
-                pyramid_weights=kwargs["pyramid_weights"],
-                color_weights=color_weights,
-                color_masks=white_filter_mask,
-            )
-            loss_dict.update(pyramic_contributions)
-        else:
-            raise Exception("One of the following image loss functions must be used: ['mse', 'pyramid']")
-        loss_dict['AB_Loss'] = ab_loss
-        loss_dict['L_Loss'] = l_loss
-        final_loss += (ab_loss * recon_weight) + (l_loss * recon_bw_weight)  # UPDATE LOSS HERE
+            # PYRAMID does MSE anyway, so either one or the other
+            if "mse" in self.image_loss:
+                raise NotImplementedError("MSE loss disabled because already included in the pyramid.")
+                # recons_loss = F.mse_loss(reconstructions, gt_images)
+            elif "pyramid" in self.image_loss:
+                ab_loss, l_loss, pyramic_contributions = self.gaussian_pyramid_loss(
+                    recon_lab, gt_lab,
+                    down_sample_steps=3, log_loss=log_loss,
+                    pyramid_weights=kwargs["pyramid_weights"],
+                    color_weights=color_weights,
+                    color_masks=white_filter_mask,
+                )
+                loss_dict.update(pyramic_contributions)
+            else:
+                raise Exception("One of the following image loss functions must be used: ['mse', 'pyramid']")
+            loss_dict['AB_Loss'] = ab_loss
+            loss_dict['L_Loss'] = l_loss
+            final_loss += (ab_loss * recon_weight) + (l_loss * recon_bw_weight)  # UPDATE LOSS HERE
 
-        if "outline" in self.image_loss:
-            outline_loss = F.l1_loss(
-                rgb_to_grayscale(rgba_to_rgb(pred_outline)).squeeze(),
-                gt_outline
-            ) * 10
-            loss_dict['Outline_loss'] = outline_loss
-            final_loss += (outline_loss * outline_weight)
+            if "outline" in self.image_loss:
+                outline_loss = F.l1_loss(
+                    rgb_to_grayscale(rgba_to_rgb(pred_outline)).squeeze(),
+                    gt_outline
+                ) * 10
+                loss_dict['Outline_loss'] = outline_loss
+                final_loss += (outline_loss * outline_weight)
 
-        if "composite" in self.image_loss and composite is not None:
-            composite = torch.stack(composite, dim=0)
-            composite_loss = F.mse_loss(raw_images, composite)
-            final_loss += composite_loss  # UPDATE LOSS HERE
-            loss_dict['Composite_Loss'] = composite_loss
-
+            if "composite" in self.image_loss and composite is not None:
+                composite = torch.stack(composite, dim=0)
+                composite_loss = F.mse_loss(raw_images, composite)
+                final_loss += composite_loss  # UPDATE LOSS HERE
+                loss_dict['Composite_Loss'] = composite_loss
+        else: 
+            # old data, using old pyramid
+            # print("WARNING: Using legacy pyramid loss")
+            recons_loss, recons_loss_contributions = self.legacy_gaussian_pyramid_loss(reconstructions, gt_images, down_sample_steps=3, log_loss=log_loss, pyramid_weights=kwargs["pyramid_weights"])
+            final_loss += recons_loss  # UPDATE LOSS HERE
+            
         if self.geometric_constraint == "inner_distance":
             # if False:
             #     max_dist = torch.cdist(torch.tensor([[0.0, 0.0]]), torch.tensor([[1.0, 1.0]]), p=2).item()
@@ -493,7 +542,7 @@ class VSQ(nn.Module):
             - reconstructed_drawing (Drawing): Reconstructed drawing (use to save svg)
             - rasterized_reconstructions (Tensor): Rasterized reconstructions
         """
-        [reconstructions, input, all_points, vq_loss, visual_attribute_dict], logging_dict = self.forward(patches,
+        [reconstructions, input, all_points, vq_loss, visual_attribute_dict, _scenes], logging_dict = self.forward(patches,
                                                                                                           logging=False,
                                                                                                           return_visual_attributes=True)
         # these need to be scaled with 72 to keep the original viewbox aspect ratios intact

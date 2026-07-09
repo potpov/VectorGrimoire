@@ -12,7 +12,7 @@ model_params:
 
 data_params:
   dataset: "fonts"  # must be in the DATASETMAP in run.py
-  csv_path: "/raid/marco.cipriano/data/SVG/Grimoire/fonts/svgs_simplified/split_fixed.csv"
+  csv_path: "/sc/projects/sci-aisc/marco.cipriano/data/SVG/Grimoire/fonts/svgs_simplified/split_fixed.csv"
   channels: 3  # use 3
   width: 128
   train_batch_size: 4
@@ -42,7 +42,7 @@ trainer_params:
 logging_params:
   entity: "aiis-chair"
   project: "grimoire-2"  # your wandb project name
-  save_dir: "/raid/marco.cipriano/results/svg/Grimoire/VSQ"
+  save_dir: "/sc/projects/sci-aisc/marco.cipriano/results/svg/Grimoire/VSQ"
   name: "VSQ_FONTS"  # name of the run in wandb
   version: 0
   author: "Marco"  # will be a tag in wandb
