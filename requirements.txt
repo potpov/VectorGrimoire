@@ -18,7 +18,6 @@
 #          DIFFVG_CUDA=1 python setup.py install
 #
 # At runtime: export LD_LIBRARY_PATH=$CONDA_PREFIX/lib  (so torch finds libnvrtc).
-# See docs/REPRODUCTION.md §1 for the full, tested recipe.
 # ============================================================================
 
 absl-py==2.5.0

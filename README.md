@@ -24,8 +24,6 @@ Two components are **not** on PyPI and are installed (in this order) by `install
 1. **PyTorch 2.0.1 / cu118** — `pip install torch==2.0.1 torchvision==0.15.2 torchaudio==2.0.2 --index-url https://download.pytorch.org/whl/cu118` (keep `numpy<2`; torch 2.0.1's ABI breaks on numpy 2.x).
 2. **diffvg (pydiffvg)** — built from source against this env's Python + CUDA (`TORCH_CUDA_ARCH_LIST=7.5`, `DIFFVG_CUDA=1`).
 
-Full step-by-step (troubleshooting, exact pins, non-T4 GPUs) → [`docs/REPRODUCTION.md`](docs/REPRODUCTION.md).
-
 ---
 
 ## 2. Checkpoints, training & inference
